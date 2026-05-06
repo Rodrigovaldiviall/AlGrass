@@ -1,0 +1,132 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #3F5FE0;
+  /* overflow:hidden here (not on body) avoids the iOS Safari quirk where
+     overflow on body causes position:fixed children to anchor to the body
+     scroll offset instead of the viewport. */
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, "SF Pro Text", "SF Pro", system-ui, sans-serif;
+  background: #3F5FE0;
+  -webkit-font-smoothing: antialiased;
+  height: 100%;
+}
+
+/* Pure-CSS blue fill for the top safe-area. Renders on first paint, before
+   React hydrates, so there is never a white flash behind the status bar. */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: env(safe-area-inset-top);
+  background: #3F5FE0;
+  z-index: 99999;
+  pointer-events: none;
+}
+
+#root {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #3F5FE0;
+}
+
+.no-sb::-webkit-scrollbar { display: none; }
+.no-sb { scrollbar-width: none; }
+
+input:-webkit-autofill,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:hover {
+  -webkit-box-shadow: 0 0 0 100px #F2F2F4 inset !important;
+  -webkit-text-fill-color: #1B1B1F !important;
+  caret-color: #1B1B1F;
+}
+
+@keyframes spin        { to   { transform: rotate(360deg); } }
+@keyframes lp-fadein   { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes lp-slideup  { from { transform: translateY(100%); }             to { transform: translateY(0); } }
+
+/* ── Responsive app shell ───────────────────────────────── */
+
+/* Mobile: wrappers are transparent so existing flex layout is unchanged */
+.app-layout { display: contents; }
+.app-main   { display: contents; }
+.sidebar    { display: none; }
+
+/* Screen fills full viewport on mobile */
+.screen-shell { height: 100dvh; }
+
+/* ── Desktop ≥ 1024 px ─────────────────────────────────── */
+@media (min-width: 1024px) {
+  .app-layout {
+    display: block;
+    min-height: 100dvh;
+  }
+
+  /* zoom: 0.72 scales sidebar ~30%; height: 139dvh compensates so it fills
+     the full viewport (139 * 0.72 ≈ 100dvh visually). */
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 340px;
+    height: 139dvh;
+    background: #fff;
+    border-right: 1px solid #E5E5EA;
+    z-index: 100;
+    overflow-y: auto;
+    zoom: 0.72;
+  }
+
+  .sidebar svg { width: 36px; height: 36px; }
+
+  /* margin-left matches zoomed sidebar visual width (340 * 0.72 ≈ 245px) */
+  .app-main {
+    display: flex;
+    justify-content: center;
+    margin-left: 245px;
+    height: 100dvh;
+    overflow: hidden;
+    background-color: #F2F2F4;
+    background-image:
+      repeating-linear-gradient(-45deg, transparent 0, transparent 18px, rgba(0, 123, 255, 0.038) 18px, rgba(0, 123, 255, 0.038) 19.5px),
+      repeating-linear-gradient( 45deg, transparent 0, transparent 18px, rgba(0, 123, 255, 0.038) 18px, rgba(0, 123, 255, 0.038) 19.5px);
+  }
+
+  /* zoom: 0.72 scales content ~30%; height: 139dvh fills the viewport */
+  .screen-shell {
+    height: 139dvh;
+    width: 100%;
+    max-width: 840px;
+    zoom: 0.72;
+    --gm-time:    20px;
+    --gm-ampm:    16px;
+    --gm-title:   21px;
+    --gm-meta:    16px;
+    --gm-pill-fs: 17px;
+    --gm-dhr:     18px;
+    --gd-ip:      20px;
+    --gd-is:      17px;
+    --gd-st:      21px;
+    --gd-body:    18px;
+    --gd-player:  19px;
+  }
+
+  /* !important overrides the inline style={{ display:'flex' }} in TabBar */
+  .tab-bar { display: none !important; }
+}
