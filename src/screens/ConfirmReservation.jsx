@@ -646,6 +646,7 @@ export default function ConfirmReservation() {
   const [promoApplied, setPromoApplied] = useState(null);
   const [promoError, setPromoError]     = useState('');
   const [freeConfirming, setFreeConfirming] = useState(false);
+  const [creditLoading, setCreditLoading]   = useState(false);
 
   const rosterPlayerIds = useMemo(() => new Set(getActivePlayers(game?.id || '').map(p => p.id)), [game?.id]);
 
@@ -691,8 +692,12 @@ export default function ConfirmReservation() {
 
   function handleConfirm() {
     if (total === 0) {
-      setFreeConfirming(true);
-      setTimeout(() => handlePaid(), 1800);
+      setCreditLoading(true);
+      setTimeout(() => {
+        setCreditLoading(false);
+        setFreeConfirming(true);
+        setTimeout(() => handlePaid(), 1800);
+      }, 1400);
       return;
     }
     setPayOpen(true);
@@ -1010,7 +1015,14 @@ export default function ConfirmReservation() {
           </div>
         </div>
 
-        <CtaButton onPress={handleConfirm} disabled={addGuestsMode && guests.length === 0}>Confirmar</CtaButton>
+        <CtaButton onPress={handleConfirm} disabled={(addGuestsMode && guests.length === 0) || creditLoading || freeConfirming}>
+          {creditLoading ? (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ width: 16, height: 16, borderRadius: '50%', border: '2.5px solid rgba(27,27,31,0.2)', borderTop: '2.5px solid #1B1B1F', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
+              Procesando...
+            </span>
+          ) : 'Confirmar'}
+        </CtaButton>
       </div>
 
       {payOpen && (

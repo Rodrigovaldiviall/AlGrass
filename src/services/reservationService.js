@@ -52,3 +52,23 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoDis
   if (error) console.error('[createReservation]', error);
   return { data, error };
 }
+
+export async function cancelReservation(gameId) {
+  if (!supabase) return { skipped: true };
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.user?.id) {
+    console.warn('[cancelReservation] no Supabase session — localStorage only');
+    return { skipped: true };
+  }
+  console.log('[cancelReservation] updating game_id:', gameId, 'user_id:', session.user.id);
+  const { data, error } = await supabase
+    .from('reservations')
+    .update({ status: 'canceled', canceled_at: new Date().toISOString() })
+    .eq('game_id', gameId)
+    .eq('user_id', session.user.id)
+    .eq('status', 'confirmed')
+    .select('id, status');
+  if (error) console.error('[cancelReservation] error:', error);
+  else       console.log('[cancelReservation] updated rows:', data);
+  return { data, error };
+}

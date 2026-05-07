@@ -7,6 +7,7 @@ import { faWhatsapp } from '@fortawesome/free-brands-svg-icons';
 import { faHeadset, faCoins } from '@fortawesome/free-solid-svg-icons';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 import { GAMES, seedDemoWaitlist } from '../data/games';
 seedDemoWaitlist();
 
@@ -1768,6 +1769,27 @@ export default function Profile() {
     try { return JSON.parse(localStorage.getItem(SKIPPED_KEY)) || {}; } catch { return {}; }
   });
 
+  const [sbProfile, setSbProfile] = useState(null);
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session?.user?.id) return;
+      supabase
+        .from('users')
+        .select('full_name, email, role, organizer_status, credit_balance')
+        .eq('id', session.user.id)
+        .single()
+        .then(({ data, error }) => {
+          if (error) { console.warn('[Profile] public.users:', error.message); return; }
+          if (data) {
+            setSbProfile(data);
+            if (data.credit_balance != null) setCreditBalance(data.credit_balance);
+          }
+        });
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [pastExpanded, setPastExpanded] = useState(false);
 
   useEffect(() => {
@@ -1894,11 +1916,11 @@ export default function Profile() {
     savePlayedGame(gameToRate.id);
   }
 
-  const displayName = profileData.fullName || user?.name || USER.name;
+  const displayName = sbProfile?.full_name || profileData.fullName || user?.name || USER.name;
   const cardUser = {
     ...USER,
     name:        displayName,
-    email:       user?.email || USER.email,
+    email:       sbProfile?.email || user?.email || USER.email,
     userCode:    profileData.userCode    ?? null,
     gender:      profileData.gender      ?? 'Hombre',
     position:    profileData.position    ?? '',

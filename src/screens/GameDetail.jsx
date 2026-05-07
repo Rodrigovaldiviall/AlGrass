@@ -11,6 +11,7 @@ import { getActivePlayers, getRoster, removePlayers, setTitularCanceled as markT
 import TabBar from '../components/TabBar';
 import RatingBlock from '../components/RatingBlock';
 import { useAuth } from '../context/AuthContext';
+import { cancelReservation } from '../services/reservationService';
 
 const WAITLIST_KEY   = 'pichanga_waitlist';
 const ATTENDANCE_KEY = 'pichanga_attendance';
@@ -741,6 +742,11 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
             const res = JSON.parse(localStorage.getItem('pichanga_reservations') || '[]');
             localStorage.setItem('pichanga_reservations', JSON.stringify(res.filter(r => r.id !== gameId)));
           } catch {}
+          cancelReservation(gameId)
+            .then(({ error, skipped }) => {
+              if (!skipped && error) console.warn('[cancel] Supabase update failed:', error);
+            })
+            .catch(e => console.error('[cancel] cancelReservation threw:', e));
           try {
             const shown = JSON.parse(localStorage.getItem('pichanga_shown_confirmations') || '{}');
             if (shown[gameId]) { delete shown[gameId]; localStorage.setItem('pichanga_shown_confirmations', JSON.stringify(shown)); }
