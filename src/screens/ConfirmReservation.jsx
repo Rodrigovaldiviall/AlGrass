@@ -4,7 +4,7 @@ import { TEXT, SUB, HAIR, ORANGE, SOFT, DANGER, YAPE } from '../constants';
 import I from '../icons';
 import { shareOrCopy } from '../utils/share';
 import { addPlayers as addPlayersToRoster, createRoster, getActivePlayers } from '../services/gameService';
-import { getReservations, setReservations, getCredit, setCredit, getPaidStatus, setPaidStatus } from '../services/reservationService';
+import { getReservations, setReservations, getCredit, setCredit, getPaidStatus, setPaidStatus, createReservation } from '../services/reservationService';
 
 // ── Player database & history ──────────────────────────────────────────────
 
@@ -698,7 +698,7 @@ export default function ConfirmReservation() {
     setPayOpen(true);
   }
 
-  async function handlePaid() {
+  async function handlePaid(paymentMethod) {
     setPayOpen(false);
     if (addGuestsMode) {
       const gameId = game?.id;
@@ -770,6 +770,21 @@ export default function ConfirmReservation() {
         ...(credit.transactions || []),
       ];
       await setCredit(credit);
+    }
+    if (guests.length === 0) {
+      createReservation({
+        gameId:        game?.id,
+        unitPrice,
+        promoCode:     promoApplied?.code    ?? null,
+        promoDiscount: promoApplied?.discount ?? 0,
+        totalAmount:   total,
+        paymentMethod,
+        source:        game?.source ?? 'match',
+      }).then(({ data, error, skipped }) => {
+        if (skipped) return; // no Supabase session (mock user) — localStorage fallback active
+        if (error)   console.warn('[checkout] Supabase reservation failed:', error);
+        else         console.log('[checkout] Supabase reservation created:', data?.id);
+      });
     }
     navigate('/profile', { state: { confirmedGame: {
       id:           game?.id,

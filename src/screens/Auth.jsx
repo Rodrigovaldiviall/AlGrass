@@ -383,8 +383,8 @@ export default function AuthScreen() {
   const { user, login } = useAuth();
   const game = state?.game;
 
-  // 'email' → 'login' | 'signup'
-  const [step, setStep]             = useState('email');
+  // 'signup' | 'login'
+  const [step, setStep]             = useState('signup');
   const [email, setEmail]           = useState('');
   const [pass, setPass]             = useState('');
   const [name, setName]             = useState('');
@@ -392,6 +392,8 @@ export default function AuthScreen() {
   const [socialLoading, setSocialLoading] = useState(null);
   const [socialError, setSocialError]     = useState('');
   const [legalModal, setLegalModal]       = useState(null);
+  const [authError,   setAuthError]       = useState('');
+  const [authLoading, setAuthLoading]     = useState(false);
 
   // forgot-password flow: null | 'options' | 'code' | 'newpass'
   const [forgotStep,   setForgotStep]   = useState(null);
@@ -445,24 +447,53 @@ export default function AuthScreen() {
     if (error) { setSocialError(error.message); setSocialLoading(null); }
   }
 
-  function checkEmail() {
-    if (!emailValid) return;
-    haptic();
-    setPass('');
-    setName('');
-    setAccept(false);
-    setStep(userExists(email) ? 'login' : 'signup');
-  }
 
-  function submit() {
+  async function submit() {
     haptic();
+    setAuthError('');
+
+    if (!supabase) {
+      if (step === 'login') {
+        if (!loginReady) return;
+        login({ name: getUserName(email) || email.split('@')[0], email, provider: 'email' });
+      } else {
+        if (!signupReady) return;
+        registerUser(email, name.trim());
+        login({ name: name.trim(), email, provider: 'email' });
+      }
+      return;
+    }
+
+    setAuthLoading(true);
     if (step === 'login') {
-      if (!loginReady) return;
-      login({ name: getUserName(email) || email.split('@')[0], email, provider: 'email' });
+      if (!loginReady) { setAuthLoading(false); return; }
+      const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
+      setAuthLoading(false);
+      if (error) { setAuthError('Revisa tu correo y contraseña e inténtalo nuevamente.'); return; }
+      // onAuthStateChange fires → login() → redirect
     } else {
-      if (!signupReady) return;
+      if (!signupReady) { setAuthLoading(false); return; }
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password: pass,
+        options: { data: { full_name: name.trim() } },
+      });
+      setAuthLoading(false);
+      if (error) {
+        if (error.message?.toLowerCase().includes('already registered') || error.code === 'user_already_exists') {
+          setStep('login');
+          setAuthError('Ya tienes una cuenta. Ingresa tu contraseña.');
+          return;
+        }
+        setAuthError(error.message);
+        return;
+      }
       registerUser(email, name.trim());
-      login({ name: name.trim(), email, provider: 'email' });
+      if (!data.session) {
+        setAuthError('Revisa tu correo para confirmar tu cuenta antes de ingresar.');
+        return;
+      }
+      // onAuthStateChange fires → login() → redirect
     }
   }
 
@@ -489,8 +520,7 @@ export default function AuthScreen() {
                  : forgotStep === 'code'    ? 'Ingresa el código de verificación'
                  : forgotStep === 'newpass' ? 'Crea tu nueva contraseña'
                  : step === 'login'         ? 'Ingresa a tu cuenta'
-                 : step === 'signup'        ? 'Crea tu cuenta para reservar'
-                 :                           'Tu próximo partido está aquí';
+                 :                           'Crea tu cuenta para reservar';
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
@@ -501,11 +531,10 @@ export default function AuthScreen() {
               if (forgotStep === 'options')  { setForgotStep(null); }
               else if (forgotStep === 'code')    { setTimerOn(false); setForgotStep('options'); }
               else if (forgotStep === 'newpass') { /* no back after verification */ }
-              else if (step !== 'email') { setStep('email'); setPass(''); setName(''); }
               else { navigate(-1); }
             }}
             style={{ padding: '6px 4px 6px 0', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 600, color: TEXT, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-            {(forgotStep && forgotStep !== 'newpass') || step !== 'email' ? '← Atrás' : 'Cancelar'}
+            {(forgotStep && forgotStep !== 'newpass') ? '← Atrás' : 'Cancelar'}
           </button>
         </div>
       </div>
@@ -533,28 +562,13 @@ export default function AuthScreen() {
           </div>
 
           <div style={{ padding: '6px 20px 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {step === 'email' ? (
-              <Field value={email} onChange={setEmail} placeholder="Correo electrónico" type="email" autoComplete="email" />
-            ) : (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ flex: 1, height: 44, padding: '0 14px', borderRadius: 14, border: `1px solid ${HAIR}`, background: SOFT, display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
-                  <span style={{ fontSize: 15, color: SUB, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{email}</span>
-                </div>
-                <button onClick={() => { setStep('email'); setPass(''); setName(''); }} style={{ flexShrink: 0, padding: '4px 2px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-                  Cambiar
-                </button>
-              </div>
-            )}
             {step === 'signup' && (
               <Field value={name} onChange={setName} placeholder="Nombre completo" autoComplete="name" />
             )}
-            {step !== 'email' && (
-              <>
-                <Field value={pass} onChange={setPass} placeholder="Contraseña" type="password" autoComplete={step === 'login' ? 'current-password' : 'new-password'} />
-                {pass.length > 0 && pass.length < 6 && (
-                  <div style={{ fontSize: 12, color: SUB, marginTop: -4, paddingLeft: 4 }}>Mínimo 6 caracteres</div>
-                )}
-              </>
+            <Field value={email} onChange={v => { setEmail(v); setAuthError(''); }} placeholder="Correo electrónico" type="email" autoComplete="email" />
+            <Field value={pass} onChange={v => { setPass(v); setAuthError(''); }} placeholder="Contraseña" type="password" autoComplete={step === 'login' ? 'current-password' : 'new-password'} />
+            {pass.length > 0 && pass.length < 6 && (
+              <div style={{ fontSize: 12, color: SUB, marginTop: -4, paddingLeft: 4 }}>Mínimo 6 caracteres</div>
             )}
             {step === 'signup' && (
               <label style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '4px 4px 2px', cursor: 'pointer', WebkitTapHighlightColor: 'transparent' }}>
@@ -574,13 +588,22 @@ export default function AuthScreen() {
           </div>
 
           <div style={{ padding: '10px 20px 16px' }}>
-            {step === 'email' ? (
-              <OrangeButton onPress={checkEmail} disabled={!emailValid}>Continuar</OrangeButton>
-            ) : (
-              <OrangeButton onPress={submit} disabled={step === 'login' ? !loginReady : !signupReady}>
-                {step === 'login' ? 'Ingresar' : 'Crear cuenta'}
-              </OrangeButton>
+            {authError && (
+              <div style={{ fontSize: 13, color: '#C0392B', marginBottom: 10, paddingLeft: 4, lineHeight: 1.4 }}>{authError}</div>
             )}
+            <OrangeButton onPress={submit} disabled={(step === 'login' ? !loginReady : !signupReady) || authLoading}>
+              {authLoading ? 'Cargando…' : step === 'login' ? 'Ingresar' : 'Crear cuenta'}
+            </OrangeButton>
+            <div style={{ marginTop: 16, textAlign: 'center', fontSize: 16 }}>
+              <button
+                onClick={() => { setStep(step === 'signup' ? 'login' : 'signup'); setAuthError(''); setPass(''); }}
+                style={{ padding: 0, background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', color: SUB, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                {step === 'signup' ? '¿Ya tienes cuenta? ' : '¿No tienes cuenta? '}
+                <span style={{ color: ORANGE, fontWeight: 700, fontSize: 17 }}>
+                  {step === 'signup' ? 'Inicia sesión' : 'Crear cuenta'}
+                </span>
+              </button>
+            </div>
           </div>
         </>)}
 
