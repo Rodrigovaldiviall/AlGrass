@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabaseClient';
+import { supabase } from '../lib/supabase';
 
 const ROSTER_KEY = 'pichanga_game_rosters';
 
@@ -7,77 +7,70 @@ export async function testConnection() {
   console.log(result.data);
 }
 
-function formatTime(t) {
-  if (!t) return '';
+// Convierte "HH:MM:SS" (Postgres time) → { time: "H:MM", ampm: "AM"|"PM" }
+function parseTime(t) {
+  if (!t) return { time: '', ampm: 'AM' };
   const [hStr, mStr] = t.split(':');
-  let h = parseInt(hStr, 10);
-  const m = mStr.padStart(2, '0');
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  if (h > 12) h -= 12;
-  if (h === 0) h = 12;
-  return `${h}:${m} ${ampm}`;
+  const h24 = parseInt(hStr, 10);
+  const m   = (mStr || '00').padStart(2, '0');
+  const ampm = h24 >= 12 ? 'PM' : 'AM';
+  const h12  = h24 % 12 || 12;
+  return { time: `${h12}:${m}`, ampm };
 }
 
 export async function getGames() {
-  const { data, error } = await supabase.from('games').select(`
-    id,
-    date_key,
-    time,
-    type,
-    status,
-    price_per_person,
-    price_total,
-    current_players,
-    amenities,
-
-    fields:field_id (
-      name,
-      format,
-      players_per_team,
-      amenities,
-      venues:venue_id (
+  const { data, error } = await supabase
+    .from('games')
+    .select(`
+      id,
+      type,
+      date_key,
+      time,
+      price_per_person,
+      current_players,
+      game_amenities:amenities,
+      fields:field_id (
         name,
-        address,
-        amenities
+        format,
+        players_per_team,
+        field_amenities:amenities,
+        venues:venue_id (
+          name,
+          city,
+          address,
+          venue_amenities:amenities
+        )
       )
-    )
-  `);
-  console.log(JSON.stringify(data, null, 2));
-  if (error) { console.error(error); return []; }
+    `)
+    .eq('type', 'match');
+
+  if (error) { console.error('getGames:', error); return []; }
+
   return data.map(g => {
-    const maxPlayers = (g.fields?.players_per_team || 0) * 2;
+    const { time, ampm } = parseTime(g.time);
+    const field     = g.fields;
+    const venue     = field?.venues;
+    const openSpots = Math.max(0, (field?.players_per_team ?? 0) * 2 - (g.current_players ?? 0));
 
     return {
-      id: g.id,
-
-      // tiempo
-      date: g.date_key,
-      time: g.time,
-
-      // tipo
-      type: g.type,
-      status: g.status,
-
-      // venue
-      venueName: g.fields?.venues?.name,
-      venueAddress: g.fields?.venues?.address,
-
-      // field
-      fieldName: g.fields?.name,
-      format: g.fields?.format,
-
-      // jugadores
-      maxPlayers,
-      currentPlayers: g.current_players || 0,
-
-      // precios
-      pricePerPlayer: g.price_per_person,
-      priceTotal: g.price_total,
-
-      // amenities separadas
-      venueAmenities: g.fields?.venues?.amenities || {},
-      fieldAmenities: g.fields?.amenities || {},
-      gameAmenities: g.amenities || {},
+      id:        g.id,
+      type:      g.type                             ?? '',
+      city:      venue?.city                        ?? '',
+      dateKey:   g.date_key                         ?? '',
+      time,
+      ampm,
+      field:     venue?.name                        ?? '',
+      fieldName: field?.name                        ?? '',
+      address:   venue?.address                     ?? '',
+      format:    field?.format                      ?? '',
+      price:     g.price_per_person                 ?? 0,
+      openSpots,
+      filmed:    g.game_amenities?.filmed           ?? false,
+      womenOnly: g.game_amenities?.women_only       ?? false,
+      master45:  g.game_amenities?.master_45        ?? false,
+      covered:   field?.field_amenities?.covered    ?? false,
+      parking:   venue?.venue_amenities?.parking    ?? false,
+      showers:   venue?.venue_amenities?.showers    ?? false,
     };
   });
 }

@@ -2,7 +2,8 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, RED, GREEN, ORANGE } from '../constants';
 import I from '../icons';
-import { GAMES, DATE_WINDOW, TODAY_KEY, TOMORROW_KEY, ymd, seedDemoWaitlist } from '../data/games';
+import { DATE_WINDOW, TODAY_KEY, TOMORROW_KEY, ymd, seedDemoWaitlist } from '../data/games';
+import { getGames } from '../services/gameService';
 seedDemoWaitlist();
 import TabBar from '../components/TabBar';
 
@@ -365,15 +366,15 @@ function DateCell({ top, bottom, active, isToday, onClick, refEl, disabled }) {
   const bottomColor = disabled ? '#D1D1D6' : (active ? '#fff' : TEXT);
   return (
     <button ref={refEl} onClick={disabled ? undefined : onClick} style={{
-      flex: '0 0 auto', width: 56, height: 64, borderRadius: 12,
+      flex: '0 0 auto', width: 50, height: 58, borderRadius: 11,
       background: bg, border, display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center', gap: 2, padding: 0,
       cursor: disabled ? 'default' : 'pointer',
       outline: 'none', WebkitTapHighlightColor: 'transparent',
       fontFamily: 'inherit', transition: 'background .15s, border-color .15s',
     }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: topColor, lineHeight: 1, textTransform: 'uppercase', letterSpacing: 0.3 }}>{top}</div>
-      <div style={{ fontSize: 20, fontWeight: 700, color: bottomColor, lineHeight: 1.1, marginTop: 4 }}>{bottom}</div>
+      <div style={{ fontSize: 10.5, fontWeight: 600, color: topColor, lineHeight: 1, textTransform: 'uppercase', letterSpacing: 0.3 }}>{top}</div>
+      <div style={{ fontSize: 18, fontWeight: 700, color: bottomColor, lineHeight: 1.1, marginTop: 3 }}>{bottom}</div>
     </button>
   );
 }
@@ -436,18 +437,18 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount })
   if (booked) {
     return (
       <div style={{
-        height: 26, padding: '0 12px', borderRadius: 999,
+        height: 22, padding: '0 8px', borderRadius: 999,
         background: BLUE, color: '#fff',
-        fontSize: 'var(--gm-pill-fs, 13px)', fontWeight: 600,
+        fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600,
         display: 'inline-flex', alignItems: 'center',
       }}>Inscrito</div>
     );
   }
   if (inWaitlist) {
     const capPill = openSpots <= 0 ? (
-      <div style={{ height: 26, padding: '0 12px', borderRadius: 999, border: `1.2px solid ${RED}`, color: RED, fontSize: 'var(--gm-pill-fs, 13px)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>Completo</div>
+      <div style={{ height: 22, padding: '0 8px', borderRadius: 999, border: `1.2px solid ${RED}`, color: RED, fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>Completo</div>
     ) : (
-      <div style={{ height: 26, width: 76, borderRadius: 999, background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN, fontSize: 'var(--gm-pill-fs, 13px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{openSpots} {openSpots === 1 ? 'cupo' : 'cupos'}</div>
+      <div style={{ height: 22, width: 64, borderRadius: 999, background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN, fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{openSpots} {openSpots === 1 ? 'cupo' : 'cupos'}</div>
     );
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
@@ -459,18 +460,18 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount })
   if (openSpots <= 0) {
     return (
       <div style={{
-        height: 26, padding: '0 12px', borderRadius: 999,
+        height: 22, padding: '0 8px', borderRadius: 999,
         border: `1.2px solid ${RED}`, color: RED,
-        fontSize: 'var(--gm-pill-fs, 13px)', fontWeight: 500,
+        fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 500,
         display: 'inline-flex', alignItems: 'center',
       }}>Completo</div>
     );
   }
   return (
     <div style={{
-      height: 26, width: 76, borderRadius: 999,
+      height: 22, width: 64, borderRadius: 999,
       background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN,
-      fontSize: 'var(--gm-pill-fs, 13px)', fontWeight: 600,
+      fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600,
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
     }}>{openSpots} {openSpots === 1 ? 'cupo' : 'cupos'}</div>
   );
@@ -487,39 +488,50 @@ function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount
       onPointerCancel={() => setPressed(false)}
       style={{
         display: 'flex', alignItems: 'center',
-        padding: '14px 16px',
+        padding: '14px 16px 14px 10px',
         borderBottom: last ? 'none' : `1px solid ${HAIR}`,
-        gap: 12, cursor: 'pointer',
+        gap: 0, cursor: 'pointer',
         background: pressed ? '#F5F7FA' : '#fff',
         transform: pressed ? 'scale(0.985)' : 'scale(1)',
         boxShadow: pressed ? '0 2px 10px rgba(0,123,255,0.08)' : '0 0 0 rgba(0,0,0,0)',
         transition: 'transform .12s ease, background .15s ease, box-shadow .15s ease',
         WebkitTapHighlightColor: 'transparent', outline: 'none', userSelect: 'none',
       }}>
-      <div style={{ width: 52, flexShrink: 0, textAlign: 'center' }}>
+      <div style={{ width: 52, flexShrink: 0, textAlign: 'center', borderRight: `1px solid ${HAIR}`, marginRight: 6 }}>
         <div style={{ fontSize: 'var(--gm-time, 15px)', fontWeight: 600, color: TEXT, lineHeight: 1.1 }}>{formatGameTime(g.time).hhmm}</div>
         <div style={{ fontSize: 'var(--gm-ampm, 12px)', fontWeight: 500, color: SUB, lineHeight: 1.1, marginTop: 2 }}>{formatGameTime(g.time).ampm}</div>
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 'var(--gm-title, 16px)', fontWeight: 600, color: TEXT, lineHeight: 1.2, letterSpacing: -0.1 }}>{g.fieldName}</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4, color: SUB, fontSize: 'var(--gm-meta, 12.5px)', flexWrap: 'nowrap', overflow: 'hidden' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+        <div style={{ fontSize: 'var(--gm-title, 16px)', fontWeight: 600, color: TEXT, lineHeight: 1.2, letterSpacing: -0.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.field}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, color: SUB, fontSize: 11, flexWrap: 'nowrap', overflow: 'hidden' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0, fontSize: 13, fontWeight: 500 }}>
             {I.twoPeople(SUB)}<span>{g.format}</span>
           </span>
-          {g.filmed && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              {I.camera(SUB)}<span>Filmado</span>
-            </span>
-          )}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0, overflow: 'hidden' }}>
+            {g.womenOnly ? (
+              <>
+                {I.female(SUB)}<span style={{ whiteSpace: 'nowrap' }}>Para mujeres</span>
+                {g.parking && <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 3 }}>{ParkingIcon(SUB)}</span>}
+                {g.covered && <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 3 }}>{I.roof(SUB)}</span>}
+              </>
+            ) : g.parking ? (
+              <>
+                {ParkingIcon(SUB)}<span style={{ whiteSpace: 'nowrap' }}>Estacionamiento</span>
+                {g.covered && <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 3 }}>{I.roof(SUB)}</span>}
+              </>
+            ) : g.covered ? (
+              <>{I.roof(SUB)}<span style={{ whiteSpace: 'nowrap' }}>Cubierta</span></>
+            ) : null}
+          </span>
           {g.price !== undefined && (
-            <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0, fontSize: 13, fontWeight: 600, color: TEXT }}>
               S/.{g.price}
             </span>
           )}
         </div>
       </div>
       <StatusPill openSpots={g.openSpots} booked={booked} inWaitlist={inWaitlist} guestInfo={guestInfo} canceledCount={canceledCount} />
-      <div style={{ pointerEvents: 'none' }}>{I.chev()}</div>
+      <div style={{ pointerEvents: 'none', marginLeft: 6 }}>{I.chev()}</div>
     </div>
   );
 }
@@ -587,6 +599,8 @@ export default function PickupGames() {
   const location = useLocation();
 
   const [showCitySheet, setShowCitySheet] = useState(!!location.state?.showCitySheet);
+  const [games, setGames] = useState([]);
+  useEffect(() => { getGames().then(setGames); }, []);
 
   const [flt, setFlt]               = useState(() => {
     try { return JSON.parse(sessionStorage.getItem('pg'))?.flt ?? EMPTY_FLT; } catch { return EMPTY_FLT; }
@@ -689,7 +703,7 @@ export default function PickupGames() {
   }
 
   const filteredGames = useMemo(() => {
-    return GAMES.filter(g => {
+    return games.filter(g => {
       if (g.city && g.city !== userCity) return false;
       if (flt.cubierta        && !g.covered)   return false;
       if (flt.estacionamiento && !g.parking)   return false;
@@ -712,7 +726,7 @@ export default function PickupGames() {
       }
       return true;
     });
-  }, [flt, userCity]);
+  }, [flt, userCity, games]);
 
   const grouped = useMemo(() => {
     const map = new Map();
@@ -724,7 +738,7 @@ export default function PickupGames() {
   }, [filteredGames]);
 
   const eventDates  = useMemo(() => new Set(grouped.map(([k]) => k)), [grouped]);
-  const maxEventKey = useMemo(() => GAMES.reduce((max, g) => g.dateKey > max ? g.dateKey : max, ''), []);
+  const maxEventKey = useMemo(() => games.reduce((max, g) => g.dateKey > max ? g.dateKey : max, ''), [games]);
 
   useEffect(() => {
     if (grouped.length === 0 || eventDates.has(selectedKey)) return;

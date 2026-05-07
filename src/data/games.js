@@ -1,15 +1,15 @@
 export const ymd = (d) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-export const TODAY = new Date(2026, 4, 1);  // 1 mayo 2026
+export const TODAY = new Date();
+TODAY.setHours(0, 0, 0, 0);
 export const TODAY_KEY    = ymd(TODAY);
-export const TOMORROW_KEY = ymd(new Date(2026, 4, 2));
+export const TOMORROW_KEY = ymd(new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate() + 1));
 
 export const DATE_WINDOW = (() => {
   const out = [];
-  for (let i = 0; i < 30; i++) {
-    const d = new Date(TODAY);
-    d.setDate(TODAY.getDate() + i);
+  for (let i = -2; i < 30; i++) {
+    const d = new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate() + i);
     out.push(d);
   }
   return out;
@@ -57,8 +57,8 @@ export const GAMES = [
   { id: 'g24', city: 'Arequipa', dateKey: ymd(new Date(2026, 4, 5)), time: '7:30',  ampm: 'PM', field: 'La Satalia',        format: '7v7', filmed: false, covered: false, womenOnly: false, openSpots: 0, price: 9,  parking: false, showers: false, master45: true  },
   { id: 'g25', city: 'Arequipa', dateKey: ymd(new Date(2026, 4, 5)), time: '8:00',  ampm: 'PM', field: 'Ibèria',            format: '7v7', filmed: false, covered: false, womenOnly: false, openSpots: 1, price: 8,  parking: false, showers: false, master45: false },
 
-  // ── 6 mayo ─────────────────────────────────────────────────────────────────
-  { id: 'mock-guest-001', city: 'Arequipa', dateKey: ymd(new Date(2026, 4, 6)), time: '7:00', ampm: 'PM', field: 'La Satalia', format: '7v7', filmed: true, covered: false, womenOnly: false, openSpots: 3, price: 25, parking: false, showers: false, master45: false },
+  // ── 7 mayo ─────────────────────────────────────────────────────────────────
+  { id: 'mock-guest-001', city: 'Arequipa', dateKey: ymd(new Date(2026, 4, 7)), time: '7:00', ampm: 'PM', field: 'La Satalia', format: '7v7', filmed: true, covered: false, womenOnly: false, openSpots: 3, price: 25, parking: false, showers: false, master45: false },
 
   // ── Lima ────────────────────────────────────────────────────────────────────
   { id: 'g29', city: 'Lima', dateKey: ymd(new Date(2026, 4, 1)), time: '6:00',  ampm: 'PM', field: 'San Borja',  format: '7v7', filmed: false, covered: false, womenOnly: false, openSpots: 2, price: 9,  parking: true,  showers: true,  master45: false },

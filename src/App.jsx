@@ -34,7 +34,16 @@ function RouteShell() {
 }
 
 export default function App() {
-  useEffect(() => { gameService.testConnection(); }, []);
+  useEffect(() => {
+    gameService.getGames().then(games => {
+      console.log('[getGames] total:', games.length);
+      if (games.length > 0) console.log('[getGames] sample:', JSON.stringify(games[0], null, 2));
+      const EXPECTED = ['id','city','dateKey','time','ampm','field','format','filmed','covered','womenOnly','openSpots','price','parking','showers','master45'];
+      const missing = EXPECTED.filter(k => !(k in (games[0] || {})));
+      if (missing.length) console.warn('[getGames] campos faltantes:', missing);
+      else console.log('[getGames] ✓ todos los campos presentes');
+    });
+  }, []);
 
   return (
     <AuthProvider>

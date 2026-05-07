@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git --version)",
+      "Bash(py --version)",
+      "Bash(git clone *)",
+      "Bash(python cli.py scan)",
+      "Bash(python cli.py dashboard)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8080/)",
+      "Bash(netstat -ano)",
+      "Bash(curl -s http://localhost:8080/api/data)",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('models:', d.get\\('all_models'\\)\\); print\\('daily rows:', len\\(d.get\\('daily_by_model',[]\\)\\)\\); print\\('hourly rows:', len\\(d.get\\('hourly_by_model',[]\\)\\)\\); print\\('sessions:', len\\(d.get\\('sessions_all',[]\\)\\)\\); print\\('first daily:', d.get\\('daily_by_model',[]\\)[:2]\\)\")",
+      "Bash(git -C \"C:\\\\Claude Code\\\\AlGrass\" checkout main)",
+      "Bash(git -C \"C:\\\\Claude Code\\\\AlGrass\" status)",
+      "Bash(git -C \"C:\\\\Claude Code\\\\AlGrass\" log --oneline -3)",
+      "Bash(git -C \"C:\\\\Claude Code\\\\AlGrass\" branch)",
+      "Bash(git -C \"C:\\\\Claude Code\\\\AlGrass\" rev-parse --show-toplevel)",
+      "Bash(Test-Path \"C:\\\\Claude Code\\\\AlGrass\\\\.git\")",
+      "Bash(git -C \"C:\\\\Claude Code\" branch)",
+      "Bash(git -C \"C:\\\\Claude Code\" status --short)",
+      "Bash(git -C \"C:\\\\Claude Code\" log --oneline v2)"
+    ]
+  }
+}

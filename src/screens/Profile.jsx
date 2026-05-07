@@ -1777,12 +1777,19 @@ export default function Profile() {
       const _sc = JSON.parse(localStorage.getItem('pichanga_self_cancelled_guests') || '{}');
       if (_sc[MOCK_ID]) return;
       const rosters = JSON.parse(localStorage.getItem(ROSTER_KEY) || '{}');
-      if (rosters[MOCK_ID]?.payerCode) return;
+      if (rosters[MOCK_ID]?.payerCode) {
+        if (rosters[MOCK_ID].gameDetails?.date !== 'Jue 7 May 2026') {
+          rosters[MOCK_ID].gameDetails = { ...rosters[MOCK_ID].gameDetails, date: 'Jue 7 May 2026' };
+          localStorage.setItem(ROSTER_KEY, JSON.stringify(rosters));
+          setExtraGames(prev => [...prev]);
+        }
+        return;
+      }
       rosters[MOCK_ID] = {
         players: [{ id: 'mock-p1', name: profileData.fullName || 'Invitado', hue: 200, code: profileData.userCode }],
         payerName: 'Carlos Ramos',
         reservedAt: '2026-05-04T10:00:00.000Z',
-        gameDetails: { id: MOCK_ID, date: 'Mié 6 May 2026', time: '7:00', ampm: 'PM', field: 'La Satalia', format: '7v7', type: 'game', price: 'S/. 25.00' },
+        gameDetails: { id: MOCK_ID, date: 'Jue 7 May 2026', time: '7:00', ampm: 'PM', field: 'La Satalia', format: '7v7', type: 'game', price: 'S/. 25.00' },
         payerCode: '@carlosramos',
       };
       localStorage.setItem(ROSTER_KEY, JSON.stringify(rosters));

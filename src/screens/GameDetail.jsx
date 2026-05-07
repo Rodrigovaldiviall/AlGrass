@@ -80,12 +80,16 @@ function buildGame(sel) {
     };
   }
   const fieldInfo = FIELD_INFO[sel.field] || { address: [sel.field, 'Dirección no disponible'] };
+  const address = sel.address ? [sel.address] : fieldInfo.address;
   const total = totalSpotsFor(sel.format);
   const chips = [
-    { kind: 'format', label: sel.format || '7v7' },
-    sel.covered   && { kind: 'covered', label: 'Cubierto' },
-    sel.filmed    && { kind: 'filmed',  label: 'Filmado' },
-    sel.womenOnly && { kind: 'women',   label: 'Para mujeres' },
+    { kind: 'format',   label: sel.format || '7v7' },
+    sel.covered   && { kind: 'covered',  label: 'Cubierto' },
+    sel.filmed    && { kind: 'filmed',   label: 'Filmado' },
+    sel.womenOnly && { kind: 'women',    label: 'Solo mujeres' },
+    sel.master45  && { kind: 'master45', label: 'Master 45+' },
+    sel.parking   && { kind: 'parking',  label: 'Estacionamiento' },
+    sel.showers   && { kind: 'showers',  label: 'Duchas' },
   ].filter(Boolean);
   const confirmed = Math.max(0, total - (sel.openSpots ?? 0));
   const players = GAME_DEFAULTS.players.slice(0, Math.min(confirmed, GAME_DEFAULTS.players.length));
@@ -97,8 +101,8 @@ function buildGame(sel) {
     date: sel.date || formatDateEs(sel.dateKey),
     time: `${sel.time || '7:00'} ${sel.ampm || 'PM'}`,
     duration: GAME_DEFAULTS.duration,
-    fieldNumber: GAME_DEFAULTS.fieldNumber,
-    address: fieldInfo.address,
+    fieldNumber: sel.fieldName || GAME_DEFAULTS.fieldNumber,
+    address,
     chips,
     description: GAME_DEFAULTS.description,
     recommendations: GAME_DEFAULTS.recommendations,
@@ -226,15 +230,40 @@ function WAChatButton() {
 }
 
 // ── Chip
-const CHIP_ICON = { format: I.twoPeople, filmed: I.camera, covered: I.roof, women: I.female, spots: I.plus };
+const _ParkingIcon = (c = TEXT) => (
+  <svg width="11" height="13" viewBox="0 0 11 13" fill="none">
+    <path d="M3 2v9M3 2h3c1.3 0 2.5 1.1 2.5 2.5S7.3 7 6 7H3" stroke={c} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+const _ShowerIcon = (c = TEXT) => (
+  <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+    <path d="M1.5 4.5h10M3 4.5V3c0-.8.7-1.5 1.5-1.5h4C9.3 1.5 10 2.2 10 3v1.5" stroke={c} strokeWidth="1.3" strokeLinecap="round"/>
+    <path d="M3 8v.8M6.5 7.5v.8M10 8v.8M4.5 10.5v.8M8 10v.8" stroke={c} strokeWidth="1.3" strokeLinecap="round"/>
+  </svg>
+);
+const _StarIcon = (c = TEXT) => (
+  <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+    <path d="M7 1.5l1.5 3.2 3.5.5-2.5 2.4.6 3.5L7 9.4l-3.1 1.7.6-3.5L2 5.2l3.5-.5L7 1.5z" stroke={c} strokeWidth="1.3" strokeLinejoin="round"/>
+  </svg>
+);
+const CHIP_ICON = {
+  format:   I.twoPeople,
+  filmed:   I.camera,
+  covered:  I.roof,
+  women:    I.female,
+  spots:    I.plus,
+  master45: _StarIcon,
+  parking:  _ParkingIcon,
+  showers:  _ShowerIcon,
+};
 function Chip({ kind, label }) {
   const icon = CHIP_ICON[kind];
   return (
     <div style={{
-      flex: '0 0 auto', height: 32, padding: '0 12px', borderRadius: 999,
+      flex: '0 0 auto', height: 28, padding: '0 10px', borderRadius: 999,
       border: `1px solid ${HAIR}`, background: '#fff',
-      display: 'inline-flex', alignItems: 'center', gap: 6,
-      color: TEXT, fontSize: 'var(--gd-is, 13px)', fontWeight: 500, whiteSpace: 'nowrap',
+      display: 'inline-flex', alignItems: 'center', gap: 5,
+      color: TEXT, fontSize: 'var(--gd-is, 12px)', fontWeight: 500, whiteSpace: 'nowrap',
     }}>
       {icon ? icon(TEXT) : null}
       <span>{label}</span>
@@ -1073,7 +1102,7 @@ export default function GameDetail() {
             <InfoRow
               icon={I.fieldIcon()}
               primary={g.fieldNumber}
-              secondary={<span>{g.address[0]}<br />{g.address[1]}</span>}
+              secondary={<span>{g.address[0]}{g.address[1] ? <><br />{g.address[1]}</> : null}</span>}
             />
           </div>
 
