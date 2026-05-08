@@ -60,6 +60,14 @@ input:-webkit-autofill:hover {
 @keyframes lp-slideup  { from { transform: translateY(100%); }             to { transform: translateY(0); } }
 @keyframes pulse       { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
+/* Desktop: sheet overlays are bounded to .screen-shell (the exact content panel) */
+@media (min-width: 1024px) {
+  .screen-shell  { position: relative; }
+  .sheet-overlay { position: absolute !important; align-items: center !important; }
+  .sheet-panel   { width: 100%; }
+  .hide-on-desktop { display: none !important; }
+}
+
 /* ── Responsive app shell ───────────────────────────────── */
 
 /* Mobile: wrappers are transparent so existing flex layout is unchanged */

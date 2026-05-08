@@ -924,6 +924,17 @@ function getStoredPassword(email) {
   } catch { return null; }
 }
 
+function translateAuthError(msg) {
+  if (!msg) return 'Error desconocido.';
+  const wait = msg.match(/after (\d+) seconds?/i);
+  if (wait) return 'Inténtalo nuevamente en unos minutos.';
+  if (/rate.?limit|too many|429/i.test(msg)) return 'Demasiados intentos. Espera unos minutos antes de continuar.';
+  if (/invalid.?email/i.test(msg)) return 'El email ingresado no es válido.';
+  if (/already.?registered|already.?used/i.test(msg)) return 'Este email ya está en uso por otra cuenta.';
+  if (/email.?change.*pending/i.test(msg)) return 'Ya hay un cambio de email pendiente de confirmación.';
+  return msg;
+}
+
 // ── EditProfileModal ───────────────────────────────────────────────────────
 
 function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, userProvider = 'email' }) {
@@ -960,8 +971,10 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
   const scrollRef    = useRef(null);
   const [activeField,  setActiveField]  = useState(null); // null | 'email' | 'password'
   const [confirmField, setConfirmField] = useState(null);
-  const emailSnapshot    = useRef(profileData.email || userEmail || '');
+  const emailSnapshot    = useRef(profileData.email || userEmail || ''); // confirmed email — never mutated
   const pwSnapshot       = useRef(profileData.password || '');
+  const [pendingEmailChange, setPendingEmailChange] = useState(null);
+  const [emailChangeError,  setEmailChangeError]  = useState(null);
 
   useEffect(() => {
     if (!pwLocked && scrollRef.current) {
@@ -981,7 +994,7 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
 
   function unlockField(field) {
-    if (field === 'email') { emailSnapshot.current = emailVal; setEmailLocked(false); }
+    if (field === 'email') { setEmailVal(emailSnapshot.current); setEmailLocked(false); setPendingEmailChange(null); setEmailChangeError(null); }
     else { pwSnapshot.current = password; setPwCurrent(''); setPassword(''); setPwError(''); setPwLocked(false); }
     setActiveField(field);
   }
@@ -995,7 +1008,7 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
 
   function requestLock(field) {
     if (field === 'email') {
-      const changed = emailVal !== emailSnapshot.current;
+      const changed = emailVal.trim() !== emailSnapshot.current.trim();
       if (changed) setConfirmField('email');
       else         doLockField('email');
     } else {
@@ -1014,7 +1027,20 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
     doLockField(field);
   }
 
-  function applyChange() { doLockField(confirmField); }
+  async function applyChange() {
+    if (confirmField === 'email') {
+      const newEmail = emailVal.trim();
+      doLockField('email');
+      setEmailVal(emailSnapshot.current); // revert synchronously — before any await
+      if (supabase) {
+        const { error } = await supabase.auth.updateUser({ email: newEmail });
+        if (!error) { setPendingEmailChange(newEmail); setEmailChangeError(null); }
+        else setEmailChangeError(error.message);
+      }
+    } else {
+      doLockField(confirmField);
+    }
+  }
 
   function handlePhoto(e) {
     const file = e.target.files?.[0];
@@ -1226,6 +1252,17 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
           </div>
         )}
 
+        {pendingEmailChange && (
+          <div style={{ margin: '-4px 0 8px', padding: '9px 12px', borderRadius: 10, background: '#EEF3FF', border: '1px solid #C7D7FF', fontSize: 13, color: '#1B3A9E', lineHeight: 1.45 }}>
+            ✉️ Enviamos un correo a <strong>{pendingEmailChange}</strong> para confirmar el cambio.
+          </div>
+        )}
+        {emailChangeError && (
+          <div style={{ margin: '-4px 0 8px', padding: '9px 12px', borderRadius: 10, background: '#FFF0F0', border: '1px solid #FFCDD2', fontSize: 13, color: '#B71C1C', lineHeight: 1.45 }}>
+            {translateAuthError(emailChangeError)}
+          </div>
+        )}
+
         {!isSocial && !emailLocked && (
           <div
             onClick={() => requestLock('email')}
@@ -1258,16 +1295,16 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
         </FieldRow>
 
         <FieldRow label="Posición de juego">
-          <div style={{ display: 'flex', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 4 }}>
             {POSITIONS.map(pos => {
               const sel = positions.includes(pos);
               return (
                 <button key={pos} onClick={() => togglePosition(pos)} style={{
-                  height: 32, padding: '0 12px', borderRadius: 999,
+                  height: 32, padding: '0 8px', borderRadius: 999,
                   border: `1.5px solid ${sel ? BLUE : HAIR}`,
                   background: sel ? `${BLUE}18` : '#fff',
                   color: sel ? BLUE : TEXT,
-                  fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                  fontSize: 12, fontWeight: 600, cursor: 'pointer',
                   WebkitTapHighlightColor: 'transparent', outline: 'none',
                   transition: 'border-color .12s, background .12s, color .12s',
                 }}>
@@ -1550,13 +1587,13 @@ function ConfirmedOverlay({ game, onOK }) {
   function handleOK() { setOpen(false); setTimeout(onOK, 240); }
 
   return (
-    <div style={{
+    <div className="sheet-overlay" style={{
       position: 'fixed', inset: 0, zIndex: 100,
       background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)',
       transition: 'background .22s ease',
       display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
     }}>
-      <div style={{
+      <div className="sheet-panel" style={{
         background: '#fff',
         borderTopLeftRadius: 24, borderTopRightRadius: 24,
         padding: '28px 24px calc(32px + env(safe-area-inset-bottom))',
@@ -1622,13 +1659,13 @@ function RatingModal({ game, onRate, onSkip }) {
   const active = hovered || stars;
 
   return (
-    <div style={{
+    <div className="sheet-overlay" style={{
       position: 'fixed', inset: 0, zIndex: 100,
       background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)',
       transition: 'background .22s ease',
       display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
     }}>
-      <div style={{
+      <div className="sheet-panel" style={{
         background: '#fff',
         borderTopLeftRadius: 24, borderTopRightRadius: 24,
         padding: '28px 24px calc(28px + env(safe-area-inset-bottom))',
@@ -1811,7 +1848,7 @@ export default function Profile() {
       if (!session?.user?.id) return;
       supabase
         .from('users')
-        .select('full_name, email, role, organizer_status, credit_balance')
+        .select('full_name, email, role, organizer_status, credit_balance, birth_date, sex, preferred_position, phone, nationality, occupation')
         .eq('id', session.user.id)
         .single()
         .then(({ data, error }) => {
@@ -1819,6 +1856,17 @@ export default function Profile() {
           if (data) {
             setSbProfile(data);
             if (data.credit_balance != null) setCreditBalance(data.credit_balance);
+            setProfileData(prev => {
+              const patch = {};
+              if (data.full_name)          { patch.fullName = data.full_name; patch.firstName = data.full_name.split(' ')[0] || ''; patch.lastName = data.full_name.split(' ').slice(1).join(' '); }
+              if (data.birth_date)         { const [y, m, d] = data.birth_date.split('-').map(Number); patch.birthYear = y; patch.birthMonth = m; patch.birthDay = d; }
+              if (data.sex)                { patch.gender = data.sex; }
+              if (data.preferred_position?.length) { patch.positions = data.preferred_position; patch.position = data.preferred_position[0]; }
+              if (data.phone)              { patch.phone = data.phone; }
+              if (data.nationality)        { patch.nationality = data.nationality; }
+              if (data.occupation)         { patch.occupation = data.occupation; }
+              return { ...prev, ...patch };
+            });
           }
         });
       supabase
@@ -1890,9 +1938,29 @@ export default function Profile() {
     ? past.find(g => !ratings[g.id] && !skippedRatings[g.id]) ?? null
     : null;
 
-  function handleSave(updated) {
+  async function handleSave(updated) {
     setProfileData(updated);
     try { localStorage.setItem(PROFILE_KEY, JSON.stringify(updated)); } catch {}
+    if (!supabase) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user?.id) return;
+      const patch = {
+        full_name:          updated.fullName          || null,
+        sex:                updated.gender            || null,
+        preferred_position: updated.positions?.length ? updated.positions : null,
+        phone:              updated.phone             || null,
+        nationality:        updated.nationality       || null,
+        occupation:         updated.occupation        || null,
+      };
+      if (updated.birthYear && updated.birthMonth && updated.birthDay) {
+        patch.birth_date = `${updated.birthYear}-${String(updated.birthMonth).padStart(2, '0')}-${String(updated.birthDay).padStart(2, '0')}`;
+      }
+      const { error } = await supabase.from('users').update(patch).eq('id', session.user.id);
+      if (error) console.warn('[Profile] update users:', error.message);
+      else setSbProfile(prev => ({ ...prev, full_name: patch.full_name }));
+
+    } catch (e) { console.warn('[Profile] handleSave:', e); }
   }
 
   function handleOK() {
@@ -2021,7 +2089,7 @@ export default function Profile() {
 
           <ProfileCard user={cardUser} gamesPlayedCount={pastGameCount} onEdit={() => setEditOpen(true)} />
 
-          <div style={{ padding: '16px 16px 0', textAlign: 'center' }}>
+<div style={{ padding: '16px 16px 0', textAlign: 'center' }}>
             <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, letterSpacing: -0.1 }}>
               Completa tu perfil para obtener<br />mejores recomendaciones
             </div>

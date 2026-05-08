@@ -4,7 +4,7 @@ import { TEXT, SUB, HAIR, ORANGE, SOFT, DANGER, YAPE } from '../constants';
 import I from '../icons';
 import { shareOrCopy } from '../utils/share';
 import { addPlayers as addPlayersToRoster, createRoster, getActivePlayers } from '../services/gameService';
-import { getReservations, setReservations, getCredit, setCredit, getPaidStatus, setPaidStatus, createReservation } from '../services/reservationService';
+import { getReservations, setReservations, getCredit, setCredit, getPaidStatus, setPaidStatus, createReservation, syncCreditBalance, validatePromoCode } from '../services/reservationService';
 
 // ── Player database & history ──────────────────────────────────────────────
 
@@ -38,20 +38,6 @@ function getFavorites(paidPlayers) {
   return result.sort((a, b) => a.name.localeCompare(b.name, 'es'));
 }
 
-// ── Promo ──────────────────────────────────────────────────────────────────
-
-const PROMO_CODES = {
-  PERSONAL2026: { kind: 'percent', value: 20 },
-};
-
-function applyPromo(unitPrice, code) {
-  const def = PROMO_CODES[code?.trim().toUpperCase()];
-  if (!def) return { discount: 0, def: null };
-  const discount = def.kind === 'percent'
-    ? Math.min(unitPrice * (def.value / 100), unitPrice)
-    : Math.min(def.value, unitPrice);
-  return { discount, def: { ...def, code: code.trim().toUpperCase() } };
-}
 
 // ── Shared primitives ──
 
@@ -448,6 +434,7 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
     <div
       role="dialog"
       aria-modal="true"
+      className="sheet-overlay"
       onClick={e => { if (e.target === e.currentTarget) handleClose(); }}
       style={{
         position: 'fixed', inset: 0, zIndex: 200,
@@ -456,7 +443,7 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
         transition: 'background .22s ease',
         overflow: 'hidden',
       }}>
-      <div style={{
+      <div className="sheet-panel" style={{
         position: 'relative', background: '#FAFAFA',
         borderTopLeftRadius: 22, borderTopRightRadius: 22,
         boxShadow: '0 -12px 40px rgba(0,0,0,0.18)',
@@ -554,13 +541,15 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
           </MethodRow>
 
           {/* 3. Apple Pay / Google Pay */}
-          <MethodRow
-            active={activeTab === 'native'}
-            onSelect={() => setActiveTab('native')}
-            accentColor="#1B1B1F"
-            icon={nativeIcon}
-            label={nativeLabel}
-          />
+          <div className="hide-on-desktop">
+            <MethodRow
+              active={activeTab === 'native'}
+              onSelect={() => setActiveTab('native')}
+              accentColor="#1B1B1F"
+              icon={nativeIcon}
+              label={nativeLabel}
+            />
+          </div>
 
           <div style={{ height: 8 }} />
         </div>
@@ -579,7 +568,7 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
       </div>
 
       {(paying === 'confirming' || paying === 'rejected') && (
-        <div style={{
+        <div className="sheet-overlay" style={{
           position: 'fixed', inset: 0, zIndex: 201,
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
           background: paying === 'rejected' ? '#fff' : 'rgba(10,10,15,0.88)',
@@ -645,6 +634,7 @@ export default function ConfirmReservation() {
   const [promoInput, setPromoInput]     = useState('');
   const [promoApplied, setPromoApplied] = useState(null);
   const [promoError, setPromoError]     = useState('');
+  const [promoLoading, setPromoLoading] = useState(false);
   const [freeConfirming, setFreeConfirming] = useState(false);
   const [creditLoading, setCreditLoading]   = useState(false);
 
@@ -683,10 +673,13 @@ export default function ConfirmReservation() {
     : (promoApplied || guests.length > 0 || creditApplied > 0) ? fmt(total) : unitStr;
   const seats = addGuestsMode ? guests.length : 1 + guests.length;
 
-  function applyCode() {
-    const { discount, def } = applyPromo(unitPrice, promoInput);
-    if (!def) { setPromoApplied(null); setPromoError('Código no válido'); return; }
-    setPromoApplied({ ...def, discount });
+  async function applyCode() {
+    if (!promoInput.trim() || promoLoading) return;
+    setPromoLoading(true);
+    const result = await validatePromoCode(promoInput, unitPrice);
+    setPromoLoading(false);
+    if (result.error) { setPromoApplied(null); setPromoError('Código no válido'); return; }
+    setPromoApplied({ kind: 'percent', value: result.value, discount: result.discount, code: result.code });
     setPromoError('');
   }
 
@@ -775,6 +768,7 @@ export default function ConfirmReservation() {
         ...(credit.transactions || []),
       ];
       await setCredit(credit);
+      syncCreditBalance(credit.balance).catch(() => {});
     }
     if (guests.length === 0) {
       createReservation({
@@ -784,9 +778,10 @@ export default function ConfirmReservation() {
         promoDiscount: promoApplied?.discount ?? 0,
         totalAmount:   total,
         paymentMethod,
+        creditApplied,
         source:        game?.source ?? 'match',
       }).then(({ data, error, skipped }) => {
-        if (skipped) return; // no Supabase session (mock user) — localStorage fallback active
+        if (skipped) return;
         if (error)   console.warn('[checkout] Supabase reservation failed:', error);
         else         console.log('[checkout] Supabase reservation created:', data?.id);
       });
@@ -962,8 +957,10 @@ export default function ConfirmReservation() {
                   </svg>
                 </button>
               </div>
-              <button onClick={applyCode} disabled={!promoInput.trim()} style={{ height: 42, padding: '0 16px', borderRadius: 10, background: promoInput.trim() ? TEXT : '#E8E8EC', color: promoInput.trim() ? '#fff' : '#9A9AA0', border: 'none', cursor: promoInput.trim() ? 'pointer' : 'not-allowed', fontFamily: 'inherit', fontSize: 14, fontWeight: 700, flexShrink: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-                Aplicar
+              <button onClick={applyCode} disabled={!promoInput.trim() || promoLoading} style={{ height: 42, padding: '0 16px', borderRadius: 10, background: (promoInput.trim() && !promoLoading) ? TEXT : '#E8E8EC', color: (promoInput.trim() && !promoLoading) ? '#fff' : '#9A9AA0', border: 'none', cursor: (promoInput.trim() && !promoLoading) ? 'pointer' : 'not-allowed', fontFamily: 'inherit', fontSize: 14, fontWeight: 700, flexShrink: 0, WebkitTapHighlightColor: 'transparent', outline: 'none', minWidth: 72, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                {promoLoading
+                  ? <span style={{ width: 14, height: 14, borderRadius: '50%', border: '2px solid rgba(27,27,31,0.2)', borderTop: '2px solid #9A9AA0', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
+                  : 'Aplicar'}
               </button>
             </div>
             {promoError && <div style={{ marginTop: 6, fontSize: 12.5, color: DANGER, paddingLeft: 2 }}>{promoError}</div>}
@@ -1036,7 +1033,7 @@ export default function ConfirmReservation() {
       )}
 
       {freeConfirming && (
-        <div style={{
+        <div className="sheet-overlay" style={{
           position: 'fixed', inset: 0, zIndex: 200,
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
           background: 'rgba(10,10,15,0.88)',

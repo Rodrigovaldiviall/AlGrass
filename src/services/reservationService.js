@@ -28,7 +28,7 @@ export async function setPaidStatus(data) {
   try { localStorage.setItem(PAID_KEY, JSON.stringify(data)); } catch {}
 }
 
-export async function createReservation({ gameId, unitPrice, promoCode, promoDiscount, totalAmount, paymentMethod, source }) {
+export async function createReservation({ gameId, unitPrice, promoCode, promoDiscount, totalAmount, paymentMethod, creditApplied, source }) {
   if (!supabase) return { skipped: true };
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.user?.id) return { skipped: true }; // mock/localStorage user, no Supabase session
@@ -41,7 +41,7 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoDis
       unit_price:     unitPrice,
       promo_code:     promoCode || null,
       promo_discount: promoDiscount || 0,
-      credit_applied: 0,
+      credit_applied: creditApplied || 0,
       total_amount:   totalAmount,
       payment_method: paymentMethod,
       source:         source || 'match',
@@ -51,6 +51,33 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoDis
     .single();
   if (error) console.error('[createReservation]', error);
   return { data, error };
+}
+
+export async function syncCreditBalance(newBalance) {
+  if (!supabase) return { skipped: true };
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.user?.id) return { skipped: true };
+  const { error } = await supabase
+    .from('users')
+    .update({ credit_balance: newBalance })
+    .eq('id', session.user.id);
+  if (error) console.error('[syncCreditBalance]', error);
+  return { error };
+}
+
+export async function validatePromoCode(code, unitPrice) {
+  if (!supabase || !code?.trim()) return { error: 'invalid' };
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('promo_codes')
+    .select('discount_percent')
+    .eq('code', code.trim().toUpperCase())
+    .eq('active', true)
+    .or(`expires_at.is.null,expires_at.gt.${now}`)
+    .maybeSingle();
+  if (error || !data) return { error: 'invalid' };
+  const discount = Math.min(unitPrice * (data.discount_percent / 100), unitPrice);
+  return { discount, value: data.discount_percent, code: code.trim().toUpperCase() };
 }
 
 export async function cancelReservation(gameId) {

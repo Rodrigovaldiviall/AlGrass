@@ -11,7 +11,7 @@ import { getActivePlayers, getRoster, removePlayers, setTitularCanceled as markT
 import TabBar from '../components/TabBar';
 import RatingBlock from '../components/RatingBlock';
 import { useAuth } from '../context/AuthContext';
-import { cancelReservation } from '../services/reservationService';
+import { cancelReservation, syncCreditBalance } from '../services/reservationService';
 
 const WAITLIST_KEY   = 'pichanga_waitlist';
 const ATTENDANCE_KEY = 'pichanga_attendance';
@@ -358,8 +358,8 @@ function PaymentDetailSheet({ price, breakdown, paidBy, userName, titularCancele
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
   return (
-    <div onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease' }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(24px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
+    <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease' }}>
+      <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(24px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
         <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 20px' }} />
         <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 16, textAlign: 'center', letterSpacing: -0.2 }}>Detalles del pago</div>
         <PaymentDetail price={price} breakdown={breakdown} paidBy={paidBy} userName={userName} titularCanceled={titularCanceled} activeGuestCount={activeGuestCount} guestSubBreakdown={guestSubBreakdown} alwaysExpanded />
@@ -508,6 +508,7 @@ function PlayerModal({ player, onClose }) {
 
   return (
     <div
+      className="sheet-overlay"
       onClick={dismiss}
       style={{
         position: 'fixed', inset: 0, zIndex: 200,
@@ -605,8 +606,8 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
     </svg>
   );
   return (
-    <div onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease' }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(20px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
+    <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease' }}>
+      <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(20px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
         <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 20px' }} />
         <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 16, textAlign: 'center', letterSpacing: -0.2 }}>Gestionar la reserva</div>
         <button onClick={onPaymentDetail} style={rowStyle}>
@@ -703,6 +704,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                 ...(credit.transactions || []),
               ];
               localStorage.setItem(CREDIT_KEY_GD, JSON.stringify(credit));
+              syncCreditBalance(credit.balance).catch(() => {});
             } catch {}
           }
           try {
@@ -725,6 +727,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
               ...(credit.transactions || []),
             ];
             localStorage.setItem(CREDIT_KEY_GD, JSON.stringify(credit));
+            syncCreditBalance(credit.balance).catch(() => {});
           } catch {}
         }
         if (checkedGuests.size > 0) removePlayers(gameId, [...checkedGuests]);
@@ -771,8 +774,8 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
   );
 
   return (
-    <div onClick={step !== 'processing' ? dismiss : undefined} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease' }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+    <div className="sheet-overlay" onClick={step !== 'processing' ? dismiss : undefined} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease' }}>
+      <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
 
         {step === 'select' && (<>
           <div style={{ padding: '20px 16px 0', flexShrink: 0 }}>

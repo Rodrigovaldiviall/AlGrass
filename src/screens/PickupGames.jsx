@@ -133,6 +133,7 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
   return (
     <div
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      className="sheet-overlay"
       style={{
         position: 'fixed', inset: 0, zIndex: 200,
         display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
@@ -140,7 +141,7 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
         transition: 'background .22s ease',
         pointerEvents: open ? 'auto' : 'none',
       }}>
-      <div style={{
+      <div className="sheet-panel" style={{
         background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22,
         boxShadow: '0 -12px 40px rgba(0,0,0,0.18)',
         transform: open ? 'translateY(0)' : 'translateY(100%)',
@@ -448,7 +449,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount })
     const capPill = openSpots <= 0 ? (
       <div style={{ height: 22, padding: '0 8px', borderRadius: 999, border: `1.2px solid ${RED}`, color: RED, fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>Completo</div>
     ) : (
-      <div style={{ height: 22, width: 64, borderRadius: 999, background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN, fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{openSpots} {openSpots === 1 ? 'cupo' : 'cupos'}</div>
+      <div style={{ height: 22, minWidth: 64, padding: '0 8px', borderRadius: 999, background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN, fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{openSpots} {openSpots === 1 ? 'cupo' : 'cupos'}</div>
     );
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
@@ -469,7 +470,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount })
   }
   return (
     <div style={{
-      height: 22, width: 64, borderRadius: 999,
+      height: 22, minWidth: 64, padding: '0 8px', borderRadius: 999,
       background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN,
       fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600,
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -557,8 +558,8 @@ const _ONBOARD_CITIES = ['Arequipa', 'Lima', 'Cusco'];
 function CityOnboardSheet({ onSelect }) {
   return (
     <>
-      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200 }} />
-      <div style={{
+      <div className="sheet-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200 }} />
+      <div className="sheet-overlay" style={{
         position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 201,
         background: '#fff', borderRadius: '20px 20px 0 0',
         padding: '20px 20px calc(env(safe-area-inset-bottom) + 28px)',

@@ -23,7 +23,9 @@
       "Bash(curl -s 'https://nubagkhrkheehvxoieku.supabase.co/rest/v1/reservations?select=*&limit=1' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51YmFna2hya2hlZWh2eG9pZWt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5OTc4MjksImV4cCI6MjA5MzU3MzgyOX0.jslPvLTHM_6bkZDkUYXwLvzaDT_luWw-I1bRNPSvHqw' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51YmFna2hya2hlZWh2eG9pZWt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5OTc4MjksImV4cCI6MjA5MzU3MzgyOX0.jslPvLTHM_6bkZDkUYXwLvzaDT_luWw-I1bRNPSvHqw')",
       "Bash(node -e ' *)",
       "Bash(npx vite *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Claude Code\\\\AlGrass\\\\src\" -Recurse -Name)",
+      "Bash(xargs grep -l \"guests\\\\|attendees\\\\|players\")"
     ]
   }
 }
