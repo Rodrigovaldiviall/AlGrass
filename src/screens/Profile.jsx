@@ -269,6 +269,40 @@ function isStarted(g) {
   return dt ? dt <= new Date() : false;
 }
 
+function parseGameTime(t) {
+  if (!t) return { time: '', ampm: 'AM' };
+  const [hStr, mStr] = t.split(':');
+  const h24 = parseInt(hStr, 10);
+  const m   = (mStr || '00').padStart(2, '0');
+  return { time: `${h24 % 12 || 12}:${m}`, ampm: h24 >= 12 ? 'PM' : 'AM' };
+}
+
+function sbReservationToRow(r) {
+  const g = r.games;
+  const { time, ampm } = parseGameTime(g?.time);
+  return {
+    id:     r.game_id,
+    date:   fmtDateKey(g?.date_key),
+    time,
+    ampm,
+    field:  g?.fields?.venues?.name  || '',
+    format: g?.fields?.format        || '7v7',
+    status: 'reserved',
+    type:   r.source === 'campo' ? 'campo' : 'game',
+    price:  r.total_amount != null ? `S/. ${Number(r.total_amount).toFixed(2)}` : null,
+    paymentBreakdown: r.unit_price != null ? {
+      unitPrice:     r.unit_price,
+      promoDiscount: r.promo_discount  || 0,
+      creditApplied: r.credit_applied  || 0,
+      discount:      (r.promo_discount || 0) + (r.credit_applied || 0),
+      guestsCount:   0,
+      guestsTotal:   0,
+      total:         r.total_amount    || 0,
+    } : null,
+    activeGuestCount: 0,
+  };
+}
+
 function confirmedGameToRow(cg) {
   const parts = (cg.time || '').split(' ');
   const gameId = cg.id ?? null;
@@ -1785,6 +1819,22 @@ export default function Profile() {
           if (data) {
             setSbProfile(data);
             if (data.credit_balance != null) setCreditBalance(data.credit_balance);
+          }
+        });
+      supabase
+        .from('reservations')
+        .select(`
+          game_id, source, unit_price, promo_discount, credit_applied, total_amount,
+          games:game_id ( date_key, time, fields:field_id ( format, venues:venue_id ( name ) ) )
+        `)
+        .eq('user_id', session.user.id)
+        .eq('status', 'confirmed')
+        .then(({ data, error }) => {
+          if (error) { console.warn('[Profile] reservations:', error.message); return; }
+          if (data) {
+            const rows = data.map(sbReservationToRow);
+            setExtraGames(rows);
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(rows)); } catch {}
           }
         });
     });
