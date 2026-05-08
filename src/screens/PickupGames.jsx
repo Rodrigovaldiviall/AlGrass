@@ -594,13 +594,35 @@ function CityOnboardSheet({ onSelect }) {
 
 // ── Screen ─────────────────────────────────────────────────────────────────
 
+let _gamesCache = [];
+
+function SkeletonRows() {
+  const S = { background: '#E8E8EC', borderRadius: 6 };
+  return Array.from({ length: 6 }, (_, i) => (
+    <div key={i} style={{ display: 'flex', alignItems: 'center', padding: '14px 16px 14px 10px', borderBottom: `1px solid ${HAIR}`, animation: 'pulse 1.4s ease-in-out infinite', animationDelay: `${i * 0.08}s` }}>
+      <div style={{ width: 52, flexShrink: 0, textAlign: 'center', borderRight: `1px solid ${HAIR}`, marginRight: 6 }}>
+        <div style={{ ...S, width: 30, height: 14, margin: '0 auto' }} />
+        <div style={{ ...S, width: 20, height: 10, margin: '4px auto 0' }} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ ...S, width: '58%', height: 15, marginBottom: 8 }} />
+        <div style={{ ...S, width: '38%', height: 11 }} />
+      </div>
+      <div style={{ ...S, width: 58, height: 26, borderRadius: 13, marginLeft: 8 }} />
+    </div>
+  ));
+}
+
 export default function PickupGames() {
   const navigate = useNavigate();
   const location = useLocation();
 
   const [showCitySheet, setShowCitySheet] = useState(!!location.state?.showCitySheet);
-  const [games, setGames] = useState([]);
-  useEffect(() => { getGames().then(setGames); }, []);
+  const [games, setGames]     = useState(() => _gamesCache);
+  const [loading, setLoading] = useState(_gamesCache.length === 0);
+  useEffect(() => {
+    getGames().then(data => { _gamesCache = data; setGames(data); setLoading(false); });
+  }, []);
 
   const [flt, setFlt]               = useState(() => {
     try { return JSON.parse(sessionStorage.getItem('pg'))?.flt ?? EMPTY_FLT; } catch { return EMPTY_FLT; }
@@ -857,7 +879,9 @@ export default function PickupGames() {
       />
       <div ref={listRef} onScroll={onListScroll} className="no-sb"
         style={{ flex: 1, overflowY: 'auto', paddingBottom: 8, scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', background: '#fff' }}>
-        {grouped.length === 0 ? (
+        {loading && games.length === 0 ? (
+          <SkeletonRows />
+        ) : grouped.length === 0 ? (
           <div style={{ padding: '40px 24px', textAlign: 'center', color: SUB, fontSize: 14 }}>
             No hay partidos con esos filtros.
           </div>
