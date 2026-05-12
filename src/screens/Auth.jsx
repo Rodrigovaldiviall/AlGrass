@@ -147,7 +147,7 @@ function SocialButton({ label, icon, onClick, loading, variant = 'light' }) {
 }
 
 const PROFILE_KEY   = 'pichanga_profile';
-const USERCODES_KEY = 'pichanga_usercodes';
+
 const USERS_KEY     = 'pichanga_users';
 const SEED_USERS    = { 'rodrigo@gm.com': { name: 'Rodrigo', password: 'Palopalo' } };
 
@@ -167,40 +167,6 @@ function registerUser(email, name) {
   try { localStorage.setItem(USERS_KEY, JSON.stringify(users)); } catch {}
 }
 
-function normalizeForCode(s) {
-  return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z]/g, '').toLowerCase();
-}
-
-function generateUserCode(fullName) {
-  const parts = (fullName || '').trim().split(/\s+/);
-  const first = normalizeForCode(parts[0] || '');
-  const last  = normalizeForCode(parts.slice(1).join(''));
-  let existing = {};
-  try { existing = JSON.parse(localStorage.getItem(USERCODES_KEY)) || {}; } catch {}
-  const mk = (f, l, sfx = '') => '@' + f + l + sfx;
-  for (let fLen = Math.min(6, first.length || 1); fLen >= Math.max(1, first.length - 1); fLen--) {
-    const lLen = Math.min(last.length, Math.max(0, 10 - fLen));
-    const code = mk(first.slice(0, fLen), last.slice(0, lLen));
-    if (!existing[code]) {
-      existing[code] = true;
-      try { localStorage.setItem(USERCODES_KEY, JSON.stringify(existing)); } catch {}
-      return code;
-    }
-  }
-  for (let attempt = 0; attempt < 50; attempt++) {
-    const sfx  = String(Math.floor(Math.random() * 90) + 10);
-    const fLen = Math.min(6, first.length || 1);
-    for (let lLen = Math.min(4, last.length); lLen >= 0; lLen--) {
-      const code = mk(first.slice(0, fLen), last.slice(0, lLen), sfx);
-      if (code.length <= 16 && !existing[code]) {
-        existing[code] = true;
-        try { localStorage.setItem(USERCODES_KEY, JSON.stringify(existing)); } catch {}
-        return code;
-      }
-    }
-  }
-  return '@' + normalizeForCode(fullName).slice(0, 12);
-}
 
 const MOCK_CODE = '112233';
 
@@ -418,13 +384,8 @@ export default function AuthScreen() {
   // Redirect guard
   if (user) {
     try {
-      const existing = JSON.parse(localStorage.getItem(PROFILE_KEY) || 'null');
-      if (!existing) {
-        const userCode = generateUserCode(user.name);
-        localStorage.setItem(PROFILE_KEY, JSON.stringify({ userCode, gender: 'Hombre', position: '' }));
-      } else if (!existing.userCode) {
-        existing.userCode = generateUserCode(user.name);
-        localStorage.setItem(PROFILE_KEY, JSON.stringify(existing));
+      if (!JSON.parse(localStorage.getItem(PROFILE_KEY) || 'null')) {
+        localStorage.setItem(PROFILE_KEY, JSON.stringify({ gender: 'Hombre', position: '' }));
       }
     } catch {}
     if (game) return <Navigate to="/checkout" state={{ game, user }} replace />;

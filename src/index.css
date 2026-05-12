@@ -62,10 +62,11 @@ input:-webkit-autofill:hover {
 
 /* Desktop: sheet overlays are bounded to .screen-shell (the exact content panel) */
 @media (min-width: 1024px) {
-  .screen-shell  { position: relative; }
-  .sheet-overlay { position: absolute !important; align-items: center !important; }
-  .sheet-panel   { width: 100%; }
-  .hide-on-desktop { display: none !important; }
+  .screen-shell      { position: relative; }
+  .sheet-overlay     { position: absolute !important; align-items: center !important; }
+  .sheet-panel       { width: 100%; }
+  .hide-on-desktop   { display: none !important; }
+  .fullscreen-overlay { position: absolute !important; }
 }
 
 /* ── Responsive app shell ───────────────────────────────── */

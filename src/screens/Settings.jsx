@@ -6,6 +6,7 @@ import {
   WHATSAPP_NUMBER, WHATSAPP_DISPLAY, SUPPORT_EMAIL,
 } from '../constants';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faWhatsapp } from '@fortawesome/free-brands-svg-icons';
 import pkg from '../../package.json';
@@ -372,6 +373,12 @@ export default function Settings() {
     const updated = { ...profileData, city: v };
     setProfileData(updated);
     try { localStorage.setItem(PROFILE_KEY, JSON.stringify(updated)); } catch {}
+    supabase?.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user?.id) {
+        supabase.from('users').update({ city: v }).eq('id', session.user.id)
+          .then(({ error }) => { if (error) console.warn('[Settings] saveCity:', error.message); });
+      }
+    });
     shellRef.current?.animate(
       [{ transform: 'scale(1)' }, { transform: 'scale(1.014)' }, { transform: 'scale(1)' }],
       { duration: 420, easing: 'cubic-bezier(0.34, 1.4, 0.64, 1)', fill: 'none' },

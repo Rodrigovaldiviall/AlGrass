@@ -2,10 +2,10 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, RED, GREEN, ORANGE } from '../constants';
 import I from '../icons';
-import { DATE_WINDOW, TODAY_KEY, TOMORROW_KEY, ymd, seedDemoWaitlist } from '../data/games';
+import { DATE_WINDOW, TODAY_KEY, TOMORROW_KEY, ymd } from '../data/games';
 import { getGames } from '../services/gameService';
-seedDemoWaitlist();
 import TabBar from '../components/TabBar';
+import { supabase } from '../lib/supabase';
 
 const DOW_ES   = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const MONTH_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -651,13 +651,6 @@ export default function PickupGames() {
   const stripCellRefs      = useRef({});
   const programmaticScrollRef = useRef(false);
 
-  const bookedGameIds = useMemo(() => {
-    try {
-      const res = JSON.parse(localStorage.getItem('pichanga_reservations')) || [];
-      return new Set(res.filter(r => r.type !== 'campo').map(r => r.id));
-    } catch { return new Set(); }
-  }, []);
-
   const waitlistGameIds = useMemo(() => {
     try {
       const wl = JSON.parse(localStorage.getItem('pichanga_waitlist')) || {};
@@ -665,46 +658,60 @@ export default function PickupGames() {
     } catch { return new Set(); }
   }, []);
 
-  const guestGamesMap = useMemo(() => {
-    try {
-      const rosters = JSON.parse(localStorage.getItem('pichanga_game_rosters') || '{}');
-      const profile  = JSON.parse(localStorage.getItem('pichanga_profile') || '{}');
-      const myCode   = (profile.userCode || '').trim().toUpperCase();
-      if (!myCode) return new Map();
-      const sc = JSON.parse(localStorage.getItem('pichanga_self_cancelled_guests') || '{}');
-      const map = new Map();
-      for (const [gameId, roster] of Object.entries(rosters)) {
-        if (sc[gameId]) continue;
-        if (!roster?.players?.length) continue;
-        const myEntry = roster.players.find(p => (p.code || '').trim().toUpperCase() === myCode);
-        if (!myEntry) continue;
-        const subGuests = roster.players.filter(p => (p.addedByCode || '').trim().toUpperCase() === myCode);
-        map.set(gameId, { paidBy: roster.payerName || 'Usuario', payerCode: roster.payerCode || null, guestId: myEntry.id, activeGuestCount: subGuests.length });
-      }
-      return map;
-    } catch { return new Map(); }
+  const [sbBookedIds,     setSbBookedIds]     = useState(new Set());
+  const [sbGuestMap,      setSbGuestMap]      = useState(new Map());
+  const [sbMyGuestCounts, setSbMyGuestCounts] = useState({});
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session?.user?.id) return;
+      const uid = session.user.id;
+      supabase
+        .from('game_players')
+        .select('game_id, invited_by, inviter:invited_by(full_name, user_code)')
+        .eq('user_id', uid)
+        .eq('status', 'confirmed')
+        .then(({ data }) => {
+          if (!data) return;
+          const booked = new Set();
+          const guests = new Map();
+          data.forEach(gp => {
+            if (!gp.invited_by) {
+              booked.add(gp.game_id);
+            } else {
+              guests.set(gp.game_id, {
+                paidBy:          gp.inviter?.full_name || 'Usuario',
+                payerCode:       gp.inviter?.user_code ? `@${gp.inviter.user_code}` : null,
+                guestId:         null,
+                activeGuestCount: 0,
+              });
+            }
+          });
+          setSbBookedIds(booked);
+          setSbGuestMap(guests);
+        });
+      supabase
+        .from('game_players')
+        .select('game_id')
+        .eq('invited_by', uid)
+        .eq('status', 'confirmed')
+        .then(({ data }) => {
+          if (!data) return;
+          const counts = {};
+          data.forEach(gp => { counts[gp.game_id] = (counts[gp.game_id] || 0) + 1; });
+          setSbMyGuestCounts(counts);
+        });
+    });
   }, []);
 
-  const canceledWithGuestsMap = useMemo(() => {
-    try {
-      const rosters = JSON.parse(localStorage.getItem('pichanga_game_rosters') || '{}');
-      const profile  = JSON.parse(localStorage.getItem('pichanga_profile') || '{}');
-      const myCode   = (profile.userCode || '').trim().toUpperCase();
-      if (!myCode) return new Map();
-      const map = new Map();
-      for (const [gameId, roster] of Object.entries(rosters)) {
-        if (!roster?.players?.length) continue;
-        const myEntry     = roster.players.find(p => (p.code || '').trim().toUpperCase() === myCode);
-        const mySubGuests = roster.players.filter(p => (p.addedByCode || '').trim().toUpperCase() === myCode);
-        if (!myEntry && mySubGuests.length > 0 && roster.guestSubBreakdowns?.[myCode]) {
-          map.set(gameId, { count: mySubGuests.length, isGuestCanceled: true, guestSubBreakdown: roster.guestSubBreakdowns[myCode] });
-        } else if (roster.titularCanceled && (roster.titularCode || '').trim().toUpperCase() === myCode) {
-          map.set(gameId, { count: roster.players.length, isGuestCanceled: false, guestSubBreakdown: null });
-        }
-      }
-      return map;
-    } catch { return new Map(); }
-  }, []);
+  const sbCanceledWithGuests = useMemo(() => {
+    const result = new Map();
+    for (const [gid, count] of Object.entries(sbMyGuestCounts)) {
+      if (!sbBookedIds.has(gid) && !sbGuestMap.has(gid)) result.set(gid, count);
+    }
+    return result;
+  }, [sbMyGuestCounts, sbBookedIds, sbGuestMap]);
 
   // Chip active state mirrors flt
   const chipActive = {
@@ -894,17 +901,14 @@ export default function PickupGames() {
               {games.map((g, i) => (
                 <GameRow key={g.id} g={g}
                   last={i === games.length - 1 && isLast}
-                  booked={bookedGameIds.has(g.id)}
+                  booked={sbBookedIds.has(g.id)}
                   inWaitlist={waitlistGameIds.has(g.id)}
-                  guestInfo={guestGamesMap.get(g.id)}
-                  canceledCount={canceledWithGuestsMap.has(g.id) ? canceledWithGuestsMap.get(g.id).count : undefined}
+                  guestInfo={sbGuestMap.get(g.id)}
+                  canceledCount={sbCanceledWithGuests.has(g.id) ? sbCanceledWithGuests.get(g.id) : undefined}
                   onOpen={() => {
-                    const gi  = guestGamesMap.get(g.id);
-                    const ci  = canceledWithGuestsMap.get(g.id);
+                    const gi = sbGuestMap.get(g.id);
                     if (gi) {
                       navigate(`/game/${g.id}`, { state: { game: { ...g, paidBy: gi.paidBy, paidByCode: gi.payerCode, guestId: gi.guestId }, infoMode: true, backPath: '/games' } });
-                    } else if (ci?.isGuestCanceled) {
-                      navigate(`/game/${g.id}`, { state: { guestCanceledView: true, infoMode: false, backPath: '/games', game: { ...g, guestSubBreakdown: ci.guestSubBreakdown, guestCanceledView: true, paymentBreakdown: null } } });
                     } else {
                       navigate(`/game/${g.id}`, { state: { game: g, backPath: '/games' } });
                     }
@@ -957,6 +961,12 @@ export default function PickupGames() {
             const p = JSON.parse(localStorage.getItem(_PROFILE_KEY)) || {};
             localStorage.setItem(_PROFILE_KEY, JSON.stringify({ ...p, city }));
           } catch {}
+          supabase?.auth.getSession().then(({ data: { session } }) => {
+            if (session?.user?.id) {
+              supabase.from('users').update({ city }).eq('id', session.user.id)
+                .then(({ error }) => { if (error) console.warn('[PickupGames] saveCity:', error.message); });
+            }
+          });
           localStorage.setItem(_WELCOME_KEY, '1');
           setShowCitySheet(false);
           navigate('/games', { replace: true });

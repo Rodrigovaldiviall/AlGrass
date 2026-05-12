@@ -7,11 +7,12 @@ import { faCommentSms } from '@fortawesome/free-solid-svg-icons';
 import I from '../icons';
 import { shareOrCopy } from '../utils/share';
 import { GAMES, FIELD_INFO, GAME_DEFAULTS } from '../data/games';
-import { getActivePlayers, getRoster, removePlayers, setTitularCanceled as markTitularCanceled, deleteRoster } from '../services/gameService';
+import { removePlayers, setTitularCanceled as markTitularCanceled, deleteRoster } from '../services/gameService';
 import TabBar from '../components/TabBar';
 import RatingBlock from '../components/RatingBlock';
 import { useAuth } from '../context/AuthContext';
-import { cancelReservation, syncCreditBalance } from '../services/reservationService';
+import { cancelReservation, cancelGamePlayer, createWalletTransaction, incrementCreditBalance } from '../services/reservationService';
+import { supabase } from '../lib/supabase';
 
 const WAITLIST_KEY   = 'pichanga_waitlist';
 const ATTENDANCE_KEY = 'pichanga_attendance';
@@ -500,7 +501,7 @@ function PlayerModal({ player, onClose }) {
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
 
-  const displayName = (player.name || '').split(' ').slice(0, 2).join(' ');
+  const displayName = player.name || '';
   const code        = deterministicCode(player.name);
   const hue         = [...(player.name || '·')].reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
   const gamesPlayed = [...(player.name || '')].reduce((a, c) => a + c.charCodeAt(0), 0) % 35 + 8;
@@ -660,7 +661,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
   const totalRefund = isGuest
     ? checkedGuests.size * guestRefund
     : (titularChecked ? titularRefund : 0) + checkedGuests.size * guestRefund;
-  const canConfirm = isGuest ? (selfChecked || checkedGuests.size > 0) : totalRefund > 0;
+  const canConfirm = isGuest ? (selfChecked || checkedGuests.size > 0) : (titularChecked || checkedGuests.size > 0);
   const fmt = n => `S/. ${Number(n).toFixed(2)}`;
 
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
@@ -704,9 +705,11 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                 ...(credit.transactions || []),
               ];
               localStorage.setItem(CREDIT_KEY_GD, JSON.stringify(credit));
-              syncCreditBalance(credit.balance).catch(() => {});
+              incrementCreditBalance(parsedPrice).catch(() => {});
+              createWalletTransaction({ type: 'refund', amount: parsedPrice, gameId, description: `${guestSelfName} canceló su inscripción` }).catch(() => {});
             } catch {}
           }
+          cancelGamePlayer(gameId).catch(() => {});
           try {
             const _now = Date.now();
             const _d = new Date(_now);
@@ -727,33 +730,60 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
               ...(credit.transactions || []),
             ];
             localStorage.setItem(CREDIT_KEY_GD, JSON.stringify(credit));
-            syncCreditBalance(credit.balance).catch(() => {});
+            if (titularChecked) incrementCreditBalance(refund).catch(() => {});
           } catch {}
         }
-        if (checkedGuests.size > 0) removePlayers(gameId, [...checkedGuests]);
+        if (checkedGuests.size > 0) {
+          removePlayers(gameId, [...checkedGuests]);
+          // Partial cancel only: titular still 'confirmed' → trigger generates per-guest refund.
+          // Full cancel: titularChecked block below handles guest rows after titular row is canceled.
+          if (!titularChecked && supabase) {
+            supabase.from('game_players')
+              .update({ status: 'canceled', canceled_at: new Date().toISOString() })
+              .eq('game_id', gameId)
+              .in('user_id', [...checkedGuests])
+              .then(() => {});
+          }
+        }
         if (titularChecked) {
-          const remaining = getActivePlayers(gameId);
+          const remaining = guestList.filter(p => !checkedGuests.has(p.id));
           if (remaining.length > 0) {
             const titularCode = (() => { try { return (JSON.parse(localStorage.getItem('pichanga_profile') || '{}').userCode || '').trim().toUpperCase(); } catch { return ''; } })();
             markTitularCanceled(gameId, titularCode, breakdown || undefined);
           } else {
             deleteRoster(gameId);
           }
-        }
-        if (titularChecked) {
           try {
             const res = JSON.parse(localStorage.getItem('pichanga_reservations') || '[]');
             localStorage.setItem('pichanga_reservations', JSON.stringify(res.filter(r => r.id !== gameId)));
           } catch {}
-          cancelReservation(gameId)
-            .then(({ error, skipped }) => {
-              if (!skipped && error) console.warn('[cancel] Supabase update failed:', error);
-            })
-            .catch(e => console.error('[cancel] cancelReservation threw:', e));
           try {
             const shown = JSON.parse(localStorage.getItem('pichanga_shown_confirmations') || '{}');
             if (shown[gameId]) { delete shown[gameId]; localStorage.setItem('pichanga_shown_confirmations', JSON.stringify(shown)); }
           } catch {}
+          // Sequence: titular game_players row first → all guest rows → cancelReservation → refund.
+          // Trigger sees titular.status='canceled' → skips per-guest refunds (cascade via game_players).
+          const allGuestIds = [
+            ...checkedGuests,
+            ...guestList.filter(p => !checkedGuests.has(p.id)).map(p => p.id),
+          ];
+          cancelGamePlayer(gameId)
+            .then(() => {
+              if (allGuestIds.length > 0 && supabase) {
+                return supabase.from('game_players')
+                  .update({ status: 'canceled', canceled_at: new Date().toISOString() })
+                  .eq('game_id', gameId)
+                  .in('user_id', allGuestIds);
+              }
+            })
+            .then(() => cancelReservation(gameId))
+            .then(({ data: resData, error, skipped } = {}) => {
+              if (!skipped && error) console.warn('[cancel] Supabase update failed:', error);
+              if (!skipped && !error && refund > 0) {
+                createWalletTransaction({ type: 'refund', amount: refund, gameId, reservationId: resData?.[0]?.id ?? null, description: 'Cancelación de reserva' }).catch(() => {});
+              }
+            })
+            .catch(e => console.error('[cancel] threw:', e));
         }
       }
       setStep('done');
@@ -926,7 +956,12 @@ export default function GameDetail() {
   const gameId  = sel?.id ?? id ?? null;
   const guestId = location.state?.game?.guestId ?? null;
 
-  const isBooked = useMemo(() => {
+  const [sbPlayerRow,   setSbPlayerRow]   = useState(null);
+  const [sbRoster,      setSbRoster]      = useState([]);
+  const [sbUserId,      setSbUserId]      = useState(null);
+  const [sbReservation, setSbReservation] = useState(null);
+
+  const isBookedLS = useMemo(() => {
     if (!gameId) return false;
     try {
       if ((JSON.parse(localStorage.getItem(WAITLIST_KEY)) || {})[gameId]) return false;
@@ -935,13 +970,25 @@ export default function GameDetail() {
     } catch { return false; }
   }, [gameId]);
 
+  const sbIsBooked        = sbPlayerRow?.status === 'confirmed' && !sbPlayerRow?.invited_by;
+  const sbIsGuest         = sbPlayerRow?.status === 'confirmed' && !!sbPlayerRow?.invited_by;
+  const sbTitularCanceled = sbPlayerRow?.status === 'canceled'  && !sbPlayerRow?.invited_by;
+  const sbPaidBy    = sbPlayerRow?.inviter?.full_name ?? null;
+  const sbPayerCode = sbPlayerRow?.inviter?.user_code ? `@${sbPlayerRow.inviter.user_code}` : null;
+  const isBooked    = isBookedLS || !!sbIsBooked;
+  const eG          = { ...g, paidBy: g.paidBy ?? sbPaidBy, paidByCode: g.paidByCode ?? sbPayerCode };
+
   const guestCanceledView = location.state?.guestCanceledView ?? false;
   const infoMode  = (location.state?.infoMode ?? false) || isBooked;
-  const isGuest   = !!g.paidBy;
+  const isGuest   = !!eG.paidBy || !!sbIsGuest;
 
-  const guestsInRoster = useMemo(() => gameId ? getActivePlayers(gameId) : [], [gameId]);
-  const titularCanceled = useMemo(() => gameId ? (getRoster(gameId)?.titularCanceled ?? false) : false, [gameId]);
-  const liveOpenSpots = Math.max(0, g.openSpots - ((isBooked && !titularCanceled) ? 1 : 0) - guestsInRoster.length);
+  const guestsInRoster  = useMemo(() => sbRoster.filter(p => !!p.invitedBy), [sbRoster]);
+  const titularCanceled = sbTitularCanceled;
+  // totalSpots - sbRoster avoids depending on g.openSpots from nav payload (may be stale/wrong)
+  const liveOpenSpots   = Math.max(0, g.totalSpots - sbRoster.length);
+  const activeBreakdown = sbReservation
+    ? { unitPrice: sbReservation.unit_price, promoDiscount: sbReservation.promo_discount || 0, creditApplied: sbReservation.credit_applied || 0, total: sbReservation.total_amount || 0 }
+    : g.paymentBreakdown;
   const isFull = !infoMode && liveOpenSpots === 0;
   const openSpots = liveOpenSpots;
   const confirmed = g.totalSpots - openSpots;
@@ -973,6 +1020,45 @@ export default function GameDetail() {
     return () => clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    if (!supabase || !gameId) return;
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session?.user?.id) return;
+      const uid = session.user.id;
+      setSbUserId(uid);
+      supabase
+        .from('game_players')
+        .select('game_id, user_id, invited_by, status, inviter:invited_by(full_name, user_code)')
+        .eq('game_id', gameId)
+        .eq('user_id', uid)
+        .maybeSingle()
+        .then(({ data }) => { if (data) setSbPlayerRow(data); });
+      supabase
+        .from('reservations')
+        .select('id, unit_price, total_amount, promo_discount, credit_applied')
+        .eq('game_id', gameId)
+        .eq('user_id', uid)
+        .eq('status', 'confirmed')
+        .maybeSingle()
+        .then(({ data }) => { if (data) setSbReservation(data); });
+      supabase
+        .from('game_players')
+        .select('user_id, invited_by, player:user_id(full_name, user_code, avatar_hue)')
+        .eq('game_id', gameId)
+        .eq('status', 'confirmed')
+        .then(({ data }) => {
+          if (!data) return;
+          setSbRoster(data.map(gp => ({
+            id:        gp.user_id,
+            name:      gp.player?.full_name || 'Jugador',
+            code:      gp.player?.user_code ? `@${gp.player.user_code}` : '',
+            hue:       gp.player?.avatar_hue ?? 200,
+            invitedBy: gp.invited_by,
+          })));
+        });
+    });
+  }, [gameId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function markAttendance(player) {
     if (!gameStart) return;
     const markedAt = new Date();
@@ -989,16 +1075,9 @@ export default function GameDetail() {
 
 
   const guestOwnGuests = useMemo(() => {
-    if ((!isGuest && !guestCanceledView) || !gameId) return [];
-    try {
-      const profile = JSON.parse(localStorage.getItem('pichanga_profile') || '{}');
-      const myCode = (profile.userCode || '').trim().toUpperCase();
-      const r = JSON.parse(localStorage.getItem(ROSTER_KEY_GD) || '{}');
-      return (r[gameId]?.players || []).filter(p =>
-        p.addedByCode?.trim().toUpperCase() === myCode && (guestId == null || p.id !== guestId)
-      );
-    } catch { return []; }
-  }, [isGuest, guestCanceledView, gameId, guestId]);
+    if ((!isGuest && !guestCanceledView) || !gameId || !sbUserId) return [];
+    return sbRoster.filter(p => !!p.invitedBy && p.invitedBy === sbUserId);
+  }, [isGuest, guestCanceledView, gameId, sbRoster, sbUserId]);
 
   const isCanceledWithGuests = (titularCanceled || guestCanceledView)
     && (guestCanceledView ? guestOwnGuests.length : guestsInRoster.length) > 0
@@ -1006,7 +1085,7 @@ export default function GameDetail() {
 
   function handleAddGuests() {
     setModifyOpen(false);
-    const addGuestPrice = g.paymentBreakdown?.unitPrice ?? g.priceNumber;
+    const addGuestPrice = activeBreakdown?.unitPrice ?? g.priceNumber;
     navigate('/checkout', { state: {
       game: {
         id:          gameId,
@@ -1071,10 +1150,10 @@ export default function GameDetail() {
                 </span>
               ) : isPastGame ? (
                 <span style={{ display: 'inline-flex', alignItems: 'center', padding: '5px 14px', borderRadius: 999, background: '#F0FFF4', fontSize: 13, fontWeight: 600, color: GREEN }}>Finalizado</span>
-              ) : g.paidBy ? (
-                <button onClick={() => setSelectedPlayer({ name: g.paidBy })} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 14px', borderRadius: 999, background: '#F0FFF4', border: 'none', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+              ) : eG.paidBy ? (
+                <button onClick={() => setSelectedPlayer({ name: eG.paidBy })} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 14px', borderRadius: 999, background: '#F0FFF4', border: 'none', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: GREEN }}>Invitado por</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: BLUE }}>{g.paidBy}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: BLUE }}>{eG.paidBy}</span>
                   {guestOwnGuests.length > 0 && (
                     <>
                       <span style={{ fontSize: 12, color: TEXT, opacity: 0.35, marginLeft: 2 }}>·</span>
@@ -1149,7 +1228,7 @@ export default function GameDetail() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {g.players.map((p, i) => {
-                const displayName = (p.name || '').split(' ').slice(0, 2).join(' ');
+                const displayName = p.name || '';
                 const attRecord   = attendance[p.name] ?? null;
                 const showAtt     = attendanceOpen || isPastGame;
                 return (
@@ -1193,7 +1272,7 @@ export default function GameDetail() {
         )}
         {(isBooked || infoMode) ? (
           <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}` }}>
-            {isPastGame && infoMode && <PaymentDetail price={g.price} breakdown={g.paymentBreakdown} paidBy={g.paidBy} userName={user?.name || 'Usuario'} titularCanceled={titularCanceled} activeGuestCount={isGuest ? guestOwnGuests.length : guestsInRoster.length} guestSubBreakdown={isGuest ? g.guestSubBreakdown : null} />}
+            {isPastGame && infoMode && <PaymentDetail price={g.price} breakdown={activeBreakdown} paidBy={eG.paidBy} userName={user?.name || 'Usuario'} titularCanceled={titularCanceled} activeGuestCount={isGuest ? guestOwnGuests.length : guestsInRoster.length} guestSubBreakdown={isGuest ? g.guestSubBreakdown : null} />}
             {(isBooked || isGuest) && !isPastGame && (
               <div style={{ padding: '12px 16px' }}>
                 <button
@@ -1258,8 +1337,8 @@ export default function GameDetail() {
       {paymentDetailOpen && (
         <PaymentDetailSheet
           price={g.price}
-          breakdown={guestCanceledView ? g.guestSubBreakdown : (isCanceledWithGuests ? g.paymentBreakdown : g.paymentBreakdown)}
-          paidBy={g.paidBy}
+          breakdown={guestCanceledView ? g.guestSubBreakdown : activeBreakdown}
+          paidBy={eG.paidBy}
           userName={user?.name || 'Usuario'}
           titularCanceled={titularCanceled || guestCanceledView}
           activeGuestCount={isGuest ? guestOwnGuests.length : (isCanceledWithGuests ? activeList.length : guestsInRoster.length)}
@@ -1270,15 +1349,15 @@ export default function GameDetail() {
       {cancelOpen && (
         <CancelSheet
           gameId={gameId}
-          breakdown={guestCanceledView ? g.guestSubBreakdown : g.paymentBreakdown}
+          breakdown={guestCanceledView ? g.guestSubBreakdown : activeBreakdown}
           price={g.price}
           guestList={isGuest ? guestOwnGuests : (guestCanceledView ? guestOwnGuests : guestsInRoster)}
           userName={user?.name || 'Usuario'}
           isGuest={isGuest}
           guestId={guestId}
           guestSelfName={user?.name || 'Usuario'}
-          payerName={g.paidBy}
-          payerCode={g.paidByCode}
+          payerName={eG.paidBy}
+          payerCode={eG.paidByCode}
           titularAlreadyCanceled={guestCanceledView || titularCanceled}
           guestSubBreakdown={g.guestSubBreakdown}
           onClose={() => setCancelOpen(false)}

@@ -4,27 +4,10 @@ import { TEXT, SUB, HAIR, ORANGE, SOFT, DANGER, YAPE } from '../constants';
 import I from '../icons';
 import { shareOrCopy } from '../utils/share';
 import { addPlayers as addPlayersToRoster, createRoster, getActivePlayers } from '../services/gameService';
-import { getReservations, setReservations, getCredit, setCredit, getPaidStatus, setPaidStatus, createReservation, syncCreditBalance, validatePromoCode } from '../services/reservationService';
+import { getReservations, setReservations, getCredit, setCredit, getPaidStatus, setPaidStatus, createReservation, createGamePlayer, createWalletTransaction, syncCreditBalance, validatePromoCode, searchUsers } from '../services/reservationService';
 
 // ── Player database & history ──────────────────────────────────────────────
 
-const ALL_PLAYERS = [
-  { id: 'p1',  name: 'Pedro Silva',      hue: 12,  code: '@pedrosilva'   },
-  { id: 'p2',  name: 'María Quispe',     hue: 280, code: '@mariaquispe'  },
-  { id: 'p3',  name: 'Diego Morales',    hue: 200, code: '@diegomorales' },
-  { id: 'p4',  name: 'Luis Ramos',       hue: 140, code: '@luisramos'    },
-  { id: 'p5',  name: 'Camila Rojas',     hue: 330, code: '@camilarojas'  },
-  { id: 'p6',  name: 'Jorge Bustamante', hue: 40,  code: '@jorgebusta'   },
-  { id: 'p7',  name: 'Andrea Núñez',     hue: 175, code: '@andreanunez'  },
-  { id: 'p8',  name: 'Renato Díaz',      hue: 260, code: '@renatodiaz'   },
-  { id: 'p9',  name: 'Sofía Mendoza',    hue: 350, code: '@sofiamendoza' },
-  { id: 'p10', name: 'Carlos Vera',      hue: 22,  code: '@carlosvera'   },
-  { id: 'p11', name: 'Gabriela Ortiz',   hue: 305, code: '@gabortiz'     },
-  { id: 'p12', name: 'Sebastián Lara',   hue: 190, code: '@sebalara'     },
-  { id: 'p13', name: 'Valeria Castro',   hue: 355, code: '@valeriacastro'},
-  { id: 'p14', name: 'Andrés Flores',    hue: 155, code: '@andresflores' },
-  { id: 'p15', name: 'Natalia Paredes',  hue: 240, code: '@nataliapar'   },
-];
 
 const ROSTER_KEY = 'pichanga_game_rosters';
 
@@ -151,67 +134,71 @@ function PlayerRow({ p, checked, onToggle }) {
 // ── AddPlayers sub-screen ──────────────────────────────────────────────────
 
 function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, maxGuests = 99, spotsCount, isInscribed = false, gameId, rosterPlayerIds = new Set() }) {
-  const favorites  = getFavorites(paidPlayers);
-  const hasAnyData = paidPlayers.length > 0;
+  const favorites   = getFavorites(paidPlayers);
+  const favoriteIds = new Set(paidPlayers.map(p => p.id));
+  const hasAnyData  = paidPlayers.length > 0;
 
-  const initIds = new Set(alreadySelected.map(g => g.id));
-  const [query, setQuery]             = useState('');
-  const [selectedIds, setSelectedIds] = useState(() => initIds);
-  const [linkCopied, setLinkCopied]   = useState(false);
-  const [dupMsg, setDupMsg]           = useState('');
+  const [selectedMap, setSelectedMap]     = useState(() => {
+    const m = new Map();
+    for (const p of alreadySelected) m.set(p.id, p);
+    return m;
+  });
+  const [query, setQuery]                 = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching]         = useState(false);
+  const [linkCopied, setLinkCopied]       = useState(false);
+  const [dupMsg, setDupMsg]               = useState('');
+  const debounceRef = useRef(null);
 
   const q = query.trim().toLowerCase();
-  const sortByName = (a, b) => a.name.localeCompare(b.name, 'es');
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const sortedRef = useMemo(
-    () => ALL_PLAYERS.filter(p => selectedIds.has(p.id)).sort(sortByName).map(p => p.id),
-    [q]
-  );
-  const sortedRefSet = new Set(sortedRef);
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!q) { setSearchResults([]); setSearching(false); return; }
+    setSearchResults([]);
+    setSearching(true);
+    debounceRef.current = setTimeout(async () => {
+      const city = (() => { try { return JSON.parse(localStorage.getItem('pichanga_profile') || '{}').city || null; } catch { return null; } })();
+      const res = await searchUsers(q, { limit: 20, city, excludeIds: [...rosterPlayerIds] });
+      setSearchResults(res);
+      setSearching(false);
+    }, 300);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [q]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function toggle(id) {
+  function toggle(id, playerObj) {
     if (rosterPlayerIds.has(id)) {
       setDupMsg('Este jugador ya está inscrito');
       setTimeout(() => setDupMsg(''), 2500);
       return;
     }
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else if (next.size < maxGuests) {
-        next.add(id);
-      }
+    setSelectedMap(prev => {
+      const next = new Map(prev);
+      if (next.has(id)) next.delete(id);
+      else if (next.size < maxGuests) next.set(id, playerObj);
       return next;
     });
   }
 
-  const topList = q
-    ? [
-        ...sortedRef.filter(id => selectedIds.has(id)).map(id => ALL_PLAYERS.find(p => p.id === id)).filter(Boolean),
-        ...ALL_PLAYERS.filter(p => selectedIds.has(p.id) && !sortedRefSet.has(p.id)),
-      ]
-    : ALL_PLAYERS.filter(p => selectedIds.has(p.id)).sort(sortByName);
+  const topList     = [...selectedMap.values()].sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  const unselected  = searchResults.filter(p => !selectedMap.has(p.id));
+  const listBelow   = q
+    ? [...unselected.filter(p => favoriteIds.has(p.id)), ...unselected.filter(p => !favoriteIds.has(p.id))]
+    : favorites.filter(p => !selectedMap.has(p.id));
 
-  const listBelow = q
-    ? ALL_PLAYERS.filter(p => !selectedIds.has(p.id) && (p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q)))
-    : favorites.filter(p => !selectedIds.has(p.id));
-
-  const noMatchAtAll = q && !ALL_PLAYERS.some(p => p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q));
-
-  const selectedPlayers = ALL_PLAYERS.filter(p => selectedIds.has(p.id));
+  const noMatchAtAll    = q && !searching && searchResults.length === 0;
+  const selectedPlayers = [...selectedMap.values()];
 
   const prevIds      = new Set(alreadySelected.map(g => g.id));
-  const newCount     = [...selectedIds].filter(id => !prevIds.has(id)).length;
-  const removedCount = [...prevIds].filter(id => !selectedIds.has(id)).length;
+  const newCount     = [...selectedMap.keys()].filter(id => !prevIds.has(id)).length;
+  const removedCount = [...prevIds].filter(id => !selectedMap.has(id)).length;
   const dirty        = newCount > 0 || removedCount > 0;
   const ctaLabel     = newCount > 0 && removedCount === 0
     ? `Agregar ${newCount} ${newCount === 1 ? 'jugador' : 'jugadores'}`
     : dirty ? 'Actualizar selección' : 'Agregar jugadores';
 
   return (
-    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
+    <div className="fullscreen-overlay" style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
       <TopBar title="Agregar jugadores" onCancel={onCancel} rightNode={
         gameId ? (
           <button
@@ -267,7 +254,7 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
               Seleccionados · {topList.length}
             </div>
             {topList.map(p => (
-              <PlayerRow key={p.id} p={p} checked={selectedIds.has(p.id)} onToggle={() => toggle(p.id)} />
+              <PlayerRow key={p.id} p={p} checked={true} onToggle={() => toggle(p.id, p)} />
             ))}
           </>
         )}
@@ -279,7 +266,7 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
         )}
 
         {q && !noMatchAtAll && listBelow.map(p => (
-          <PlayerRow key={p.id} p={p} checked={false} onToggle={() => toggle(p.id)} />
+          <PlayerRow key={p.id} p={p} checked={false} onToggle={() => toggle(p.id, p)} />
         ))}
 
         {!q && hasAnyData && listBelow.length > 0 && (
@@ -291,7 +278,7 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
               Favoritos
             </div>
             {listBelow.map(p => (
-              <PlayerRow key={p.id} p={p} checked={false} onToggle={() => toggle(p.id)} />
+              <PlayerRow key={p.id} p={p} checked={false} onToggle={() => toggle(p.id, p)} />
             ))}
           </>
         )}
@@ -617,7 +604,13 @@ export default function ConfirmReservation() {
   const navigate = useNavigate();
   const { state } = useLocation();
   const game = state?.game;
-  const user = state?.user ?? { name: 'Usuario', email: 'usuario@email.com' };
+  const user = (() => {
+    const su = state?.user ?? { name: 'Usuario', email: 'usuario@email.com' };
+    try {
+      const localName = JSON.parse(localStorage.getItem('pichanga_profile') || '{}').fullName;
+      return localName ? { ...su, name: localName } : su;
+    } catch { return su; }
+  })();
 
   const [guests, setGuests]         = useState([]);
   const [subView, setSubView]       = useState('confirm');
@@ -735,6 +728,24 @@ export default function ConfirmReservation() {
           res[idx] = { ...old, paymentBreakdown: { ...oldBreak, guestsCount: oldBreak.guestsCount + guests.length, guestsTotal: oldBreak.guestsTotal + guestsTotal, total: oldBreak.total + guestsTotal }, price: `S/. ${(oldBreak.total + guestsTotal).toFixed(2)}` };
           await setReservations(res);
         }
+        // Supabase write-through (fire-and-forget, localStorage sigue siendo source of truth)
+        createReservation({
+          gameId,
+          unitPrice,
+          playersCount:   guests.length,
+          subtotalAmount: unitPrice * guests.length,
+          totalAmount:    total,
+          paymentMethod,
+          creditApplied,
+        }).then(({ data: resData, error: resError, skipped }) => {
+          if (skipped || resError || !resData?.id) return;
+          guests.forEach(g => {
+            createGamePlayer({ gameId, userId: g.id, reservationId: resData.id }).catch(() => {});
+          });
+          if (creditApplied > 0) {
+            createWalletTransaction({ type: 'spend', amount: -creditApplied, gameId, reservationId: resData.id, description: 'Crédito aplicado en invitados' }).catch(() => {});
+          }
+        }).catch(() => {});
       }
       navigate('/profile');
       return;
@@ -770,22 +781,30 @@ export default function ConfirmReservation() {
       await setCredit(credit);
       syncCreditBalance(credit.balance).catch(() => {});
     }
-    if (guests.length === 0) {
-      createReservation({
-        gameId:        game?.id,
-        unitPrice,
-        promoCode:     promoApplied?.code    ?? null,
-        promoDiscount: promoApplied?.discount ?? 0,
-        totalAmount:   total,
-        paymentMethod,
-        creditApplied,
-        source:        game?.source ?? 'match',
-      }).then(({ data, error, skipped }) => {
-        if (skipped) return;
-        if (error)   console.warn('[checkout] Supabase reservation failed:', error);
-        else         console.log('[checkout] Supabase reservation created:', data?.id);
+    // Supabase write-through (fire-and-forget, localStorage sigue siendo source of truth)
+    const _playersCount  = 1 + guests.length;
+    createReservation({
+      gameId:         game?.id,
+      unitPrice,
+      playersCount:   _playersCount,
+      subtotalAmount: unitPrice * _playersCount,
+      promoCode:      promoApplied?.code    ?? null,
+      promoDiscount:  promoApplied?.discount ?? 0,
+      totalAmount:    total,
+      paymentMethod,
+      creditApplied,
+    }).then(({ data: resData, error: resError, skipped }) => {
+      if (skipped || resError || !resData?.id) return;
+      // Titular
+      createGamePlayer({ gameId: game?.id, reservationId: resData.id }).catch(() => {});
+      // Invitados
+      guests.forEach(g => {
+        createGamePlayer({ gameId: game?.id, userId: g.id, reservationId: resData.id }).catch(() => {});
       });
-    }
+      if (creditApplied > 0) {
+        createWalletTransaction({ type: 'spend', amount: -creditApplied, gameId: game?.id, reservationId: resData.id, description: 'Crédito aplicado en reserva' }).catch(() => {});
+      }
+    }).catch(() => {});
     navigate('/profile', { state: { confirmedGame: {
       id:           game?.id,
       field:        game?.field,
