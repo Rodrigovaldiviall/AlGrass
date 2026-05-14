@@ -787,6 +787,20 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                     </button>
                   );
                 })}
+                {guestList.length > 0 && (() => {
+                  const allSelected = selfChecked && checkedGuests.size === guestList.length;
+                  return (
+                    <button onClick={() => {
+                      if (allSelected) { setSelfChecked(false); setCheckedGuests(new Set()); }
+                      else { setSelfChecked(true); setCheckedGuests(new Set(guestList.map(g => g.id))); }
+                    }} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, fontFamily: 'inherit', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                      <span style={checkboxStyle(allSelected)}>{allSelected && checkMark}</span>
+                      <div style={{ flex: 1 }}>
+                        <span style={{ fontSize: 14.5, fontWeight: 600, color: TEXT }}>Todas</span>
+                      </div>
+                    </button>
+                  );
+                })()}
               </>
             ) : (<>
               {titularAlreadyCanceled ? (
@@ -911,9 +925,9 @@ export default function GameDetail() {
   const confirmedRoster  = useMemo(() => sbRoster.filter(p => p.status === 'confirmed'), [sbRoster]);
   const guestsInRoster   = useMemo(() =>
     confirmedRoster
-      .filter(p => p.user_id !== p.payer_id)
+      .filter(p => p.payer_id === user?.id && p.user_id !== user?.id)
       .map(p => ({ ...p, id: p.user_id, name: p.full_name || p.user_code || 'Jugador' })),
-    [confirmedRoster]);
+    [confirmedRoster, user?.id]);
   const hasConfirmedTitular = useMemo(() => sbRoster.some(p => p.user_id === p.payer_id && p.status === 'confirmed'), [sbRoster]);
   const hasCanceledTitular  = useMemo(() => sbRoster.some(p => p.user_id === p.payer_id && p.status === 'canceled'),  [sbRoster]);
   const titularCanceled     = !hasConfirmedTitular && hasCanceledTitular;
@@ -950,7 +964,7 @@ export default function GameDetail() {
   }, []);
 
   useEffect(() => {
-    if (stateGame || !gameId) return;
+    if (!gameId) return;
     getGameById(gameId).then(fetched => {
       if (fetched) setSbGame(fetched);
     });
@@ -991,17 +1005,17 @@ export default function GameDetail() {
   }
 
 
-  const guestOwnGuests = useMemo(() => {
-    if ((!isGuest && !guestCanceledView) || !gameId) return [];
-    try {
-      const profile = JSON.parse(localStorage.getItem('pichanga_profile') || '{}');
-      const myCode = (profile.userCode || '').trim().toUpperCase();
-      const r = JSON.parse(localStorage.getItem(ROSTER_KEY_GD) || '{}');
-      return (r[gameId]?.players || []).filter(p =>
-        p.addedByCode?.trim().toUpperCase() === myCode && (guestId == null || p.id !== guestId)
-      );
-    } catch { return []; }
-  }, [isGuest, guestCanceledView, gameId, guestId]);
+  // guests that current user paid for — same derivation as guestsInRoster, scoped to me as payer
+  const guestOwnGuests = guestsInRoster;
+
+  // live breakdown derived from Supabase — overrides stale/null location.state price
+  const liveUnitPrice  = sbGame?.price ?? g.paymentBreakdown?.unitPrice ?? g.priceNumber;
+  const liveBreakdown  = liveUnitPrice
+    ? { unitPrice: liveUnitPrice, promoDiscount: g.paymentBreakdown?.promoDiscount ?? 0 }
+    : g.paymentBreakdown;
+  // true when my own slot is canceled (Rule 3: show titular-cancelado, hide paidBy)
+  const mySlotCanceled = !isBooked && sbRoster.some(p => p.user_id === user?.id && p.status === 'canceled');
+  const livePaidBy     = mySlotCanceled ? null : g.paidBy;
 
   const isCanceledWithGuests = (titularCanceled || guestCanceledView)
     && (guestCanceledView ? guestOwnGuests.length : guestsInRoster.length) > 0
@@ -1009,7 +1023,7 @@ export default function GameDetail() {
 
   function handleAddGuests() {
     setModifyOpen(false);
-    const addGuestPrice = g.paymentBreakdown?.unitPrice ?? g.priceNumber;
+    const addGuestPrice = sbGame?.price ?? g.paymentBreakdown?.unitPrice ?? g.priceNumber;
     navigate('/checkout', { state: {
       game: {
         id:          gameId,
@@ -1197,8 +1211,8 @@ export default function GameDetail() {
         )}
         {(isBooked || infoMode) ? (
           <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}` }}>
-            {isPastGame && infoMode && <PaymentDetail price={g.price} breakdown={g.paymentBreakdown} paidBy={g.paidBy} userName={user?.name || 'Usuario'} titularCanceled={titularCanceled} activeGuestCount={isGuest ? guestOwnGuests.length : guestsInRoster.length} guestSubBreakdown={isGuest ? g.guestSubBreakdown : null} />}
-            {(isBooked || isGuest) && !isPastGame && (
+            {isPastGame && infoMode && <PaymentDetail price={g.price} breakdown={liveBreakdown} paidBy={livePaidBy} userName={user?.name || 'Usuario'} titularCanceled={titularCanceled || mySlotCanceled} activeGuestCount={isGuest ? guestOwnGuests.length : guestsInRoster.length} guestSubBreakdown={isGuest ? g.guestSubBreakdown : null} />}
+            {(isBooked || guestsInRoster.length > 0) && !isPastGame && (
               <div style={{ padding: '12px 16px' }}>
                 <button
                   onClick={() => setModifyOpen(true)}
@@ -1265,10 +1279,10 @@ export default function GameDetail() {
       {paymentDetailOpen && (
         <PaymentDetailSheet
           price={g.price}
-          breakdown={guestCanceledView ? g.guestSubBreakdown : (isCanceledWithGuests ? g.paymentBreakdown : g.paymentBreakdown)}
-          paidBy={g.paidBy}
+          breakdown={guestCanceledView ? g.guestSubBreakdown : liveBreakdown}
+          paidBy={livePaidBy}
           userName={user?.name || 'Usuario'}
-          titularCanceled={titularCanceled || guestCanceledView}
+          titularCanceled={titularCanceled || guestCanceledView || mySlotCanceled}
           activeGuestCount={isGuest ? guestOwnGuests.length : (isCanceledWithGuests ? activeList.length : guestsInRoster.length)}
           guestSubBreakdown={isGuest ? g.guestSubBreakdown : null}
           onClose={() => setPaymentDetailOpen(false)}
@@ -1277,7 +1291,7 @@ export default function GameDetail() {
       {cancelOpen && (
         <CancelSheet
           gameId={gameId}
-          breakdown={guestCanceledView ? g.guestSubBreakdown : g.paymentBreakdown}
+          breakdown={guestCanceledView ? g.guestSubBreakdown : liveBreakdown}
           price={g.price}
           guestList={isGuest ? guestOwnGuests : (guestCanceledView ? guestOwnGuests : guestsInRoster)}
           userName={user?.name || 'Usuario'}

@@ -43,12 +43,14 @@ async function applyRefund(userId, refundAmount) {
   console.log('[wallet] applyRefund rpc → error:', error);
 }
 
+const deaccent = s => (s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '');
+
 function rankPlayers(players, query) {
-  const q = query.toLowerCase();
+  const q = deaccent(query).toLowerCase();
   return players
     .map(p => {
-      const name  = (p.name || '').toLowerCase();
-      const code  = (p.code || '').toLowerCase().replace(/^@/, '');
+      const name  = deaccent(p.name || '').toLowerCase();
+      const code  = deaccent(p.code || '').toLowerCase().replace(/^@/, '');
       const words = name.split(/\s+/);
       const rank  = name.startsWith(q) || code.startsWith(q)  ? 0
                   : words.some(w => w.startsWith(q))           ? 1
@@ -93,12 +95,13 @@ export async function searchUsers(query, { limit = 20, excludeIds = [] } = {}) {
   if (!supabase || !query?.trim()) return [];
   const session = await getSession();
   const currentId = session?.user?.id;
-  const q = query.trim();
+  const q    = query.trim();
+  const qDb  = deaccent(q);
   const allExclude = currentId ? [...excludeIds, currentId] : excludeIds;
   let req = supabase
     .from('users')
     .select('id, full_name, user_code, avatar_hue, preferred_position, birth_date')
-    .or(`full_name.ilike.%${q}%,user_code.ilike.%${q}%`)
+    .or(`full_name.ilike.%${qDb}%,user_code.ilike.%${qDb}%`)
     .limit(limit);
   if (allExclude.length) req = req.not('id', 'in', `(${allExclude.join(',')})`);
   const { data, error } = await req;
@@ -143,11 +146,11 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoDis
       promo_code:      promoCode || null,
       promo_discount:  promoDiscount || 0,
       credit_applied:  creditApplied || 0,
-      total_amount:    totalAmount,
+      total_amount:    totalAmount > 0 ? totalAmount : null,
       subtotal_amount: subtotalAmount || totalAmount,
       players_count:   playersCount || 1,
       guest_total:     guestTotal || 0,
-      payment_method:  paymentMethod,
+      payment_method:  totalAmount > 0 ? paymentMethod : null,
       source:          source || 'match',
       reserved_at:     new Date().toISOString(),
     })
@@ -213,9 +216,10 @@ export async function cancelGamePlayer(gameId) {
   if (cancelErr) { console.error('[cancelGamePlayer] update failed:', cancelErr); return { error: cancelErr }; }
 
   if (row.amount > 0) {
-    await supabase.from('reservations').insert({
+    const { error: ledgerErr } = await supabase.from('reservations').insert({
       game_id:         gameId,
       user_id:         refundTo,
+      canceled_by:     session.user.id,
       status:          'refund',
       unit_price:      row.amount,
       subtotal_amount: row.amount,
@@ -223,6 +227,7 @@ export async function cancelGamePlayer(gameId) {
       guest_total:     0,
       canceled_at:     new Date().toISOString(),
     });
+    if (ledgerErr) console.error('[cancelGamePlayer] refund ledger insert failed:', ledgerErr);
     await applyRefund(refundTo, row.amount);
   }
 
@@ -260,9 +265,10 @@ export async function cancelGuestPlayers(gameId, guestUserIds) {
 
   const refundTotal = rows.reduce((s, r) => s + (r.amount || 0), 0);
   if (refundTotal > 0) {
-    await supabase.from('reservations').insert({
+    const { error: ledgerErr } = await supabase.from('reservations').insert({
       game_id:         gameId,
       user_id:         session.user.id,
+      canceled_by:     session.user.id,
       status:          'refund',
       unit_price:      rows[0]?.amount ?? 0,
       subtotal_amount: refundTotal,
@@ -270,6 +276,7 @@ export async function cancelGuestPlayers(gameId, guestUserIds) {
       guest_total:     refundTotal,
       canceled_at:     new Date().toISOString(),
     });
+    if (ledgerErr) console.error('[cancelGuestPlayers] refund ledger insert failed:', ledgerErr);
     await applyRefund(session.user.id, refundTotal);
     console.log('[cancelGuestPlayers] done — canceled:', ids.length, '| total refund:', refundTotal);
   }

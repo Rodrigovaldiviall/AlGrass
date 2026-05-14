@@ -1843,6 +1843,7 @@ export default function Profile() {
   const [sbGuestSlots,      setSbGuestSlots]      = useState([]);
   const [myActiveGuests,    setMyActiveGuests]    = useState({});
   const [myConfirmedGameIds, setMyConfirmedGameIds] = useState(null); // null = cargando
+  const [myCanceledGameIds,  setMyCanceledGameIds]  = useState(new Set());
 
   useEffect(() => {
     if (!supabase) return;
@@ -1942,6 +1943,16 @@ export default function Profile() {
         .then(({ data }) => {
           setMyConfirmedGameIds(new Set((data || []).map(r => r.game_id)));
         });
+
+      // mis slots cancelados — para mantener visibilidad cuando tengo invitados activos
+      supabase
+        .from('game_players')
+        .select('game_id')
+        .eq('user_id', uid)
+        .eq('status', 'canceled')
+        .then(({ data }) => {
+          setMyCanceledGameIds(new Set((data || []).map(r => r.game_id)));
+        });
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1952,22 +1963,23 @@ export default function Profile() {
       const g = r.games;
       const { time, ampm } = parseGameTime(g?.time);
       return {
-        id:         `${r.game_id}_g_${r.user_id}`,
-        gameId:     r.game_id,
-        date:       fmtDateKey(g?.date_key),
+        id:               `${r.game_id}_g_${r.user_id}`,
+        gameId:           r.game_id,
+        date:             fmtDateKey(g?.date_key),
         time,
         ampm,
-        field:      g?.fields?.venues?.name || '',
-        format:     g?.fields?.format       || '7v7',
-        type:       'game',
-        price:      null,
-        status:     'guest',
-        guestId:    r.user_id,
-        paidBy:     r.payerName,
-        paidByCode: r.payerCode,
+        field:            g?.fields?.venues?.name || '',
+        format:           g?.fields?.format       || '7v7',
+        type:             'game',
+        price:            null,
+        status:           'guest',
+        guestId:          r.user_id,
+        paidBy:           r.payerName,
+        paidByCode:       r.payerCode,
+        activeGuestCount: myActiveGuests[r.game_id] || 0,
       };
     });
-  }, [sbGuestSlots]);
+  }, [sbGuestSlots, myActiveGuests]);
 
   const canceledGames = useMemo(() => deriveCanceledWithGuestsGames(), [extraGames]);
 
@@ -1977,7 +1989,16 @@ export default function Profile() {
   const allGames = (() => {
     const raw = [
       ...extraGames.map(g => {
-        if (g.status === 'reserved' && g.type !== 'campo' && myConfirmedGameIds !== null && !myConfirmedGameIds.has(g.id)) return null;
+        if (g.status === 'reserved' && g.type !== 'campo' && myConfirmedGameIds !== null) {
+          const isTitularConfirmed = myConfirmedGameIds.has(g.id);
+          const isCanceled  = myCanceledGameIds.has(g.id);
+          const hasGuests   = (myActiveGuests[g.id] ?? 0) > 0;
+          if (!isTitularConfirmed && !hasGuests) return null;
+          if (!isTitularConfirmed && isCanceled && hasGuests) {
+            return { ...g, status: 'canceled-with-guests', activeGuestCount: myActiveGuests[g.id] ?? 0 };
+          }
+          if (!isTitularConfirmed && !isCanceled && hasGuests) return null; // guestGames handles this
+        }
         let row = g.paymentBreakdown ? { ...g, price: computeLivePrice(g) } : g;
         if (row.status === 'reserved' && row.type !== 'campo' && row.id) {
           row = { ...row, activeGuestCount: myActiveGuests[row.id] ?? 0 };

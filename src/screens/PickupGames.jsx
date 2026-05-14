@@ -409,7 +409,7 @@ function DateStrip({ dates, selectedKey, onSelect, scrollerRef, cellRefs, eventD
 
 // ── List rows ──────────────────────────────────────────────────────────────
 
-function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount }) {
+function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount = 0 }) {
   if (canceledCount != null) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
@@ -437,6 +437,16 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount })
     );
   }
   if (booked) {
+    if (activeGuestCount > 0) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+          <div style={{ height: 22, padding: '0 8px', borderRadius: 999, background: BLUE, color: '#fff', fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>Inscrito</div>
+          <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
+            {activeGuestCount} {activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}
+          </div>
+        </div>
+      );
+    }
     return (
       <div style={{
         height: 22, padding: '0 8px', borderRadius: 999,
@@ -479,7 +489,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount })
   );
 }
 
-function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount }) {
+function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount }) {
   const [pressed, setPressed] = useState(false);
   return (
     <div role="button" tabIndex={0}
@@ -532,7 +542,7 @@ function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount
           )}
         </div>
       </div>
-      <StatusPill openSpots={g.openSpots} booked={booked} inWaitlist={inWaitlist} guestInfo={guestInfo} canceledCount={canceledCount} />
+      <StatusPill openSpots={g.openSpots} booked={booked} inWaitlist={inWaitlist} guestInfo={guestInfo} canceledCount={canceledCount} activeGuestCount={activeGuestCount} />
       <div style={{ pointerEvents: 'none', marginLeft: 6 }}>{I.chev()}</div>
     </div>
   );
@@ -696,6 +706,15 @@ export default function PickupGames() {
     } catch { return new Set(); }
   }, []);
 
+  const myActiveGuestsMap = useMemo(() => {
+    if (!user?.id) return {};
+    const map = {};
+    myPlayerRows
+      .filter(r => r.payer_id === user.id && r.user_id !== user.id && r.status === 'confirmed')
+      .forEach(r => { map[r.game_id] = (map[r.game_id] || 0) + 1; });
+    return map;
+  }, [myPlayerRows, user?.id]);
+
   const guestGamesMap = useMemo(() => {
     if (!user?.id) return new Map();
     const map = new Map();
@@ -704,20 +723,20 @@ export default function PickupGames() {
       .forEach(r => {
         const payer = payerNames[r.payer_id] || {};
         map.set(r.game_id, {
-          paidBy:          payer.name || 'Usuario',
-          payerCode:       payer.code || null,
-          guestId:         r.user_id,
-          activeGuestCount: 0,
+          paidBy:           payer.name || 'Usuario',
+          payerCode:        payer.code || null,
+          guestId:          r.user_id,
+          activeGuestCount: myActiveGuestsMap[r.game_id] || 0,
         });
       });
     return map;
-  }, [myPlayerRows, payerNames, user?.id]);
+  }, [myPlayerRows, payerNames, myActiveGuestsMap, user?.id]);
 
   const canceledWithGuestsMap = useMemo(() => {
     if (!user?.id) return new Map();
-    const confirmedTitularGames = new Set(
+    const confirmedGameIds = new Set(
       myPlayerRows
-        .filter(r => r.user_id === user.id && r.payer_id === user.id && r.status === 'confirmed')
+        .filter(r => r.user_id === user.id && r.status === 'confirmed')
         .map(r => r.game_id)
     );
     const activeGuestsByGame = {};
@@ -726,10 +745,10 @@ export default function PickupGames() {
       .forEach(r => { activeGuestsByGame[r.game_id] = (activeGuestsByGame[r.game_id] || 0) + 1; });
     const map = new Map();
     myPlayerRows
-      .filter(r => r.user_id === user.id && r.payer_id === user.id && r.status === 'canceled' && !confirmedTitularGames.has(r.game_id))
+      .filter(r => r.user_id === user.id && r.status === 'canceled' && !confirmedGameIds.has(r.game_id))
       .forEach(r => {
         const count = activeGuestsByGame[r.game_id] || 0;
-        if (count > 0 && !map.has(r.game_id)) map.set(r.game_id, { count, isGuestCanceled: false });
+        if (count > 0 && !map.has(r.game_id)) map.set(r.game_id, { count, isGuestCanceled: r.payer_id !== user.id });
       });
     return map;
   }, [myPlayerRows, user?.id]);
@@ -929,6 +948,7 @@ export default function PickupGames() {
                   inWaitlist={waitlistGameIds.has(g.id)}
                   guestInfo={guestGamesMap.get(g.id)}
                   canceledCount={canceledWithGuestsMap.has(g.id) ? canceledWithGuestsMap.get(g.id).count : undefined}
+                  activeGuestCount={myActiveGuestsMap[g.id] || 0}
                   onOpen={() => {
                     const gi  = guestGamesMap.get(g.id);
                     const ci  = canceledWithGuestsMap.get(g.id);
