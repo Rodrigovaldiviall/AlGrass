@@ -18,61 +18,79 @@ function parseTime(t) {
   return { time: `${h12}:${m}`, ampm };
 }
 
+const GAME_SELECT = `
+  id,
+  type,
+  date_key,
+  time,
+  price_per_person,
+  current_players,
+  game_amenities:amenities,
+  fields:field_id (
+    name,
+    format,
+    players_per_team,
+    field_amenities:amenities,
+    venues:venue_id (
+      name,
+      city,
+      address,
+      venue_amenities:amenities
+    )
+  )
+`;
+
+function mapGame(g) {
+  const { time, ampm } = parseTime(g.time);
+  const field     = g.fields;
+  const venue     = field?.venues;
+  const openSpots = Math.max(0, (field?.players_per_team ?? 0) * 2 - (g.current_players ?? 0));
+  return {
+    id:        g.id,
+    type:      g.type                             ?? '',
+    city:      venue?.city                        ?? '',
+    dateKey:   g.date_key                         ?? '',
+    time,
+    ampm,
+    field:     venue?.name                        ?? '',
+    fieldName: field?.name                        ?? '',
+    address:   venue?.address                     ?? '',
+    format:    field?.format                      ?? '',
+    price:     g.price_per_person                 ?? 0,
+    openSpots,
+    filmed:    g.game_amenities?.filmed           ?? false,
+    womenOnly: g.game_amenities?.women_only       ?? false,
+    master45:  g.game_amenities?.master_45        ?? false,
+    covered:   field?.field_amenities?.covered    ?? false,
+    parking:   venue?.venue_amenities?.parking    ?? false,
+    showers:   venue?.venue_amenities?.showers    ?? false,
+  };
+}
+
+export async function getGameById(gameId) {
+  if (!supabase || !gameId) return null;
+  const { data, error } = await supabase
+    .from('games')
+    .select(GAME_SELECT)
+    .eq('id', gameId)
+    .single();
+  if (error) { console.error('[getGameById]', error); return null; }
+  return mapGame(data);
+}
+
 export async function getGames() {
   const { data, error } = await supabase
     .from('games')
-    .select(`
-      id,
-      type,
-      date_key,
-      time,
-      price_per_person,
-      current_players,
-      game_amenities:amenities,
-      fields:field_id (
-        name,
-        format,
-        players_per_team,
-        field_amenities:amenities,
-        venues:venue_id (
-          name,
-          city,
-          address,
-          venue_amenities:amenities
-        )
-      )
-    `)
+    .select(GAME_SELECT)
     .eq('type', 'match');
 
+  console.log('[getGames] raw data:', data, '| error:', error);
   if (error) { console.error('getGames:', error); return []; }
 
-  return data.map(g => {
-    const { time, ampm } = parseTime(g.time);
-    const field     = g.fields;
-    const venue     = field?.venues;
-    const openSpots = Math.max(0, (field?.players_per_team ?? 0) * 2 - (g.current_players ?? 0));
+  const mapped = data.map(mapGame);
 
-    return {
-      id:        g.id,
-      type:      g.type                             ?? '',
-      city:      venue?.city                        ?? '',
-      dateKey:   g.date_key                         ?? '',
-      time,
-      ampm,
-      field:     venue?.name                        ?? '',
-      fieldName: field?.name                        ?? '',
-      address:   venue?.address                     ?? '',
-      format:    field?.format                      ?? '',
-      price:     g.price_per_person                 ?? 0,
-      openSpots,
-      filmed:    g.game_amenities?.filmed           ?? false,
-      womenOnly: g.game_amenities?.women_only       ?? false,
-      master45:  g.game_amenities?.master_45        ?? false,
-      covered:   field?.field_amenities?.covered    ?? false,
-      parking:   venue?.venue_amenities?.parking    ?? false,
-      showers:   venue?.venue_amenities?.showers    ?? false,
-    };
-  });
+  console.log('[getGames] mapped result:', mapped.length, 'games', mapped[0] ?? '(empty)');
+  return mapped;
 }
 
 function readRosters() {

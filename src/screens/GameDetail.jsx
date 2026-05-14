@@ -7,16 +7,16 @@ import { faCommentSms } from '@fortawesome/free-solid-svg-icons';
 import I from '../icons';
 import { shareOrCopy } from '../utils/share';
 import { GAMES, FIELD_INFO, GAME_DEFAULTS } from '../data/games';
-import { getActivePlayers, getRoster, removePlayers, setTitularCanceled as markTitularCanceled, deleteRoster } from '../services/gameService';
+import { getActivePlayers, getRoster, removePlayers, setTitularCanceled as markTitularCanceled, deleteRoster, getGameById } from '../services/gameService';
 import TabBar from '../components/TabBar';
 import RatingBlock from '../components/RatingBlock';
 import { useAuth } from '../context/AuthContext';
-import { cancelReservation, syncCreditBalance } from '../services/reservationService';
+import { cancelGamePlayer, cancelGuestPlayers } from '../services/reservationService';
+import { supabase } from '../lib/supabase';
 
 const WAITLIST_KEY   = 'pichanga_waitlist';
 const ATTENDANCE_KEY = 'pichanga_attendance';
 const ROSTER_KEY_GD  = 'pichanga_game_rosters';
-const CREDIT_KEY_GD  = 'pichanga_credit';
 
 const _MON_MAP_DET = { 'Ene': 0, 'Feb': 1, 'Mar': 2, 'Abr': 3, 'May': 4, 'Jun': 5, 'Jul': 6, 'Ago': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dic': 11 };
 
@@ -672,64 +672,34 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
   }
 
   function confirm() {
-    const refund = totalRefund;
-    setCapturedRefund(refund);
+    setCapturedRefund(totalRefund);
     setStep('processing');
     setTimeout(() => {
       if (isGuest) {
         removePlayers(gameId, [...checkedGuests, ...(selfChecked ? [guestId] : [])]);
-        if (refund > 0) {
-          try {
-            const credit = JSON.parse(localStorage.getItem(CREDIT_KEY_GD) || '{"balance":0,"transactions":[]}');
-            credit.balance = (credit.balance || 0) + refund;
-            credit.transactions = [
-              { id: 'tx-' + Date.now(), amount: refund, reason: 'Cancelación de invitados', createdAt: new Date().toISOString() },
-              ...(credit.transactions || []),
-            ];
-            localStorage.setItem(CREDIT_KEY_GD, JSON.stringify(credit));
-          } catch {}
-        }
         if (selfChecked) {
           try {
             const _sc = JSON.parse(localStorage.getItem('pichanga_self_cancelled_guests') || '{}');
             _sc[gameId] = true;
             localStorage.setItem('pichanga_self_cancelled_guests', JSON.stringify(_sc));
           } catch {}
-          if (parsedPrice > 0) {
-            try {
-              const credit = JSON.parse(localStorage.getItem(CREDIT_KEY_GD) || '{"balance":0,"transactions":[]}');
-              credit.balance = (credit.balance || 0) + parsedPrice;
-              credit.transactions = [
-                { id: 'tx-gc-' + Date.now(), amount: parsedPrice, reason: `${guestSelfName} canceló su inscripción`, createdAt: new Date().toISOString() },
-                ...(credit.transactions || []),
-              ];
-              localStorage.setItem(CREDIT_KEY_GD, JSON.stringify(credit));
-              syncCreditBalance(credit.balance).catch(() => {});
-            } catch {}
-          }
           try {
             const _now = Date.now();
             const _d = new Date(_now);
-            const _dateKey = _d.toISOString().slice(0, 10);
-            const _time = String(_d.getHours()).padStart(2, '0') + ':' + String(_d.getMinutes()).padStart(2, '0');
             const notifs = JSON.parse(localStorage.getItem('pichanga_notifications_v2') || '[]');
-            notifs.unshift({ id: 'notif-gc-' + _now, type: 'app', title: 'Algrass', gameDate: null, message: `${guestSelfName} canceló su reserva. El monto pagado ha retornado a tu crédito.`, time: _time, dateKey: _dateKey, read: false, createdAt: _now });
+            notifs.unshift({ id: 'notif-gc-' + _now, type: 'app', title: 'Algrass', gameDate: null, message: `${guestSelfName} canceló su reserva. El monto pagado ha retornado a tu crédito.`, time: String(_d.getHours()).padStart(2, '0') + ':' + String(_d.getMinutes()).padStart(2, '0'), dateKey: _d.toISOString().slice(0, 10), read: false, createdAt: _now });
             localStorage.setItem('pichanga_notifications_v2', JSON.stringify(notifs));
           } catch {}
+          cancelGamePlayer(gameId).then(({ skipped, error }) => {
+            if (!skipped && error) console.error('[cancel] guest self failed:', error);
+          });
+        }
+        if (checkedGuests.size > 0) {
+          cancelGuestPlayers(gameId, [...checkedGuests]).then(({ skipped, error }) => {
+            if (!skipped && error) console.error('[cancel] guest sub-players failed:', error);
+          });
         }
       } else {
-        if (refund > 0) {
-          try {
-            const credit = JSON.parse(localStorage.getItem(CREDIT_KEY_GD) || '{"balance":0,"transactions":[]}');
-            credit.balance = (credit.balance || 0) + refund;
-            credit.transactions = [
-              { id: 'tx-' + Date.now(), amount: refund, reason: 'Cancelación de reserva', createdAt: new Date().toISOString() },
-              ...(credit.transactions || []),
-            ];
-            localStorage.setItem(CREDIT_KEY_GD, JSON.stringify(credit));
-            syncCreditBalance(credit.balance).catch(() => {});
-          } catch {}
-        }
         if (checkedGuests.size > 0) removePlayers(gameId, [...checkedGuests]);
         if (titularChecked) {
           const remaining = getActivePlayers(gameId);
@@ -739,21 +709,21 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
           } else {
             deleteRoster(gameId);
           }
-        }
-        if (titularChecked) {
-          try {
-            const res = JSON.parse(localStorage.getItem('pichanga_reservations') || '[]');
-            localStorage.setItem('pichanga_reservations', JSON.stringify(res.filter(r => r.id !== gameId)));
-          } catch {}
-          cancelReservation(gameId)
-            .then(({ error, skipped }) => {
-              if (!skipped && error) console.warn('[cancel] Supabase update failed:', error);
-            })
-            .catch(e => console.error('[cancel] cancelReservation threw:', e));
           try {
             const shown = JSON.parse(localStorage.getItem('pichanga_shown_confirmations') || '{}');
             if (shown[gameId]) { delete shown[gameId]; localStorage.setItem('pichanga_shown_confirmations', JSON.stringify(shown)); }
           } catch {}
+          // titular first so cascade detection in cancelGuestPlayers sees titular as canceled
+          cancelGamePlayer(gameId)
+            .then(({ skipped, error }) => {
+              if (skipped || error) { if (error) console.error('[cancel] titular failed:', error); return; }
+              if (checkedGuests.size > 0) cancelGuestPlayers(gameId, [...checkedGuests]);
+            })
+            .catch(e => console.error('[cancel] chain threw:', e));
+        } else if (checkedGuests.size > 0) {
+          cancelGuestPlayers(gameId, [...checkedGuests]).then(({ skipped, error }) => {
+            if (!skipped && error) console.error('[cancel] partial guest cancel failed:', error);
+          });
         }
       }
       setStep('done');
@@ -919,29 +889,35 @@ export default function GameDetail() {
   const rating     = location.state?.rating    ?? null;
   const backPath   = location.state?.backPath  ?? '/games';
 
-  const sel = location.state?.game ?? GAMES.find(g => g.id === id) ?? null;
+  const [sbGame, setSbGame]   = useState(null);
+  const [sbRoster, setSbRoster] = useState([]);
+
+  const stateGame = location.state?.game ?? null;
+  const sel = stateGame ?? sbGame ?? GAMES.find(g => g.id === id) ?? null;
   const g = useMemo(() => buildGame(sel), [sel]);
 
   const { user } = useAuth();
   const gameId  = sel?.id ?? id ?? null;
   const guestId = location.state?.game?.guestId ?? null;
 
-  const isBooked = useMemo(() => {
-    if (!gameId) return false;
-    try {
-      if ((JSON.parse(localStorage.getItem(WAITLIST_KEY)) || {})[gameId]) return false;
-      const res = JSON.parse(localStorage.getItem('pichanga_reservations')) || [];
-      return res.some(r => r.id === gameId && r.type !== 'campo');
-    } catch { return false; }
-  }, [gameId]);
+  const isBooked = useMemo(() =>
+    sbRoster.some(p => p.user_id === user?.id && p.status === 'confirmed'),
+    [sbRoster, user?.id]);
 
   const guestCanceledView = location.state?.guestCanceledView ?? false;
   const infoMode  = (location.state?.infoMode ?? false) || isBooked;
   const isGuest   = !!g.paidBy;
 
-  const guestsInRoster = useMemo(() => gameId ? getActivePlayers(gameId) : [], [gameId]);
-  const titularCanceled = useMemo(() => gameId ? (getRoster(gameId)?.titularCanceled ?? false) : false, [gameId]);
-  const liveOpenSpots = Math.max(0, g.openSpots - ((isBooked && !titularCanceled) ? 1 : 0) - guestsInRoster.length);
+  const confirmedRoster  = useMemo(() => sbRoster.filter(p => p.status === 'confirmed'), [sbRoster]);
+  const guestsInRoster   = useMemo(() =>
+    confirmedRoster
+      .filter(p => p.user_id !== p.payer_id)
+      .map(p => ({ ...p, id: p.user_id, name: p.full_name || p.user_code || 'Jugador' })),
+    [confirmedRoster]);
+  const hasConfirmedTitular = useMemo(() => sbRoster.some(p => p.user_id === p.payer_id && p.status === 'confirmed'), [sbRoster]);
+  const hasCanceledTitular  = useMemo(() => sbRoster.some(p => p.user_id === p.payer_id && p.status === 'canceled'),  [sbRoster]);
+  const titularCanceled     = !hasConfirmedTitular && hasCanceledTitular;
+  const liveOpenSpots    = Math.max(0, g.totalSpots - confirmedRoster.length);
   const isFull = !infoMode && liveOpenSpots === 0;
   const openSpots = liveOpenSpots;
   const confirmed = g.totalSpots - openSpots;
@@ -972,6 +948,33 @@ export default function GameDetail() {
     const id = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (stateGame || !gameId) return;
+    getGameById(gameId).then(fetched => {
+      if (fetched) setSbGame(fetched);
+    });
+  }, [gameId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function fetchRoster() {
+    if (!supabase || !gameId) return;
+    supabase
+      .from('game_players')
+      .select('user_id, payer_id, status, joined_at, users:user_id(full_name, user_code, avatar_hue)')
+      .eq('game_id', gameId)
+      .then(({ data, error }) => {
+        if (error) { console.error('[GameDetail] game_players fetch error:', error); return; }
+        const rows = (data ?? []).map(p => ({
+          ...p,
+          full_name:  p.users?.full_name  ?? null,
+          user_code:  p.users?.user_code  ?? null,
+          avatar_hue: p.users?.avatar_hue ?? null,
+        }));
+        setSbRoster(rows);
+      });
+  }
+
+  useEffect(() => { fetchRoster(); }, [gameId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function markAttendance(player) {
     if (!gameStart) return;
@@ -1027,6 +1030,7 @@ export default function GameDetail() {
 
   function handleCancelDone() {
     setCancelOpen(false);
+    fetchRoster();
     navigate(backPath);
   }
 
@@ -1225,21 +1229,24 @@ export default function GameDetail() {
               price={g.price}
               disabled={isFull}
               hideTopBorder={isFull || isCanceledWithGuests}
-              onPress={() => navigate('/checkout', { state: { game: {
-                id:          g.id,
-                field:       g.field,
-                date:        g.date,
-                time:        g.time,
-                format:      g.format,
-                price:       g.price,
-                priceNumber: g.priceNumber,
-                currency:    g.currency,
-                source:      'pichanga',
-                openSpots:   g.openSpots,
-                wasInWaitlist: inWaitlist,
-                backPath:    id ? `/game/${id}` : '/games',
-                gameDetailBackPath: backPath,
-              } } })}
+              onPress={() => {
+                const checkoutGame = {
+                  id:          g.id,
+                  field:       g.field,
+                  date:        g.date,
+                  time:        g.time,
+                  format:      g.format,
+                  price:       g.price,
+                  priceNumber: g.priceNumber,
+                  currency:    g.currency,
+                  source:      'pichanga',
+                  openSpots:   g.openSpots,
+                  wasInWaitlist: inWaitlist,
+                  backPath:    id ? `/game/${id}` : '/games',
+                  gameDetailBackPath: backPath,
+                };
+                navigate('/checkout', { state: { game: checkoutGame } });
+              }}
             />
           </>
         )}

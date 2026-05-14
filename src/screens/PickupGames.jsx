@@ -2,10 +2,11 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, RED, GREEN, ORANGE } from '../constants';
 import I from '../icons';
-import { DATE_WINDOW, TODAY_KEY, TOMORROW_KEY, ymd, seedDemoWaitlist } from '../data/games';
+import { DATE_WINDOW, TODAY_KEY, TOMORROW_KEY, ymd } from '../data/games';
 import { getGames } from '../services/gameService';
-seedDemoWaitlist();
 import TabBar from '../components/TabBar';
+import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 
 const DOW_ES   = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const MONTH_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -617,13 +618,41 @@ function SkeletonRows() {
 export default function PickupGames() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user }  = useAuth();
 
   const [showCitySheet, setShowCitySheet] = useState(!!location.state?.showCitySheet);
   const [games, setGames]     = useState(() => _gamesCache);
   const [loading, setLoading] = useState(_gamesCache.length === 0);
   useEffect(() => {
-    getGames().then(data => { _gamesCache = data; setGames(data); setLoading(false); });
+    getGames().then(data => {
+      console.log('[PickupGames] getGames resolved:', data.length, 'games');
+      _gamesCache = data; setGames(data); setLoading(false);
+    });
   }, []);
+
+  const [myPlayerRows, setMyPlayerRows] = useState([]);
+  const [payerNames,   setPayerNames]   = useState({});
+
+  useEffect(() => {
+    if (!supabase || !user?.id) return;
+    supabase
+      .from('game_players')
+      .select('game_id, user_id, payer_id, status')
+      .or(`user_id.eq.${user.id},payer_id.eq.${user.id}`)
+      .then(async ({ data, error }) => {
+        if (error) return;
+        const rows = data ?? [];
+        const guestRows = rows.filter(r => r.user_id === user.id && r.payer_id !== user.id && r.status === 'confirmed');
+        let names = {};
+        if (guestRows.length > 0) {
+          const ids = [...new Set(guestRows.map(r => r.payer_id))];
+          const { data: pd } = await supabase.from('users').select('id, full_name, user_code').in('id', ids);
+          (pd || []).forEach(u => { names[u.id] = { name: u.full_name || '', code: u.user_code || '' }; });
+        }
+        setMyPlayerRows(rows);
+        setPayerNames(names);
+      });
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [flt, setFlt]               = useState(() => {
     try { return JSON.parse(sessionStorage.getItem('pg'))?.flt ?? EMPTY_FLT; } catch { return EMPTY_FLT; }
@@ -652,11 +681,13 @@ export default function PickupGames() {
   const programmaticScrollRef = useRef(false);
 
   const bookedGameIds = useMemo(() => {
-    try {
-      const res = JSON.parse(localStorage.getItem('pichanga_reservations')) || [];
-      return new Set(res.filter(r => r.type !== 'campo').map(r => r.id));
-    } catch { return new Set(); }
-  }, []);
+    if (!user?.id) return new Set();
+    return new Set(
+      myPlayerRows
+        .filter(r => r.user_id === user.id && r.status === 'confirmed')
+        .map(r => r.game_id)
+    );
+  }, [myPlayerRows, user?.id]);
 
   const waitlistGameIds = useMemo(() => {
     try {
@@ -666,45 +697,42 @@ export default function PickupGames() {
   }, []);
 
   const guestGamesMap = useMemo(() => {
-    try {
-      const rosters = JSON.parse(localStorage.getItem('pichanga_game_rosters') || '{}');
-      const profile  = JSON.parse(localStorage.getItem('pichanga_profile') || '{}');
-      const myCode   = (profile.userCode || '').trim().toUpperCase();
-      if (!myCode) return new Map();
-      const sc = JSON.parse(localStorage.getItem('pichanga_self_cancelled_guests') || '{}');
-      const map = new Map();
-      for (const [gameId, roster] of Object.entries(rosters)) {
-        if (sc[gameId]) continue;
-        if (!roster?.players?.length) continue;
-        const myEntry = roster.players.find(p => (p.code || '').trim().toUpperCase() === myCode);
-        if (!myEntry) continue;
-        const subGuests = roster.players.filter(p => (p.addedByCode || '').trim().toUpperCase() === myCode);
-        map.set(gameId, { paidBy: roster.payerName || 'Usuario', payerCode: roster.payerCode || null, guestId: myEntry.id, activeGuestCount: subGuests.length });
-      }
-      return map;
-    } catch { return new Map(); }
-  }, []);
+    if (!user?.id) return new Map();
+    const map = new Map();
+    myPlayerRows
+      .filter(r => r.user_id === user.id && r.payer_id !== user.id && r.status === 'confirmed')
+      .forEach(r => {
+        const payer = payerNames[r.payer_id] || {};
+        map.set(r.game_id, {
+          paidBy:          payer.name || 'Usuario',
+          payerCode:       payer.code || null,
+          guestId:         r.user_id,
+          activeGuestCount: 0,
+        });
+      });
+    return map;
+  }, [myPlayerRows, payerNames, user?.id]);
 
   const canceledWithGuestsMap = useMemo(() => {
-    try {
-      const rosters = JSON.parse(localStorage.getItem('pichanga_game_rosters') || '{}');
-      const profile  = JSON.parse(localStorage.getItem('pichanga_profile') || '{}');
-      const myCode   = (profile.userCode || '').trim().toUpperCase();
-      if (!myCode) return new Map();
-      const map = new Map();
-      for (const [gameId, roster] of Object.entries(rosters)) {
-        if (!roster?.players?.length) continue;
-        const myEntry     = roster.players.find(p => (p.code || '').trim().toUpperCase() === myCode);
-        const mySubGuests = roster.players.filter(p => (p.addedByCode || '').trim().toUpperCase() === myCode);
-        if (!myEntry && mySubGuests.length > 0 && roster.guestSubBreakdowns?.[myCode]) {
-          map.set(gameId, { count: mySubGuests.length, isGuestCanceled: true, guestSubBreakdown: roster.guestSubBreakdowns[myCode] });
-        } else if (roster.titularCanceled && (roster.titularCode || '').trim().toUpperCase() === myCode) {
-          map.set(gameId, { count: roster.players.length, isGuestCanceled: false, guestSubBreakdown: null });
-        }
-      }
-      return map;
-    } catch { return new Map(); }
-  }, []);
+    if (!user?.id) return new Map();
+    const confirmedTitularGames = new Set(
+      myPlayerRows
+        .filter(r => r.user_id === user.id && r.payer_id === user.id && r.status === 'confirmed')
+        .map(r => r.game_id)
+    );
+    const activeGuestsByGame = {};
+    myPlayerRows
+      .filter(r => r.payer_id === user.id && r.user_id !== user.id && r.status === 'confirmed')
+      .forEach(r => { activeGuestsByGame[r.game_id] = (activeGuestsByGame[r.game_id] || 0) + 1; });
+    const map = new Map();
+    myPlayerRows
+      .filter(r => r.user_id === user.id && r.payer_id === user.id && r.status === 'canceled' && !confirmedTitularGames.has(r.game_id))
+      .forEach(r => {
+        const count = activeGuestsByGame[r.game_id] || 0;
+        if (count > 0 && !map.has(r.game_id)) map.set(r.game_id, { count, isGuestCanceled: false });
+      });
+    return map;
+  }, [myPlayerRows, user?.id]);
 
   // Chip active state mirrors flt
   const chipActive = {
@@ -726,7 +754,8 @@ export default function PickupGames() {
   }
 
   const filteredGames = useMemo(() => {
-    return games.filter(g => {
+    console.log('[PickupGames] filter — games.length:', games.length, '| userCity:', userCity, '| flt:', JSON.stringify(flt));
+    const result = games.filter(g => {
       if (g.city && g.city !== userCity) return false;
       if (flt.cubierta        && !g.covered)   return false;
       if (flt.estacionamiento && !g.parking)   return false;
@@ -749,6 +778,8 @@ export default function PickupGames() {
       }
       return true;
     });
+    console.log('[PickupGames] filteredGames.length:', result.length, '| sample dateKeys:', result.slice(0,3).map(g => g.dateKey));
+    return result;
   }, [flt, userCity, games]);
 
   const grouped = useMemo(() => {

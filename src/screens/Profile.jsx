@@ -8,8 +8,7 @@ import { faHeadset, faCoins } from '@fortawesome/free-solid-svg-icons';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { GAMES, seedDemoWaitlist } from '../data/games';
-seedDemoWaitlist();
+import { GAMES } from '../data/games';
 
 const USER = {
   name: 'Rodrigo',
@@ -1841,21 +1840,25 @@ export default function Profile() {
   });
 
   const [sbProfile, setSbProfile] = useState(null);
+  const [sbGuestSlots,      setSbGuestSlots]      = useState([]);
+  const [myActiveGuests,    setMyActiveGuests]    = useState({});
+  const [myConfirmedGameIds, setMyConfirmedGameIds] = useState(null); // null = cargando
 
   useEffect(() => {
     if (!supabase) return;
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session?.user?.id) return;
+      const uid = session.user.id;
+
       supabase
         .from('users')
-        .select('full_name, email, role, organizer_status, credit_balance, birth_date, sex, preferred_position, phone, nationality, occupation')
-        .eq('id', session.user.id)
+        .select('full_name, email, role, organizer_status, birth_date, sex, preferred_position, phone, nationality, occupation')
+        .eq('id', uid)
         .single()
         .then(({ data, error }) => {
           if (error) { console.warn('[Profile] public.users:', error.message); return; }
           if (data) {
             setSbProfile(data);
-            if (data.credit_balance != null) setCreditBalance(data.credit_balance);
             setProfileData(prev => {
               const patch = {};
               if (data.full_name)          { patch.fullName = data.full_name; patch.firstName = data.full_name.split(' ')[0] || ''; patch.lastName = data.full_name.split(' ').slice(1).join(' '); }
@@ -1869,14 +1872,22 @@ export default function Profile() {
             });
           }
         });
+
+      supabase
+        .from('wallet_summary')
+        .select('credit_balance')
+        .eq('user_id', uid)
+        .maybeSingle()
+        .then(({ data }) => { if (data?.credit_balance != null) setCreditBalance(data.credit_balance); });
+
       supabase
         .from('reservations')
         .select(`
           game_id, source, unit_price, promo_discount, credit_applied, total_amount,
           games:game_id ( date_key, time, fields:field_id ( format, venues:venue_id ( name ) ) )
         `)
-        .eq('user_id', session.user.id)
-        .eq('status', 'confirmed')
+        .eq('user_id', uid)
+        .eq('status', 'spend')
         .then(({ data, error }) => {
           if (error) { console.warn('[Profile] reservations:', error.message); return; }
           if (data) {
@@ -1885,50 +1896,110 @@ export default function Profile() {
             try { localStorage.setItem(STORAGE_KEY, JSON.stringify(rows)); } catch {}
           }
         });
+
+      // guest slots: partidas donde me invitaron (payer_id != me)
+      supabase
+        .from('game_players')
+        .select(`
+          game_id, user_id, payer_id, status,
+          games:game_id ( date_key, time, fields:field_id ( format, venues:venue_id ( name ) ) )
+        `)
+        .eq('user_id', uid)
+        .neq('payer_id', uid)
+        .eq('status', 'confirmed')
+        .then(async ({ data, error }) => {
+          if (error) { console.warn('[Profile] guest slots:', error.message); return; }
+          const rows = data ?? [];
+          const payerIds = [...new Set(rows.map(r => r.payer_id))];
+          let payerMap = {};
+          if (payerIds.length > 0) {
+            const { data: pd } = await supabase.from('users').select('id, full_name, user_code').in('id', payerIds);
+            (pd || []).forEach(u => { payerMap[u.id] = { name: u.full_name || '', code: u.user_code || '' }; });
+          }
+          setSbGuestSlots(rows.map(r => ({ ...r, payerName: payerMap[r.payer_id]?.name || 'Usuario', payerCode: payerMap[r.payer_id]?.code || null })));
+        });
+
+      // mis invitados activos por partida (para activeGuestCount)
+      supabase
+        .from('game_players')
+        .select('game_id')
+        .eq('payer_id', uid)
+        .neq('user_id', uid)
+        .eq('status', 'confirmed')
+        .then(({ data }) => {
+          const counts = {};
+          (data || []).forEach(r => { counts[r.game_id] = (counts[r.game_id] || 0) + 1; });
+          setMyActiveGuests(counts);
+        });
+
+      // mis slots confirmados como titular — source of truth para "inscrito"
+      supabase
+        .from('game_players')
+        .select('game_id')
+        .eq('user_id', uid)
+        .eq('payer_id', uid)
+        .eq('status', 'confirmed')
+        .then(({ data }) => {
+          setMyConfirmedGameIds(new Set((data || []).map(r => r.game_id)));
+        });
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [pastExpanded, setPastExpanded] = useState(false);
 
-  useEffect(() => {
-    if (!profileData.userCode) return;
-    const MOCK_ID = 'mock-guest-001';
-    try {
-      const _sc = JSON.parse(localStorage.getItem('pichanga_self_cancelled_guests') || '{}');
-      if (_sc[MOCK_ID]) return;
-      const rosters = JSON.parse(localStorage.getItem(ROSTER_KEY) || '{}');
-      if (rosters[MOCK_ID]?.payerCode) {
-        if (rosters[MOCK_ID].gameDetails?.date !== 'Jue 7 May 2026') {
-          rosters[MOCK_ID].gameDetails = { ...rosters[MOCK_ID].gameDetails, date: 'Jue 7 May 2026' };
-          localStorage.setItem(ROSTER_KEY, JSON.stringify(rosters));
-          setExtraGames(prev => [...prev]);
-        }
-        return;
-      }
-      rosters[MOCK_ID] = {
-        players: [{ id: 'mock-p1', name: profileData.fullName || 'Invitado', hue: 200, code: profileData.userCode }],
-        payerName: 'Carlos Ramos',
-        reservedAt: '2026-05-04T10:00:00.000Z',
-        gameDetails: { id: MOCK_ID, date: 'Jue 7 May 2026', time: '7:00', ampm: 'PM', field: 'La Satalia', format: '7v7', type: 'game', price: 'S/. 25.00' },
-        payerCode: '@carlosramos',
+  const guestGames = useMemo(() => {
+    return sbGuestSlots.map(r => {
+      const g = r.games;
+      const { time, ampm } = parseGameTime(g?.time);
+      return {
+        id:         `${r.game_id}_g_${r.user_id}`,
+        gameId:     r.game_id,
+        date:       fmtDateKey(g?.date_key),
+        time,
+        ampm,
+        field:      g?.fields?.venues?.name || '',
+        format:     g?.fields?.format       || '7v7',
+        type:       'game',
+        price:      null,
+        status:     'guest',
+        guestId:    r.user_id,
+        paidBy:     r.payerName,
+        paidByCode: r.payerCode,
       };
-      localStorage.setItem(ROSTER_KEY, JSON.stringify(rosters));
-      setExtraGames(prev => [...prev]);
-    } catch {}
-  }, [profileData.userCode]); // eslint-disable-line react-hooks/exhaustive-deps
+    });
+  }, [sbGuestSlots]);
 
-  const guestGames    = useMemo(() => deriveGuestGames(extraGames), [extraGames]);
   const canceledGames = useMemo(() => deriveCanceledWithGuestsGames(), [extraGames]);
-  const allGames      = [...extraGames.map(g => {
-    let row = g.paymentBreakdown ? { ...g, price: computeLivePrice(g) } : g;
-    if (row.status === 'reserved' && row.type !== 'campo' && row.id) {
-      try {
-        const rosters = JSON.parse(localStorage.getItem(ROSTER_KEY) || '{}');
-        row = { ...row, activeGuestCount: rosters[row.id]?.players?.length ?? 0 };
-      } catch {}
+
+  // status priority: lower = wins dedup
+  const STATUS_PRIORITY = { reserved: 0, guest: 1, 'canceled-with-guests': 2, 'guest-canceled-with-sub-guests': 3, waitlist: 4 };
+
+  const allGames = (() => {
+    const raw = [
+      ...extraGames.map(g => {
+        if (g.status === 'reserved' && g.type !== 'campo' && myConfirmedGameIds !== null && !myConfirmedGameIds.has(g.id)) return null;
+        let row = g.paymentBreakdown ? { ...g, price: computeLivePrice(g) } : g;
+        if (row.status === 'reserved' && row.type !== 'campo' && row.id) {
+          row = { ...row, activeGuestCount: myActiveGuests[row.id] ?? 0 };
+        }
+        return row;
+      }).filter(Boolean),
+      ...waitlistEntries,
+      ...guestGames,
+      ...canceledGames,
+    ];
+    // one card per game — keep highest-priority status row
+    const seen = new Map();
+    for (const g of raw) {
+      const key = g.gameId || g.id;
+      if (!key) continue;
+      const prev = seen.get(key);
+      if (!prev || (STATUS_PRIORITY[g.status] ?? 99) < (STATUS_PRIORITY[prev.status] ?? 99)) {
+        seen.set(key, g);
+      }
     }
-    return row;
-  }), ...waitlistEntries, ...guestGames, ...canceledGames];
+    return [...seen.values()];
+  })();
   const upcoming      = sortByDt(allGames.filter(g => !isPast(g) && !(g.status === 'waitlist' && isStarted(g))), false);
   const past          = sortByDt(allGames.filter(g =>  isPast(g) && g.status !== 'waitlist'), true);
   const pastGameCount = past.length;

@@ -64,7 +64,7 @@ export function AuthProvider({ children }) {
         // identities se guarda para permitir unlinkProvider() — necesita el id.
         const identities = (su.identities ?? []).map(({ id, provider: p }) => ({ id, provider: p }));
 
-        login({ name, email, provider, providers, identities });
+        login({ id: su.id, name, email, provider, providers, identities });
       }
       if (event === 'SIGNED_OUT') {
         setUserState(null);

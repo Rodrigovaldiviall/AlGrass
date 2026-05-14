@@ -3,8 +3,9 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { TEXT, SUB, HAIR, ORANGE, SOFT, DANGER, YAPE } from '../constants';
 import I from '../icons';
 import { shareOrCopy } from '../utils/share';
-import { addPlayers as addPlayersToRoster, createRoster, getActivePlayers } from '../services/gameService';
-import { getReservations, setReservations, getCredit, setCredit, getPaidStatus, setPaidStatus, createReservation, syncCreditBalance, validatePromoCode } from '../services/reservationService';
+import { addPlayers as addPlayersToRoster, createRoster } from '../services/gameService';
+import { supabase } from '../lib/supabase';
+import { createReservation, createGamePlayer, validatePromoCode, searchUsers, getWalletBalance } from '../services/reservationService';
 
 // ── Player database & history ──────────────────────────────────────────────
 
@@ -159,8 +160,26 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
   const [selectedIds, setSelectedIds] = useState(() => initIds);
   const [linkCopied, setLinkCopied]   = useState(false);
   const [dupMsg, setDupMsg]           = useState('');
+  const [sbResults, setSbResults]     = useState([]);
+  const [sbPlayerMap, setSbPlayerMap] = useState({});
 
   const q = query.trim().toLowerCase();
+
+  useEffect(() => {
+    if (!q) { setSbResults([]); return; }
+    console.log('[AddPlayers] searching:', q);
+    searchUsers(q, { excludeIds: [...selectedIds] })
+      .then(results => {
+        console.log('[AddPlayers] sbResults:', results.length, results);
+        setSbResults(results);
+        setSbPlayerMap(prev => {
+          const next = { ...prev };
+          results.forEach(p => { next[p.id] = p; });
+          return next;
+        });
+      })
+      .catch(err => console.error('[AddPlayers] searchUsers error:', err));
+  }, [q]); // eslint-disable-line react-hooks/exhaustive-deps
   const sortByName = (a, b) => a.name.localeCompare(b.name, 'es');
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -187,20 +206,22 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
     });
   }
 
+  const allKnownPlayers = { ...Object.fromEntries(ALL_PLAYERS.map(p => [p.id, p])), ...sbPlayerMap };
+
   const topList = q
     ? [
-        ...sortedRef.filter(id => selectedIds.has(id)).map(id => ALL_PLAYERS.find(p => p.id === id)).filter(Boolean),
-        ...ALL_PLAYERS.filter(p => selectedIds.has(p.id) && !sortedRefSet.has(p.id)),
+        ...sortedRef.filter(id => selectedIds.has(id)).map(id => allKnownPlayers[id]).filter(Boolean),
+        ...[...selectedIds].filter(id => !sortedRefSet.has(id)).map(id => allKnownPlayers[id]).filter(Boolean),
       ]
-    : ALL_PLAYERS.filter(p => selectedIds.has(p.id)).sort(sortByName);
+    : [...selectedIds].map(id => allKnownPlayers[id]).filter(Boolean).sort(sortByName);
 
   const listBelow = q
-    ? ALL_PLAYERS.filter(p => !selectedIds.has(p.id) && (p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q)))
+    ? sbResults.filter(p => !selectedIds.has(p.id))
     : favorites.filter(p => !selectedIds.has(p.id));
 
-  const noMatchAtAll = q && !ALL_PLAYERS.some(p => p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q));
+  const noMatchAtAll = q && sbResults.length === 0;
 
-  const selectedPlayers = ALL_PLAYERS.filter(p => selectedIds.has(p.id));
+  const selectedPlayers = [...selectedIds].map(id => allKnownPlayers[id]).filter(Boolean);
 
   const prevIds      = new Set(alreadySelected.map(g => g.id));
   const newCount     = [...selectedIds].filter(id => !prevIds.has(id)).length;
@@ -618,6 +639,7 @@ export default function ConfirmReservation() {
   const { state } = useLocation();
   const game = state?.game;
   const user = state?.user ?? { name: 'Usuario', email: 'usuario@email.com' };
+  console.log('[checkout] state:', state, '| game:', game);
 
   const [guests, setGuests]         = useState([]);
   const [subView, setSubView]       = useState('confirm');
@@ -626,8 +648,7 @@ export default function ConfirmReservation() {
   const reservationTs               = useRef(Date.now());
 
   useEffect(() => {
-    getPaidStatus().then(data => setPaidPlayers(data));
-    getCredit().then(c => setCreditBalance(Math.max(0, c?.balance || 0)));
+    getWalletBalance().then(balance => setCreditBalance(Math.max(0, balance)));
   }, []);
 
   const [promoOpen, setPromoOpen]       = useState(false);
@@ -638,7 +659,14 @@ export default function ConfirmReservation() {
   const [freeConfirming, setFreeConfirming] = useState(false);
   const [creditLoading, setCreditLoading]   = useState(false);
 
-  const rosterPlayerIds = useMemo(() => new Set(getActivePlayers(game?.id || '').map(p => p.id)), [game?.id]);
+  const [confirmedPlayerIds, setConfirmedPlayerIds] = useState(new Set());
+  useEffect(() => {
+    const gid = game?.id;
+    if (!supabase || !gid) return;
+    supabase.from('game_players').select('user_id').eq('game_id', gid).eq('status', 'confirmed')
+      .then(({ data }) => { setConfirmedPlayerIds(new Set((data || []).map(r => r.user_id))); });
+  }, [game?.id]);
+  const rosterPlayerIds = confirmedPlayerIds;
 
   const isCampo       = game?.source === 'campo';
   const addGuestsMode = game?.addGuestsMode ?? false;
@@ -701,10 +729,6 @@ export default function ConfirmReservation() {
     if (addGuestsMode) {
       const gameId = game?.id;
       if (gameId && guests.length > 0) {
-        const existing = await getPaidStatus();
-        const existingIds = new Set(existing.map(p => p.id));
-        const toAdd = guests.filter(g => !existingIds.has(g.id)).map(g => ({ id: g.id, name: g.name, hue: g.hue, code: g.code || '', paidAt: Date.now() }));
-        if (toAdd.length > 0) { await setPaidStatus([...existing, ...toAdd]); setPaidPlayers(p => [...p, ...toAdd]); }
         const _adderCode = (() => { try { return (JSON.parse(localStorage.getItem('pichanga_profile') || '{}').userCode || '').trim().toUpperCase(); } catch { return ''; } })();
         addPlayersToRoster(gameId, guests, _adderCode);
         if (_adderCode) {
@@ -718,38 +742,22 @@ export default function ConfirmReservation() {
             localStorage.setItem(ROSTER_KEY, JSON.stringify(rosters));
           } catch {}
         }
-        if (creditApplied > 0) {
-          const credit = await getCredit();
-          credit.balance = Math.max(0, (credit.balance || 0) - creditApplied);
-          credit.transactions = [
-            { id: 'tx-use-' + Date.now(), amount: -creditApplied, reason: 'Crédito aplicado en reserva', createdAt: new Date().toISOString() },
-            ...(credit.transactions || []),
-          ];
-          await setCredit(credit);
-        }
-        const res = await getReservations();
-        const idx = res.findIndex(r => r.id === gameId);
-        if (idx >= 0) {
-          const old = res[idx];
-          const oldBreak = old.paymentBreakdown || { unitPrice, discount: 0, guestsCount: 0, guestsTotal: 0, total: unitPrice };
-          res[idx] = { ...old, paymentBreakdown: { ...oldBreak, guestsCount: oldBreak.guestsCount + guests.length, guestsTotal: oldBreak.guestsTotal + guestsTotal, total: oldBreak.total + guestsTotal }, price: `S/. ${(oldBreak.total + guestsTotal).toFixed(2)}` };
-          await setReservations(res);
-        }
+        createReservation({
+          gameId, unitPrice, promoCode: null, promoDiscount: 0,
+          totalAmount: total, subtotalAmount: guestsTotal,
+          playersCount: guests.length, guestTotal: guestsTotal,
+          paymentMethod: paymentMethod || 'efectivo',
+          creditApplied, source: game?.source ?? 'match',
+        }).then(({ data: resData, error, skipped }) => {
+          if (skipped || error) return;
+          const reservationId = resData?.id ?? null;
+          guests.forEach(guest => createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice }));
+        });
       }
       navigate('/profile');
       return;
     }
     if (guests.length > 0) {
-      const existing = await getPaidStatus();
-      const existingIds = new Set(existing.map(p => p.id));
-      const toAdd = guests
-        .filter(g => !existingIds.has(g.id))
-        .map(g => ({ id: g.id, name: g.name, hue: g.hue, code: g.code || '', paidAt: Date.now() }));
-      if (toAdd.length > 0) {
-        const updated = [...existing, ...toAdd];
-        await setPaidStatus(updated);
-        setPaidPlayers(updated);
-      }
       const _gid = game?.id;
       if (_gid) {
         const _payerProfile = (() => { try { return JSON.parse(localStorage.getItem('pichanga_profile') || '{}'); } catch { return {}; } })();
@@ -760,32 +768,25 @@ export default function ConfirmReservation() {
         });
       }
     }
-    if (creditApplied > 0) {
-      const credit = await getCredit();
-      credit.balance = Math.max(0, (credit.balance || 0) - creditApplied);
-      credit.transactions = [
-        { id: 'tx-use-' + Date.now(), amount: -creditApplied, reason: 'Crédito aplicado en reserva', createdAt: new Date().toISOString() },
-        ...(credit.transactions || []),
-      ];
-      await setCredit(credit);
-      syncCreditBalance(credit.balance).catch(() => {});
-    }
-    if (guests.length === 0) {
-      createReservation({
-        gameId:        game?.id,
-        unitPrice,
-        promoCode:     promoApplied?.code    ?? null,
-        promoDiscount: promoApplied?.discount ?? 0,
-        totalAmount:   total,
-        paymentMethod,
-        creditApplied,
-        source:        game?.source ?? 'match',
-      }).then(({ data, error, skipped }) => {
-        if (skipped) return;
-        if (error)   console.warn('[checkout] Supabase reservation failed:', error);
-        else         console.log('[checkout] Supabase reservation created:', data?.id);
-      });
-    }
+    createReservation({
+      gameId:          game?.id,
+      unitPrice,
+      promoCode:       promoApplied?.code    ?? null,
+      promoDiscount:   promoApplied?.discount ?? 0,
+      totalAmount:     total,
+      subtotalAmount:  subtotal,
+      playersCount:    1 + guests.length,
+      guestTotal:      guestsTotal,
+      paymentMethod,
+      creditApplied,
+      source:          game?.source ?? 'match',
+    }).then(({ data: resData, error, skipped }) => {
+      if (skipped || error) { if (error) console.warn('[checkout] reservation failed:', error); return; }
+      const reservationId = resData?.id ?? null;
+      console.log('[checkout] reservation created:', reservationId);
+      createGamePlayer({ gameId: game?.id, reservationId, amount: unitPrice });
+      guests.forEach(guest => createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice }));
+    });
     navigate('/profile', { state: { confirmedGame: {
       id:           game?.id,
       field:        game?.field,
