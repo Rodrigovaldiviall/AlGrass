@@ -511,15 +511,51 @@ function deterministicCode(fullName) {
 }
 
 function PlayerModal({ player, onClose }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen]       = useState(false);
+  const [profile, setProfile] = useState(null);
+
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
+
+  useEffect(() => {
+    if (!player.user_id || !supabase) return;
+    supabase
+      .from('users')
+      .select('full_name, user_code, avatar_hue, sex, birth_date, preferred_position')
+      .eq('id', player.user_id)
+      .maybeSingle()
+      .then(({ data }) => { if (data) setProfile(data); });
+  }, [player.user_id]);
+
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
 
-  const displayName = player.name || '';
-  const code        = deterministicCode(player.name);
-  const hue         = [...(player.name || '·')].reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
-  const gamesPlayed = [...(player.name || '')].reduce((a, c) => a + c.charCodeAt(0), 0) % 35 + 8;
-  const initials    = (player.name || '').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase() || '·';
+  function ageFromIso(iso) {
+    if (!iso) return null;
+    const [y, m, d] = iso.split('-').map(Number);
+    const today = new Date();
+    let a = today.getFullYear() - y;
+    const mo = today.getMonth() + 1 - m;
+    if (mo < 0 || (mo === 0 && today.getDate() < d)) a--;
+    return a >= 0 ? a : null;
+  }
+
+  const name     = profile?.full_name || player.name || '';
+  const hue      = profile?.avatar_hue ?? ([...(name || '·')].reduce((a, c) => a + c.charCodeAt(0), 0) % 360);
+  const initials = name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase() || '·';
+  const code     = profile?.user_code ? '@' + profile.user_code : deterministicCode(name);
+  const sex      = profile?.sex || null;
+  const age      = profile ? ageFromIso(profile.birth_date) : (player.age ?? null);
+  const position = profile
+    ? (Array.isArray(profile.preferred_position) ? profile.preferred_position.join(' · ') : (profile.preferred_position || null))
+    : (player.position || null);
+
+  const stat = (v, l) => (
+    <div>
+      <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: -0.3, lineHeight: 1, color: v != null ? TEXT : '#C7C7CC' }}>
+        {v != null ? String(v) : '—'}
+      </div>
+      <div style={{ fontSize: 11, color: SUB, marginTop: 2 }}>{l}</div>
+    </div>
+  );
 
   return (
     <div
@@ -566,42 +602,22 @@ function PlayerModal({ player, onClose }) {
               fontSize: 20, fontWeight: 700, marginBottom: 8, flexShrink: 0,
             }}>{initials}</div>
             <div style={{ fontSize: 14, fontWeight: 800, color: TEXT, textAlign: 'center', lineHeight: 1.2, letterSpacing: -0.2 }}>
-              {displayName}
+              {name}
             </div>
             <div style={{ fontSize: 12, color: BLUE, fontWeight: 600, marginTop: 3 }}>{code}</div>
-            <div style={{ fontSize: 11, color: SUB, marginTop: 2 }}>Lima, Perú</div>
           </div>
 
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', paddingTop: 4 }}>
-            {[
-              { value: gamesPlayed, label: 'Partidos jugados' },
-              { value: null, label: 'Posición' },
-            ].map(({ value, label }, i) => {
-              const stat = (v, l) => (
-                <div>
-                  <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: -0.3, lineHeight: 1, color: v != null ? TEXT : '#C7C7CC' }}>
-                    {v != null ? String(v) : '—'}
-                  </div>
-                  <div style={{ fontSize: 11, color: SUB, marginTop: 2 }}>{l}</div>
-                </div>
-              );
-              if (i === 0) return (
-                <div key={i} style={{ paddingBottom: 10 }}>
-                  {stat(value, label)}
-                </div>
-              );
-              return (
-                <div key={i}>
-                  <div style={{ height: 1, background: HAIR, marginBottom: 10 }} />
-                  <div style={{ display: 'flex', gap: 0, paddingBottom: 10 }}>
-                    <div style={{ flex: 1 }}>{stat('Hombre', 'Sexo')}</div>
-                    <div style={{ flex: 1 }}>{stat(null, 'Edad')}</div>
-                  </div>
-                  <div style={{ height: 1, background: HAIR, marginBottom: 10 }} />
-                  {stat(value, label)}
-                </div>
-              );
-            })}
+            <div style={{ paddingBottom: 10 }}>
+              {stat(null, 'Partidos jugados')}
+            </div>
+            <div style={{ height: 1, background: HAIR, marginBottom: 10 }} />
+            <div style={{ display: 'flex', gap: 0, paddingBottom: 10 }}>
+              <div style={{ flex: 1 }}>{stat(sex, 'Sexo')}</div>
+              <div style={{ flex: 1 }}>{stat(age != null ? String(age) : null, 'Edad')}</div>
+            </div>
+            <div style={{ height: 1, background: HAIR, marginBottom: 10 }} />
+            {stat(position, 'Posición')}
           </div>
         </div>
       </div>
@@ -937,6 +953,34 @@ export default function GameDetail() {
   const isGuest   = !!g.paidBy;
 
   const confirmedRoster  = useMemo(() => sbRoster.filter(p => p.status === 'confirmed'), [sbRoster]);
+
+  const liveRoster = useMemo(() => {
+    function ageFromDate(iso) {
+      if (!iso) return null;
+      const [y, m, d] = iso.split('-').map(Number);
+      const today = new Date();
+      let age = today.getFullYear() - y;
+      const mo = today.getMonth() + 1 - m;
+      if (mo < 0 || (mo === 0 && today.getDate() < d)) age--;
+      return age >= 0 ? age : null;
+    }
+    return confirmedRoster
+      .slice()
+      .sort((a, b) => (a.joined_at || '').localeCompare(b.joined_at || ''))
+      .map(p => {
+        const pos = Array.isArray(p.preferred_position)
+          ? p.preferred_position.join(' · ')
+          : (p.preferred_position || null);
+        return {
+          user_id:  p.user_id,
+          name:     p.full_name || p.user_code || 'Jugador',
+          position: pos,
+          age:      ageFromDate(p.birth_date),
+          hue:      p.avatar_hue ?? null,
+        };
+      });
+  }, [confirmedRoster]);
+
   const guestsInRoster   = useMemo(() =>
     gameState.activeGuests.map(p => ({ ...p, id: p.user_id, name: p.full_name || p.user_code || 'Jugador' })),
     [gameState]);
@@ -986,15 +1030,17 @@ export default function GameDetail() {
     if (!supabase || !gameId) return;
     supabase
       .from('game_players')
-      .select('user_id, payer_id, status, joined_at, users:user_id(full_name, user_code, avatar_hue)')
+      .select('user_id, payer_id, status, joined_at, users:user_id(full_name, user_code, avatar_hue, preferred_position, birth_date)')
       .eq('game_id', gameId)
       .then(({ data, error }) => {
         if (error) { console.error('[GameDetail] game_players fetch error:', error); return; }
         const rows = (data ?? []).map(p => ({
           ...p,
-          full_name:  p.users?.full_name  ?? null,
-          user_code:  p.users?.user_code  ?? null,
-          avatar_hue: p.users?.avatar_hue ?? null,
+          full_name:          p.users?.full_name          ?? null,
+          user_code:          p.users?.user_code          ?? null,
+          avatar_hue:         p.users?.avatar_hue         ?? null,
+          preferred_position: p.users?.preferred_position ?? null,
+          birth_date:         p.users?.birth_date         ?? null,
         }));
         setSbRoster(rows);
       });
@@ -1007,7 +1053,7 @@ export default function GameDetail() {
     const markedAt = new Date();
     const minsLate = Math.max(0, Math.round((markedAt.getTime() - gameStart.getTime()) / 60_000));
     const entry = { markedAt: markedAt.toISOString(), status: minsLate === 0 ? 'a_tiempo' : 'tarde', minsLate };
-    const next = { ...attendance, [player.name]: entry };
+    const next = { ...attendance, [player.user_id || player.name]: entry };
     setAttendance(next);
     try {
       const all = JSON.parse(localStorage.getItem(ATTENDANCE_KEY)) || {};
@@ -1019,6 +1065,12 @@ export default function GameDetail() {
 
   // guests that current user paid for — same derivation as guestsInRoster, scoped to me as payer
   const guestOwnGuests = guestsInRoster;
+
+  // user_id of whoever invited the current user (for "Invitado por" profile card)
+  const payerUserId = useMemo(() => {
+    if (!isGuest || !user?.id) return null;
+    return sbRoster.find(p => p.user_id === user.id)?.payer_id ?? null;
+  }, [isGuest, sbRoster, user?.id]);
 
   // live breakdown derived from Supabase — overrides stale/null location.state price
   const liveUnitPrice  = sbGame?.price ?? g.paymentBreakdown?.unitPrice ?? g.priceNumber;
@@ -1101,7 +1153,7 @@ export default function GameDetail() {
               ) : isPastGame ? (
                 <span style={{ display: 'inline-flex', alignItems: 'center', padding: '5px 14px', borderRadius: 999, background: '#F0FFF4', fontSize: 13, fontWeight: 600, color: GREEN }}>Finalizado</span>
               ) : g.paidBy ? (
-                <button onClick={() => setSelectedPlayer({ name: g.paidBy })} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 14px', borderRadius: 999, background: '#F0FFF4', border: 'none', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                <button onClick={() => setSelectedPlayer({ name: g.paidBy, user_id: payerUserId })} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 14px', borderRadius: 999, background: '#F0FFF4', border: 'none', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: GREEN }}>Invitado por</span>
                   <span style={{ fontSize: 12, fontWeight: 700, color: BLUE }}>{g.paidBy}</span>
                   {guestOwnGuests.length > 0 && (
@@ -1177,12 +1229,12 @@ export default function GameDetail() {
               </span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {g.players.map((p, i) => {
+              {liveRoster.map((p) => {
                 const displayName = p.name || '';
-                const attRecord   = attendance[p.name] ?? null;
+                const attRecord   = attendance[p.user_id] ?? null;
                 const showAtt     = attendanceOpen || isPastGame;
                 return (
-                  <div key={i}
+                  <div key={p.user_id}
                     onClick={() => setSelectedPlayer(p)}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 12,

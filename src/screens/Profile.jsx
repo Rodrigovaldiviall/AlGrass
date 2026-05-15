@@ -8,7 +8,7 @@ import { faHeadset, faCoins } from '@fortawesome/free-solid-svg-icons';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { abbreviateName } from '../utils/format';
+import { abbreviateName, ensureUserCode } from '../utils/format';
 import { GAMES } from '../data/games';
 import { deriveGameState } from '../utils/deriveGameState';
 import { GameMetaLine } from '../components/GameMetaLine';
@@ -548,7 +548,7 @@ function ProfileCard({ user, gamesPlayedCount, onEdit }) {
             {displayName}
           </div>
           <div style={{ fontSize: 12, color: BLUE, fontWeight: 600, marginTop: 3, textAlign: 'center' }}>
-            {user.userCode || ''}
+            {user.userCode ? `@${user.userCode}` : ''}
           </div>
           <div style={{ fontSize: 11.5, color: SUB, marginTop: 3, textAlign: 'center', lineHeight: 1.3 }}>
             {user.city || 'Arequipa'}
@@ -1219,7 +1219,7 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
             <div>
               <div style={{ fontSize: 15, fontWeight: 800, color: TEXT, letterSpacing: -0.3 }}>{previewName}</div>
               {profileData.userCode && (
-                <div style={{ fontSize: 12, color: BLUE, fontWeight: 600, marginTop: 2 }}>{profileData.userCode}</div>
+                <div style={{ fontSize: 12, color: BLUE, fontWeight: 600, marginTop: 2 }}>{`@${profileData.userCode}`}</div>
               )}
             </div>
           </div>
@@ -1856,13 +1856,17 @@ export default function Profile() {
 
       supabase
         .from('users')
-        .select('full_name, email, role, organizer_status, birth_date, sex, preferred_position, phone, nationality, occupation')
+        .select('full_name, email, role, organizer_status, birth_date, sex, preferred_position, phone, nationality, occupation, user_code')
         .eq('id', uid)
         .single()
-        .then(({ data, error }) => {
+        .then(async ({ data, error }) => {
           if (error) { console.warn('[Profile] public.users:', error.message); return; }
           if (data) {
-            setSbProfile(data);
+            let userCode = data.user_code || null;
+            if (!userCode && data.full_name) {
+              userCode = await ensureUserCode(supabase, uid, data.full_name);
+            }
+            setSbProfile({ ...data, user_code: userCode });
             setProfileData(prev => {
               const patch = {};
               if (data.full_name)          { patch.fullName = data.full_name; patch.firstName = data.full_name.split(' ')[0] || ''; patch.lastName = data.full_name.split(' ').slice(1).join(' '); }
@@ -1872,8 +1876,17 @@ export default function Profile() {
               if (data.phone)              { patch.phone = data.phone; }
               if (data.nationality)        { patch.nationality = data.nationality; }
               if (data.occupation)         { patch.occupation = data.occupation; }
+              if (userCode)                { patch.userCode = userCode; }
               return { ...prev, ...patch };
             });
+            // Propagate to localStorage so legacy reads (ConfirmReservation, CancelSheet) are correct
+            if (userCode) {
+              try {
+                const stored = JSON.parse(localStorage.getItem('pichanga_profile') || '{}');
+                stored.userCode = userCode;
+                localStorage.setItem('pichanga_profile', JSON.stringify(stored));
+              } catch {}
+            }
           }
         });
 

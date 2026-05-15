@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { getUser, setUser, removeUser } from '../services/userService';
+import { ensureUserCode } from '../utils/format';
 
 const AuthContext = createContext(null);
 
@@ -65,22 +66,28 @@ export function AuthProvider({ children }) {
         const baseUser = { id: su.id, name, email, provider, providers, identities };
         login(baseUser);
 
-        // Fetch canonical full_name from profiles table — overrides auth metadata
+        // Fetch canonical full_name + user_code from profiles table — overrides auth metadata
         supabase
           .from('users')
-          .select('full_name')
+          .select('full_name, user_code')
           .eq('id', su.id)
           .maybeSingle()
-          .then(({ data }) => {
-            if (data?.full_name) {
-              login({ ...baseUser, name: data.full_name });
-              // Propagate to localStorage so any legacy pichanga_profile.fullName reads are correct
-              try {
-                const stored = JSON.parse(localStorage.getItem('pichanga_profile') || '{}');
-                stored.fullName = data.full_name;
-                localStorage.setItem('pichanga_profile', JSON.stringify(stored));
-              } catch {}
+          .then(async ({ data }) => {
+            if (!data?.full_name) return;
+            let userCode = data.user_code || null;
+            // Generate user_code if missing
+            if (!userCode) {
+              userCode = await ensureUserCode(supabase, su.id, data.full_name);
             }
+            const canonical = { ...baseUser, name: data.full_name, ...(userCode && { userCode }) };
+            login(canonical);
+            // Propagate to localStorage so legacy pichanga_profile reads are correct
+            try {
+              const stored = JSON.parse(localStorage.getItem('pichanga_profile') || '{}');
+              stored.fullName = data.full_name;
+              if (userCode) stored.userCode = userCode;
+              localStorage.setItem('pichanga_profile', JSON.stringify(stored));
+            } catch {}
           });
       }
       if (event === 'SIGNED_OUT') {
