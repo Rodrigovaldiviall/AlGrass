@@ -9,6 +9,7 @@ import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { GAMES } from '../data/games';
+import { deriveGameState } from '../utils/deriveGameState';
 
 const USER = {
   name: 'Rodrigo',
@@ -1840,10 +1841,9 @@ export default function Profile() {
   });
 
   const [sbProfile, setSbProfile] = useState(null);
-  const [sbGuestSlots,      setSbGuestSlots]      = useState([]);
-  const [myActiveGuests,    setMyActiveGuests]    = useState({});
-  const [myConfirmedGameIds, setMyConfirmedGameIds] = useState(null); // null = cargando
-  const [myCanceledGameIds,  setMyCanceledGameIds]  = useState(new Set());
+  const [myPlayerRows,      setMyPlayerRows]      = useState([]);
+  const [myPlayerRowsReady, setMyPlayerRowsReady] = useState(false);
+  const [payerNames,        setPayerNames]        = useState({});
 
   useEffect(() => {
     if (!supabase) return;
@@ -1898,88 +1898,70 @@ export default function Profile() {
           }
         });
 
-      // guest slots: partidas donde me invitaron (payer_id != me)
+      // todos mis rows como jugador o como payer — fuente única de verdad
       supabase
         .from('game_players')
         .select(`
-          game_id, user_id, payer_id, status,
+          game_id, user_id, payer_id, status, amount,
           games:game_id ( date_key, time, fields:field_id ( format, venues:venue_id ( name ) ) )
         `)
-        .eq('user_id', uid)
-        .neq('payer_id', uid)
-        .eq('status', 'confirmed')
+        .or(`user_id.eq.${uid},payer_id.eq.${uid}`)
         .then(async ({ data, error }) => {
-          if (error) { console.warn('[Profile] guest slots:', error.message); return; }
+          if (error) { console.warn('[Profile] player rows:', error.message); return; }
           const rows = data ?? [];
-          const payerIds = [...new Set(rows.map(r => r.payer_id))];
-          let payerMap = {};
+          setMyPlayerRows(rows);
+          setMyPlayerRowsReady(true);
+          const payerIds = [...new Set(rows.filter(r => r.user_id === uid && r.payer_id !== uid).map(r => r.payer_id))];
           if (payerIds.length > 0) {
             const { data: pd } = await supabase.from('users').select('id, full_name, user_code').in('id', payerIds);
-            (pd || []).forEach(u => { payerMap[u.id] = { name: u.full_name || '', code: u.user_code || '' }; });
+            const map = {};
+            (pd || []).forEach(u => { map[u.id] = { name: u.full_name || '', code: u.user_code || '' }; });
+            setPayerNames(map);
           }
-          setSbGuestSlots(rows.map(r => ({ ...r, payerName: payerMap[r.payer_id]?.name || 'Usuario', payerCode: payerMap[r.payer_id]?.code || null })));
-        });
-
-      // mis invitados activos por partida (para activeGuestCount)
-      supabase
-        .from('game_players')
-        .select('game_id')
-        .eq('payer_id', uid)
-        .neq('user_id', uid)
-        .eq('status', 'confirmed')
-        .then(({ data }) => {
-          const counts = {};
-          (data || []).forEach(r => { counts[r.game_id] = (counts[r.game_id] || 0) + 1; });
-          setMyActiveGuests(counts);
-        });
-
-      // mis slots confirmados como titular — source of truth para "inscrito"
-      supabase
-        .from('game_players')
-        .select('game_id')
-        .eq('user_id', uid)
-        .eq('payer_id', uid)
-        .eq('status', 'confirmed')
-        .then(({ data }) => {
-          setMyConfirmedGameIds(new Set((data || []).map(r => r.game_id)));
-        });
-
-      // mis slots cancelados — para mantener visibilidad cuando tengo invitados activos
-      supabase
-        .from('game_players')
-        .select('game_id')
-        .eq('user_id', uid)
-        .eq('status', 'canceled')
-        .then(({ data }) => {
-          setMyCanceledGameIds(new Set((data || []).map(r => r.game_id)));
         });
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [pastExpanded, setPastExpanded] = useState(false);
 
-  const guestGames = useMemo(() => {
-    return sbGuestSlots.map(r => {
-      const g = r.games;
-      const { time, ampm } = parseGameTime(g?.time);
-      return {
-        id:               `${r.game_id}_g_${r.user_id}`,
-        gameId:           r.game_id,
-        date:             fmtDateKey(g?.date_key),
-        time,
-        ampm,
-        field:            g?.fields?.venues?.name || '',
-        format:           g?.fields?.format       || '7v7',
-        type:             'game',
-        price:            null,
-        status:           'guest',
-        guestId:          r.user_id,
-        paidBy:           r.payerName,
-        paidByCode:       r.payerCode,
-        activeGuestCount: myActiveGuests[r.game_id] || 0,
-      };
+  const profileGameStateMap = useMemo(() => {
+    if (!user?.id) return new Map();
+    const byGame = {};
+    myPlayerRows.forEach(r => { (byGame[r.game_id] ??= []).push(r); });
+    const map = new Map();
+    Object.entries(byGame).forEach(([gameId, rows]) => {
+      map.set(gameId, deriveGameState(rows, user.id));
     });
-  }, [sbGuestSlots, myActiveGuests]);
+    return map;
+  }, [myPlayerRows, user?.id]);
+
+  const guestGames = useMemo(() => {
+    if (!user?.id) return [];
+    return myPlayerRows
+      .filter(r => r.user_id === user.id && r.payer_id !== user.id && r.status === 'confirmed')
+      .map(r => {
+        const g = r.games;
+        const { time, ampm } = parseGameTime(g?.time);
+        const state = profileGameStateMap.get(r.game_id);
+        const payer = payerNames[r.payer_id];
+        return {
+          id:               `${r.game_id}_g_${r.user_id}`,
+          gameId:           r.game_id,
+          date:             fmtDateKey(g?.date_key),
+          time,
+          ampm,
+          field:            g?.fields?.venues?.name || '',
+          format:           g?.fields?.format       || '7v7',
+          type:             'game',
+          price:            null,
+          status:           'guest',
+          guestId:          r.user_id,
+          paidBy:           payer?.name || 'Usuario',
+          paidByCode:       payer?.code || null,
+          activeGuestCount: state?.activeGuestCount ?? 0,
+        };
+      });
+  }, [myPlayerRows, user?.id, payerNames, profileGameStateMap]);
 
   const canceledGames = useMemo(() => deriveCanceledWithGuestsGames(), [extraGames]);
 
@@ -1989,19 +1971,18 @@ export default function Profile() {
   const allGames = (() => {
     const raw = [
       ...extraGames.map(g => {
-        if (g.status === 'reserved' && g.type !== 'campo' && myConfirmedGameIds !== null) {
-          const isTitularConfirmed = myConfirmedGameIds.has(g.id);
-          const isCanceled  = myCanceledGameIds.has(g.id);
-          const hasGuests   = (myActiveGuests[g.id] ?? 0) > 0;
-          if (!isTitularConfirmed && !hasGuests) return null;
-          if (!isTitularConfirmed && isCanceled && hasGuests) {
-            return { ...g, status: 'canceled-with-guests', activeGuestCount: myActiveGuests[g.id] ?? 0 };
+        if (g.status === 'reserved' && g.type !== 'campo' && myPlayerRowsReady) {
+          const state = profileGameStateMap.get(g.id);
+          if (!state || !state.isVisible) return null;
+          if (state.relationship === 'canceled-with-guests') {
+            return { ...g, status: 'canceled-with-guests', activeGuestCount: state.activeGuestCount };
           }
-          if (!isTitularConfirmed && !isCanceled && hasGuests) return null; // guestGames handles this
+          if (state.relationship === 'guest') return null; // guestGames handles this
         }
         let row = g.paymentBreakdown ? { ...g, price: computeLivePrice(g) } : g;
         if (row.status === 'reserved' && row.type !== 'campo' && row.id) {
-          row = { ...row, activeGuestCount: myActiveGuests[row.id] ?? 0 };
+          const state = profileGameStateMap.get(row.id);
+          row = { ...row, activeGuestCount: state?.activeGuestCount ?? 0 };
         }
         return row;
       }).filter(Boolean),

@@ -13,6 +13,7 @@ import RatingBlock from '../components/RatingBlock';
 import { useAuth } from '../context/AuthContext';
 import { cancelGamePlayer, cancelGuestPlayers } from '../services/reservationService';
 import { supabase } from '../lib/supabase';
+import { deriveGameState } from '../utils/deriveGameState';
 
 const WAITLIST_KEY   = 'pichanga_waitlist';
 const ATTENDANCE_KEY = 'pichanga_attendance';
@@ -914,9 +915,8 @@ export default function GameDetail() {
   const gameId  = sel?.id ?? id ?? null;
   const guestId = location.state?.game?.guestId ?? null;
 
-  const isBooked = useMemo(() =>
-    sbRoster.some(p => p.user_id === user?.id && p.status === 'confirmed'),
-    [sbRoster, user?.id]);
+  const gameState = useMemo(() => deriveGameState(sbRoster, user?.id), [sbRoster, user?.id]);
+  const { isBooked, mySlotCanceled } = gameState;
 
   const guestCanceledView = location.state?.guestCanceledView ?? false;
   const infoMode  = (location.state?.infoMode ?? false) || isBooked;
@@ -924,10 +924,8 @@ export default function GameDetail() {
 
   const confirmedRoster  = useMemo(() => sbRoster.filter(p => p.status === 'confirmed'), [sbRoster]);
   const guestsInRoster   = useMemo(() =>
-    confirmedRoster
-      .filter(p => p.payer_id === user?.id && p.user_id !== user?.id)
-      .map(p => ({ ...p, id: p.user_id, name: p.full_name || p.user_code || 'Jugador' })),
-    [confirmedRoster, user?.id]);
+    gameState.activeGuests.map(p => ({ ...p, id: p.user_id, name: p.full_name || p.user_code || 'Jugador' })),
+    [gameState]);
   const hasConfirmedTitular = useMemo(() => sbRoster.some(p => p.user_id === p.payer_id && p.status === 'confirmed'), [sbRoster]);
   const hasCanceledTitular  = useMemo(() => sbRoster.some(p => p.user_id === p.payer_id && p.status === 'canceled'),  [sbRoster]);
   const titularCanceled     = !hasConfirmedTitular && hasCanceledTitular;
@@ -1014,7 +1012,6 @@ export default function GameDetail() {
     ? { unitPrice: liveUnitPrice, promoDiscount: g.paymentBreakdown?.promoDiscount ?? 0 }
     : g.paymentBreakdown;
   // true when my own slot is canceled (Rule 3: show titular-cancelado, hide paidBy)
-  const mySlotCanceled = !isBooked && sbRoster.some(p => p.user_id === user?.id && p.status === 'canceled');
   const livePaidBy     = mySlotCanceled ? null : g.paidBy;
 
   const isCanceledWithGuests = (titularCanceled || guestCanceledView)

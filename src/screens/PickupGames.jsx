@@ -7,6 +7,7 @@ import { getGames } from '../services/gameService';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { deriveGameState } from '../utils/deriveGameState';
 
 const DOW_ES   = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const MONTH_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -489,7 +490,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
   );
 }
 
-function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount }) {
+function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount, liveOpenSpots }) {
   const [pressed, setPressed] = useState(false);
   return (
     <div role="button" tabIndex={0}
@@ -542,7 +543,7 @@ function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount
           )}
         </div>
       </div>
-      <StatusPill openSpots={g.openSpots} booked={booked} inWaitlist={inWaitlist} guestInfo={guestInfo} canceledCount={canceledCount} activeGuestCount={activeGuestCount} />
+      <StatusPill openSpots={liveOpenSpots ?? g.openSpots} booked={booked} inWaitlist={inWaitlist} guestInfo={guestInfo} canceledCount={canceledCount} activeGuestCount={activeGuestCount} />
       <div style={{ pointerEvents: 'none', marginLeft: 6 }}>{I.chev()}</div>
     </div>
   );
@@ -640,8 +641,9 @@ export default function PickupGames() {
     });
   }, []);
 
-  const [myPlayerRows, setMyPlayerRows] = useState([]);
-  const [payerNames,   setPayerNames]   = useState({});
+  const [myPlayerRows,      setMyPlayerRows]      = useState([]);
+  const [payerNames,        setPayerNames]        = useState({});
+  const [confirmedCountMap, setConfirmedCountMap] = useState(new Map());
 
   useEffect(() => {
     if (!supabase || !user?.id) return;
@@ -663,6 +665,21 @@ export default function PickupGames() {
         setPayerNames(names);
       });
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!supabase || games.length === 0) return;
+    supabase
+      .from('game_players')
+      .select('game_id')
+      .eq('status', 'confirmed')
+      .in('game_id', games.map(g => g.id))
+      .then(({ data, error }) => {
+        if (error || !data) return;
+        const map = new Map();
+        data.forEach(r => { map.set(r.game_id, (map.get(r.game_id) ?? 0) + 1); });
+        setConfirmedCountMap(map);
+      });
+  }, [games]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [flt, setFlt]               = useState(() => {
     try { return JSON.parse(sessionStorage.getItem('pg'))?.flt ?? EMPTY_FLT; } catch { return EMPTY_FLT; }
@@ -690,15 +707,6 @@ export default function PickupGames() {
   const stripCellRefs      = useRef({});
   const programmaticScrollRef = useRef(false);
 
-  const bookedGameIds = useMemo(() => {
-    if (!user?.id) return new Set();
-    return new Set(
-      myPlayerRows
-        .filter(r => r.user_id === user.id && r.status === 'confirmed')
-        .map(r => r.game_id)
-    );
-  }, [myPlayerRows, user?.id]);
-
   const waitlistGameIds = useMemo(() => {
     try {
       const wl = JSON.parse(localStorage.getItem('pichanga_waitlist')) || {};
@@ -706,52 +714,33 @@ export default function PickupGames() {
     } catch { return new Set(); }
   }, []);
 
-  const myActiveGuestsMap = useMemo(() => {
-    if (!user?.id) return {};
-    const map = {};
-    myPlayerRows
-      .filter(r => r.payer_id === user.id && r.user_id !== user.id && r.status === 'confirmed')
-      .forEach(r => { map[r.game_id] = (map[r.game_id] || 0) + 1; });
-    return map;
-  }, [myPlayerRows, user?.id]);
-
-  const guestGamesMap = useMemo(() => {
+  const gameStateMap = useMemo(() => {
     if (!user?.id) return new Map();
+    const byGame = {};
+    myPlayerRows.forEach(r => { (byGame[r.game_id] ??= []).push(r); });
     const map = new Map();
-    myPlayerRows
-      .filter(r => r.user_id === user.id && r.payer_id !== user.id && r.status === 'confirmed')
-      .forEach(r => {
-        const payer = payerNames[r.payer_id] || {};
-        map.set(r.game_id, {
-          paidBy:           payer.name || 'Usuario',
-          payerCode:        payer.code || null,
-          guestId:          r.user_id,
-          activeGuestCount: myActiveGuestsMap[r.game_id] || 0,
-        });
+    Object.entries(byGame).forEach(([gameId, rows]) => {
+      const state = deriveGameState(rows, user.id);
+      const payer = state.payerId ? (payerNames[state.payerId] ?? {}) : {};
+      map.set(gameId, {
+        ...state,
+        paidBy:         payer.name || 'Usuario',
+        payerCode:      payer.code || null,
+        guestId:        state.guestRow?.user_id ?? null,
+        isGuestCanceled: state.canceledRow ? state.canceledRow.payer_id !== user.id : false,
       });
+    });
     return map;
-  }, [myPlayerRows, payerNames, myActiveGuestsMap, user?.id]);
+  }, [myPlayerRows, user?.id, payerNames]);
 
-  const canceledWithGuestsMap = useMemo(() => {
-    if (!user?.id) return new Map();
-    const confirmedGameIds = new Set(
-      myPlayerRows
-        .filter(r => r.user_id === user.id && r.status === 'confirmed')
-        .map(r => r.game_id)
-    );
-    const activeGuestsByGame = {};
-    myPlayerRows
-      .filter(r => r.payer_id === user.id && r.user_id !== user.id && r.status === 'confirmed')
-      .forEach(r => { activeGuestsByGame[r.game_id] = (activeGuestsByGame[r.game_id] || 0) + 1; });
+  const liveOpenSpotsMap = useMemo(() => {
     const map = new Map();
-    myPlayerRows
-      .filter(r => r.user_id === user.id && r.status === 'canceled' && !confirmedGameIds.has(r.game_id))
-      .forEach(r => {
-        const count = activeGuestsByGame[r.game_id] || 0;
-        if (count > 0 && !map.has(r.game_id)) map.set(r.game_id, { count, isGuestCanceled: r.payer_id !== user.id });
-      });
+    games.forEach(g => {
+      const confirmed = confirmedCountMap.get(g.id) ?? 0;
+      map.set(g.id, Math.max(0, (g.totalSpots ?? 0) - confirmed));
+    });
     return map;
-  }, [myPlayerRows, user?.id]);
+  }, [games, confirmedCountMap]);
 
   // Chip active state mirrors flt
   const chipActive = {
@@ -781,7 +770,7 @@ export default function PickupGames() {
       if (flt.duchas          && !g.showers)   return false;
       if (flt.mujeres         && !g.womenOnly) return false;
       if (flt.master45        && !g.master45)  return false;
-      if (flt.minSpots !== null && g.openSpots < flt.minSpots) return false;
+      if (flt.minSpots !== null && (liveOpenSpotsMap.get(g.id) ?? g.openSpots) < flt.minSpots) return false;
       if (flt.formatos.length && !flt.formatos.includes(g.format)) return false;
       if (flt.dias.length) {
         const dow = new Date(g.dateKey + 'T00:00:00').getDay();
@@ -799,7 +788,7 @@ export default function PickupGames() {
     });
     console.log('[PickupGames] filteredGames.length:', result.length, '| sample dateKeys:', result.slice(0,3).map(g => g.dateKey));
     return result;
-  }, [flt, userCity, games]);
+  }, [flt, userCity, games, liveOpenSpotsMap]);
 
   const grouped = useMemo(() => {
     const map = new Map();
@@ -941,27 +930,28 @@ export default function PickupGames() {
           return (
             <div key={dateKey} style={isLast ? { minHeight: 'calc(100% - 4px)' } : null}>
               <DateHeader dateKey={dateKey} refEl={(el) => { headerRefs.current[dateKey] = el; }} />
-              {games.map((g, i) => (
+              {games.map((g, i) => {
+                const st = gameStateMap.get(g.id);
+                return (
                 <GameRow key={g.id} g={g}
                   last={i === games.length - 1 && isLast}
-                  booked={bookedGameIds.has(g.id)}
+                  booked={st?.isBooked}
                   inWaitlist={waitlistGameIds.has(g.id)}
-                  guestInfo={guestGamesMap.get(g.id)}
-                  canceledCount={canceledWithGuestsMap.has(g.id) ? canceledWithGuestsMap.get(g.id).count : undefined}
-                  activeGuestCount={myActiveGuestsMap[g.id] || 0}
+                  guestInfo={st?.isGuestConfirmed ? { paidBy: st.paidBy, payerCode: st.payerCode, guestId: st.guestId, activeGuestCount: st.activeGuestCount } : undefined}
+                  canceledCount={st?.relationship === 'canceled-with-guests' ? st.activeGuestCount : undefined}
+                  activeGuestCount={st?.activeGuestCount ?? 0}
+                  liveOpenSpots={liveOpenSpotsMap.get(g.id)}
                   onOpen={() => {
-                    const gi  = guestGamesMap.get(g.id);
-                    const ci  = canceledWithGuestsMap.get(g.id);
-                    if (gi) {
-                      navigate(`/game/${g.id}`, { state: { game: { ...g, paidBy: gi.paidBy, paidByCode: gi.payerCode, guestId: gi.guestId }, infoMode: true, backPath: '/games' } });
-                    } else if (ci?.isGuestCanceled) {
-                      navigate(`/game/${g.id}`, { state: { guestCanceledView: true, infoMode: false, backPath: '/games', game: { ...g, guestSubBreakdown: ci.guestSubBreakdown, guestCanceledView: true, paymentBreakdown: null } } });
+                    if (st?.isGuestConfirmed) {
+                      navigate(`/game/${g.id}`, { state: { game: { ...g, paidBy: st.paidBy, paidByCode: st.payerCode, guestId: st.guestId }, infoMode: true, backPath: '/games' } });
+                    } else if (st?.relationship === 'canceled-with-guests' && st.isGuestCanceled) {
+                      navigate(`/game/${g.id}`, { state: { guestCanceledView: true, infoMode: false, backPath: '/games', game: { ...g, guestCanceledView: true, paymentBreakdown: null } } });
                     } else {
                       navigate(`/game/${g.id}`, { state: { game: g, backPath: '/games' } });
                     }
                   }}
                 />
-              ))}
+              ); })}
               {isLast && dateKey === maxEventKey && (
                 <div style={{
                   padding: '28px 16px 20px', textAlign: 'center',

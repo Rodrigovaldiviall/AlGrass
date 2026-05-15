@@ -44,7 +44,8 @@ function mapGame(g) {
   const { time, ampm } = parseTime(g.time);
   const field     = g.fields;
   const venue     = field?.venues;
-  const openSpots = Math.max(0, (field?.players_per_team ?? 0) * 2 - (g.current_players ?? 0));
+  const totalSpots = (field?.players_per_team ?? 0) * 2;
+  const openSpots  = Math.max(0, totalSpots - (g.current_players ?? 0));
   return {
     id:        g.id,
     type:      g.type                             ?? '',
@@ -58,6 +59,7 @@ function mapGame(g) {
     format:    field?.format                      ?? '',
     price:     g.price_per_person                 ?? 0,
     openSpots,
+    totalSpots,
     filmed:    g.game_amenities?.filmed           ?? false,
     womenOnly: g.game_amenities?.women_only       ?? false,
     master45:  g.game_amenities?.master_45        ?? false,
