@@ -25,11 +25,14 @@ const GAME_SELECT = `
   time,
   price_per_person,
   current_players,
+  total_spots,
+  format,
   game_amenities:amenities,
   fields:field_id (
     name,
     format,
     players_per_team,
+    total_spots,
     field_amenities:amenities,
     venues:venue_id (
       name,
@@ -44,7 +47,10 @@ function mapGame(g) {
   const { time, ampm } = parseTime(g.time);
   const field     = g.fields;
   const venue     = field?.venues;
-  const totalSpots = (field?.players_per_team ?? 0) * 2;
+  // Priority: games.total_spots → fields.total_spots → fields.players_per_team * 2
+  const totalSpots = g.total_spots
+    ?? field?.total_spots
+    ?? (field?.players_per_team ?? 0) * 2;
   const openSpots  = Math.max(0, totalSpots - (g.current_players ?? 0));
   return {
     id:        g.id,
@@ -56,7 +62,8 @@ function mapGame(g) {
     field:     venue?.name                        ?? '',
     fieldName: field?.name                        ?? '',
     address:   venue?.address                     ?? '',
-    format:    field?.format                      ?? '',
+    // Priority: games.format → fields.format
+    format:    g.format ?? field?.format ?? '',
     price:     g.price_per_person                 ?? 0,
     openSpots,
     totalSpots,

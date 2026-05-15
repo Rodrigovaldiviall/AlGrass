@@ -1,4 +1,13 @@
 /**
+ * Minimum required players for a format string ("7v7" → 14).
+ * Used to derive "Con suplentes" state: total_spots > requiredPlayers(format).
+ */
+export function requiredPlayers(format) {
+  const m = /^(\d+)v\1$/.exec(format || '');
+  return m ? Number(m[1]) * 2 : 0;
+}
+
+/**
  * Derives the current user's relationship and capabilities for a single game.
  *
  * @param {Array}  rows   - game_players rows for this game.

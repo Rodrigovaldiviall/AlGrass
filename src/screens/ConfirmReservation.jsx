@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { TEXT, SUB, HAIR, ORANGE, SOFT, DANGER, YAPE } from '../constants';
 import I from '../icons';
 import { shareOrCopy } from '../utils/share';
@@ -637,8 +638,11 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
 export default function ConfirmReservation() {
   const navigate = useNavigate();
   const { state } = useLocation();
+  const { user: authUser } = useAuth();
   const game = state?.game;
   const user = state?.user ?? { name: 'Usuario', email: 'usuario@email.com' };
+  // Canonical display name: DB-fetched name from AuthContext takes precedence over navigation state
+  const canonicalName = authUser?.name || user.name;
   console.log('[checkout] state:', state, '| game:', game);
 
   const [guests, setGuests]         = useState([]);
@@ -763,7 +767,7 @@ export default function ConfirmReservation() {
         const _payerProfile = (() => { try { return JSON.parse(localStorage.getItem('pichanga_profile') || '{}'); } catch { return {}; } })();
         createRoster(_gid, guests, {
           reservedAt: reservationTs.current,
-          payerName: _payerProfile.fullName || 'Usuario',
+          payerName: canonicalName || _payerProfile.fullName || 'Usuario',
           payerCode: _payerProfile.userCode  || '',
         });
       }
@@ -871,7 +875,7 @@ export default function ConfirmReservation() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0' }}>
               <UserAvatar size={44} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 15.5, fontWeight: 700, color: TEXT, letterSpacing: -0.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.name}</div>
+                <div style={{ fontSize: 15.5, fontWeight: 700, color: TEXT, letterSpacing: -0.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{canonicalName}</div>
                 <div style={{ fontSize: 12.5, color: SUB, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</div>
               </div>
               <div style={{ fontSize: 14, fontWeight: 600, color: SUB, flexShrink: 0 }}>{unitStr}</div>

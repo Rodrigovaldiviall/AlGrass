@@ -13,7 +13,7 @@ import RatingBlock from '../components/RatingBlock';
 import { useAuth } from '../context/AuthContext';
 import { cancelGamePlayer, cancelGuestPlayers } from '../services/reservationService';
 import { supabase } from '../lib/supabase';
-import { deriveGameState } from '../utils/deriveGameState';
+import { deriveGameState, requiredPlayers } from '../utils/deriveGameState';
 
 const WAITLIST_KEY   = 'pichanga_waitlist';
 const ATTENDANCE_KEY = 'pichanga_attendance';
@@ -83,9 +83,10 @@ function buildGame(sel) {
   }
   const fieldInfo = FIELD_INFO[sel.field] || { address: [sel.field, 'Dirección no disponible'] };
   const address = sel.address ? [sel.address] : fieldInfo.address;
-  const total = totalSpotsFor(sel.format);
+  const total = sel.totalSpots || totalSpotsFor(sel.format);
   const chips = [
     { kind: 'format',   label: sel.format || '7v7' },
+    total > requiredPlayers(sel.format) && { kind: 'suplentes', label: 'Con suplentes' },
     sel.covered   && { kind: 'covered',  label: 'Cubierto' },
     sel.filmed    && { kind: 'filmed',   label: 'Filmado' },
     sel.womenOnly && { kind: 'women',    label: 'Solo mujeres' },
@@ -248,27 +249,40 @@ const _StarIcon = (c = TEXT) => (
     <path d="M7 1.5l1.5 3.2 3.5.5-2.5 2.4.6 3.5L7 9.4l-3.1 1.7.6-3.5L2 5.2l3.5-.5L7 1.5z" stroke={c} strokeWidth="1.3" strokeLinejoin="round"/>
   </svg>
 );
+const _SubIcon = (c = TEXT) => (
+  <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+    <circle cx="5" cy="3.5" r="2" stroke={c} strokeWidth="1.3"/>
+    <path d="M1.5 11c0-2 1.5-3.5 3.5-3.5s3.5 1.5 3.5 3.5" stroke={c} strokeWidth="1.3" strokeLinecap="round"/>
+    <path d="M9.5 6l1.5 1.5L9.5 9M11 7.5H8" stroke={c} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
 const CHIP_ICON = {
-  format:   I.twoPeople,
-  filmed:   I.camera,
-  covered:  I.roof,
-  women:    I.female,
-  spots:    I.plus,
-  master45: _StarIcon,
-  parking:  _ParkingIcon,
-  showers:  _ShowerIcon,
+  format:    I.twoPeople,
+  filmed:    I.camera,
+  covered:   I.roof,
+  women:     I.female,
+  spots:     I.plus,
+  master45:  _StarIcon,
+  parking:   _ParkingIcon,
+  showers:   _ShowerIcon,
+  suplentes: _SubIcon,
 };
 function Chip({ kind, label }) {
   const icon = CHIP_ICON[kind];
+  const isSubs = kind === 'suplentes';
   return (
     <div style={{
-      flex: '0 0 auto', height: 28, padding: '0 10px', borderRadius: 999,
-      border: `1px solid ${HAIR}`, background: '#fff',
+      flex: '0 0 auto', height: isSubs ? 'auto' : 28, padding: isSubs ? '4px 10px' : '0 10px',
+      borderRadius: 999, border: `1px solid ${HAIR}`, background: '#fff',
       display: 'inline-flex', alignItems: 'center', gap: 5,
-      color: TEXT, fontSize: 'var(--gd-is, 12px)', fontWeight: 500, whiteSpace: 'nowrap',
+      color: TEXT, fontSize: 'var(--gd-is, 12px)', fontWeight: 500,
+      whiteSpace: isSubs ? 'normal' : 'nowrap',
     }}>
       {icon ? icon(TEXT) : null}
-      <span>{label}</span>
+      {isSubs
+        ? <span style={{ lineHeight: 1.2, textAlign: 'center' }}>Con<br/>suplentes</span>
+        : <span>{label}</span>
+      }
     </div>
   );
 }
@@ -501,7 +515,7 @@ function PlayerModal({ player, onClose }) {
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
 
-  const displayName = (player.name || '').split(' ').slice(0, 2).join(' ');
+  const displayName = player.name || '';
   const code        = deterministicCode(player.name);
   const hue         = [...(player.name || '·')].reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
   const gamesPlayed = [...(player.name || '')].reduce((a, c) => a + c.charCodeAt(0), 0) % 35 + 8;
@@ -1164,7 +1178,7 @@ export default function GameDetail() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {g.players.map((p, i) => {
-                const displayName = (p.name || '').split(' ').slice(0, 2).join(' ');
+                const displayName = p.name || '';
                 const attRecord   = attendance[p.name] ?? null;
                 const showAtt     = attendanceOpen || isPastGame;
                 return (
@@ -1251,7 +1265,7 @@ export default function GameDetail() {
                   priceNumber: g.priceNumber,
                   currency:    g.currency,
                   source:      'pichanga',
-                  openSpots:   g.openSpots,
+                  openSpots:   liveOpenSpots,
                   wasInWaitlist: inWaitlist,
                   backPath:    id ? `/game/${id}` : '/games',
                   gameDetailBackPath: backPath,

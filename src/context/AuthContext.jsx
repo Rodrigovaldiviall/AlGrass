@@ -45,10 +45,8 @@ export function AuthProvider({ children }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session) {
         const su = session.user;
-        const name = su.user_metadata?.full_name
-          || su.user_metadata?.name
-          || su.email?.split('@')[0]
-          || 'Usuario';
+        const metaName = su.user_metadata?.full_name || su.user_metadata?.name || null;
+        const name = metaName || 'Usuario';
         const email = su.email || '';
 
         // Proveedor principal de la cuenta (el primero con el que se registró).
@@ -64,7 +62,26 @@ export function AuthProvider({ children }) {
         // identities se guarda para permitir unlinkProvider() — necesita el id.
         const identities = (su.identities ?? []).map(({ id, provider: p }) => ({ id, provider: p }));
 
-        login({ id: su.id, name, email, provider, providers, identities });
+        const baseUser = { id: su.id, name, email, provider, providers, identities };
+        login(baseUser);
+
+        // Fetch canonical full_name from profiles table — overrides auth metadata
+        supabase
+          .from('users')
+          .select('full_name')
+          .eq('id', su.id)
+          .maybeSingle()
+          .then(({ data }) => {
+            if (data?.full_name) {
+              login({ ...baseUser, name: data.full_name });
+              // Propagate to localStorage so any legacy pichanga_profile.fullName reads are correct
+              try {
+                const stored = JSON.parse(localStorage.getItem('pichanga_profile') || '{}');
+                stored.fullName = data.full_name;
+                localStorage.setItem('pichanga_profile', JSON.stringify(stored));
+              } catch {}
+            }
+          });
       }
       if (event === 'SIGNED_OUT') {
         setUserState(null);

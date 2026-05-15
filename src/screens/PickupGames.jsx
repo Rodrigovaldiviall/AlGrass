@@ -7,7 +7,9 @@ import { getGames } from '../services/gameService';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { deriveGameState } from '../utils/deriveGameState';
+import { deriveGameState, requiredPlayers } from '../utils/deriveGameState';
+import { GameMetaLine } from '../components/GameMetaLine';
+import { abbreviateName } from '../utils/format';
 
 const DOW_ES   = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const MONTH_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -31,6 +33,7 @@ function headerLabel(d) {
 
 const EMPTY_FLT = {
   cubierta: false, estacionamiento: false, duchas: false, mujeres: false, master45: false,
+  suplentes: false,
   formatos: [], minSpots: null, dias: [], horarios: [],
 };
 
@@ -70,13 +73,21 @@ const StarIcon = (c = TEXT) => (
     <path d="M7 1.5l1.5 3.2 3.5.5-2.5 2.4.6 3.5L7 9.4l-3.1 1.7.6-3.5L2 5.2l3.5-.5L7 1.5z" stroke={c} strokeWidth="1.3" strokeLinejoin="round"/>
   </svg>
 );
+const SubIcon = (c = TEXT) => (
+  <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+    <circle cx="5" cy="3.5" r="2" stroke={c} strokeWidth="1.3"/>
+    <path d="M1.5 11c0-2 1.5-3.5 3.5-3.5s3.5 1.5 3.5 3.5" stroke={c} strokeWidth="1.3" strokeLinecap="round"/>
+    <path d="M9.5 6l1.5 1.5L9.5 9M11 7.5H8" stroke={c} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
 
 const PANEL_CHECKS = [
-  { key: 'cubierta',        label: 'Cubierta',      icon: c => I.roof(c)      },
+  { key: 'cubierta',        label: 'Cubierta',       icon: c => I.roof(c)      },
   { key: 'estacionamiento', label: 'Estacionamiento', icon: c => ParkingIcon(c) },
-  { key: 'duchas',          label: 'Duchas',         icon: c => ShowerIcon(c)  },
-  { key: 'mujeres',         label: 'Para mujeres',   icon: c => I.female(c)    },
-  { key: 'master45',        label: 'Master 45+',     icon: c => StarIcon(c)    },
+  { key: 'duchas',          label: 'Duchas',          icon: c => ShowerIcon(c)  },
+  { key: 'mujeres',         label: 'Para mujeres',    icon: c => I.female(c)    },
+  { key: 'master45',        label: 'Master 45+',      icon: c => StarIcon(c)    },
+  { key: 'suplentes',       label: 'Con suplentes',   icon: c => SubIcon(c)     },
 ];
 const PANEL_FORMATOS  = ['5v5', '6v6', '7v7', '8v8', '11v11'];
 const PANEL_DIAS      = [
@@ -102,7 +113,7 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
   const clearAll   = ()   => setFlt(EMPTY_FLT);
 
   const hasAny = flt.cubierta || flt.estacionamiento || flt.duchas || flt.mujeres || flt.master45 ||
-    flt.formatos.length > 0 || flt.minSpots !== null || flt.dias.length > 0 || flt.horarios.length > 0;
+    flt.suplentes || flt.formatos.length > 0 || flt.minSpots !== null || flt.dias.length > 0 || flt.horarios.length > 0;
 
   const visibleSpots = spotsExpanded ? ALL_SPOTS : ALL_SPOTS.slice(0, 6);
 
@@ -432,7 +443,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
         <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
           {guestInfo.activeGuestCount > 0
             ? `${guestInfo.activeGuestCount} ${guestInfo.activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}`
-            : guestInfo.paidBy ? `por ${guestInfo.paidBy}` : null}
+            : guestInfo.paidBy ? `por ${abbreviateName(guestInfo.paidBy)}` : null}
         </div>
       </div>
     );
@@ -517,25 +528,7 @@ function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount
       <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
         <div style={{ fontSize: 'var(--gm-title, 16px)', fontWeight: 600, color: TEXT, lineHeight: 1.2, letterSpacing: -0.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.field}</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, color: SUB, fontSize: 11, flexWrap: 'nowrap', overflow: 'hidden' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0, fontSize: 13, fontWeight: 500 }}>
-            {I.twoPeople(SUB)}<span>{g.format}</span>
-          </span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0, overflow: 'hidden' }}>
-            {g.womenOnly ? (
-              <>
-                {I.female(SUB)}<span style={{ whiteSpace: 'nowrap' }}>Para mujeres</span>
-                {g.parking && <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 3 }}>{ParkingIcon(SUB)}</span>}
-                {g.covered && <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 3 }}>{I.roof(SUB)}</span>}
-              </>
-            ) : g.parking ? (
-              <>
-                {ParkingIcon(SUB)}<span style={{ whiteSpace: 'nowrap' }}>Estacionamiento</span>
-                {g.covered && <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 3 }}>{I.roof(SUB)}</span>}
-              </>
-            ) : g.covered ? (
-              <>{I.roof(SUB)}<span style={{ whiteSpace: 'nowrap' }}>Cubierta</span></>
-            ) : null}
-          </span>
+          <GameMetaLine format={g.format} totalSpots={g.totalSpots} womenOnly={g.womenOnly} parking={g.parking} covered={g.covered} />
           {g.price !== undefined && (
             <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0, fontSize: 13, fontWeight: 600, color: TEXT }}>
               S/.{g.price}
@@ -752,7 +745,7 @@ export default function PickupGames() {
   };
 
   // FilterButton badge: panel-exclusive filters (not covered by chips)
-  const panelHasExtra = flt.master45 ||
+  const panelHasExtra = flt.master45 || flt.suplentes ||
     flt.formatos.length > 0 || flt.dias.length > 0 || flt.horarios.length > 0 ||
     (flt.minSpots !== null && flt.minSpots !== 1);
 
@@ -770,6 +763,7 @@ export default function PickupGames() {
       if (flt.duchas          && !g.showers)   return false;
       if (flt.mujeres         && !g.womenOnly) return false;
       if (flt.master45        && !g.master45)  return false;
+      if (flt.suplentes       && g.totalSpots <= requiredPlayers(g.format)) return false;
       if (flt.minSpots !== null && (liveOpenSpotsMap.get(g.id) ?? g.openSpots) < flt.minSpots) return false;
       if (flt.formatos.length && !flt.formatos.includes(g.format)) return false;
       if (flt.dias.length) {

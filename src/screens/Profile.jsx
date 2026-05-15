@@ -8,8 +8,10 @@ import { faHeadset, faCoins } from '@fortawesome/free-solid-svg-icons';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { abbreviateName } from '../utils/format';
 import { GAMES } from '../data/games';
 import { deriveGameState } from '../utils/deriveGameState';
+import { GameMetaLine } from '../components/GameMetaLine';
 
 const USER = {
   name: 'Rodrigo',
@@ -285,8 +287,12 @@ function sbReservationToRow(r) {
     date:   fmtDateKey(g?.date_key),
     time,
     ampm,
-    field:  g?.fields?.venues?.name  || '',
-    format: g?.fields?.format        || '7v7',
+    field:      g?.fields?.venues?.name  || '',
+    format:     g?.format ?? g?.fields?.format ?? '7v7',
+    totalSpots: g?.total_spots ?? g?.fields?.total_spots ?? 0,
+    womenOnly:  g?.game_amenities?.women_only ?? false,
+    covered:    g?.fields?.field_amenities?.covered ?? false,
+    parking:    g?.fields?.venues?.venue_amenities?.parking ?? false,
     status: 'reserved',
     type:   r.source === 'campo' ? 'campo' : 'game',
     price:  r.total_amount != null ? `S/. ${Number(r.total_amount).toFixed(2)}` : null,
@@ -495,7 +501,7 @@ function StatItem({ value, label }) {
 // ── ProfileCard ────────────────────────────────────────────────────────────
 
 function ProfileCard({ user, gamesPlayedCount, onEdit }) {
-  const displayName = (user.name || '').split(' ').slice(0, 2).join(' ');
+  const displayName = user.name || '';
   const posDisplay  = Array.isArray(user.positions) && user.positions.length > 0
     ? user.positions.join(' | ')
     : (user.position || null);
@@ -1511,10 +1517,7 @@ function GameRow({ game, onPress, muted = false }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, color: SUB, fontSize: 12.5 }}>
           {isCampo
             ? <span style={{ fontWeight: 500 }}>Cancha completa</span>
-            : <><PeopleIcon /><span>{game.format}</span></>}
-          {game.price && (
-            <><span style={{ color: HAIR }}>·</span><span>{game.price}</span></>
-          )}
+            : <GameMetaLine format={game.format} totalSpots={game.totalSpots} womenOnly={game.womenOnly} parking={game.parking} covered={game.covered} />}
         </div>
       </div>
       {game.status === 'waitlist' ? (
@@ -1547,7 +1550,7 @@ function GameRow({ game, onPress, muted = false }) {
           <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
             {game.activeGuestCount > 0
               ? `${game.activeGuestCount} ${game.activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}`
-              : `por ${game.paidBy}`}
+              : `por ${abbreviateName(game.paidBy)}`}
           </div>
         </div>
       ) : game.status === 'reserved' ? (
@@ -1758,7 +1761,7 @@ function RatingModal({ game, onRate, onSkip }) {
 
 export default function Profile() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, login } = useAuth();
   const { state } = useLocation();
   const profileScrollRef = useRef(null);
   const initPfScrollRef = useRef(undefined);
@@ -1885,7 +1888,7 @@ export default function Profile() {
         .from('reservations')
         .select(`
           game_id, source, unit_price, promo_discount, credit_applied, total_amount,
-          games:game_id ( date_key, time, fields:field_id ( format, venues:venue_id ( name ) ) )
+          games:game_id ( date_key, time, format, total_spots, game_amenities:amenities, fields:field_id ( format, total_spots, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
         `)
         .eq('user_id', uid)
         .eq('status', 'spend')
@@ -1903,7 +1906,7 @@ export default function Profile() {
         .from('game_players')
         .select(`
           game_id, user_id, payer_id, status, amount,
-          games:game_id ( date_key, time, fields:field_id ( format, venues:venue_id ( name ) ) )
+          games:game_id ( date_key, time, format, total_spots, game_amenities:amenities, fields:field_id ( format, total_spots, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
         `)
         .or(`user_id.eq.${uid},payer_id.eq.${uid}`)
         .then(async ({ data, error }) => {
@@ -1950,8 +1953,12 @@ export default function Profile() {
           date:             fmtDateKey(g?.date_key),
           time,
           ampm,
-          field:            g?.fields?.venues?.name || '',
-          format:           g?.fields?.format       || '7v7',
+          field:      g?.fields?.venues?.name || '',
+          format:     g?.format ?? g?.fields?.format ?? '7v7',
+          totalSpots: g?.total_spots ?? g?.fields?.total_spots ?? 0,
+          womenOnly:  g?.game_amenities?.women_only ?? false,
+          covered:    g?.fields?.field_amenities?.covered ?? false,
+          parking:    g?.fields?.venues?.venue_amenities?.parking ?? false,
           type:             'game',
           price:            null,
           status:           'guest',
@@ -2031,7 +2038,10 @@ export default function Profile() {
       }
       const { error } = await supabase.from('users').update(patch).eq('id', session.user.id);
       if (error) console.warn('[Profile] update users:', error.message);
-      else setSbProfile(prev => ({ ...prev, full_name: patch.full_name }));
+      else {
+        setSbProfile(prev => ({ ...prev, full_name: patch.full_name }));
+        if (patch.full_name && user) login({ ...user, name: patch.full_name });
+      }
 
     } catch (e) { console.warn('[Profile] handleSave:', e); }
   }
