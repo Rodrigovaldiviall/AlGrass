@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TAB_INACTIVE, ORANGE } from '../constants';
 import I from '../icons';
 import { haptic } from '../utils/haptic';
+import { isGamePast } from '../utils/deriveGameState';
 
 const TABS = [
   { id: 'partidos',       icon: I.search,  label: 'Partidos',       route: '/games' },
@@ -10,22 +11,6 @@ const TABS = [
   { id: 'notificaciones', icon: I.bell,    label: 'Notificaciones', route: '/notifications' },
   { id: 'perfil',         icon: I.profile, label: 'Perfil',         route: '/profile' },
 ];
-
-const MON_TB = { 'Ene': 0, 'Feb': 1, 'Mar': 2, 'Abr': 3, 'May': 4, 'Jun': 5, 'Jul': 6, 'Ago': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dic': 11 };
-function _parseDT(g) {
-  if (!g) return null;
-  const p = (g.date || '').split(' ');
-  if (p.length < 4) return null;
-  const day = parseInt(p[1]), mon = MON_TB[p[2]], yr = parseInt(p[3]);
-  if (isNaN(day) || mon === undefined || isNaN(yr)) return null;
-  const [hS = '0', mS = '0'] = (g.time || '0:00').split(':');
-  let h = parseInt(hS) || 0;
-  const m = parseInt(mS) || 0;
-  if ((g.ampm || '').toUpperCase() === 'PM' && h !== 12) h += 12;
-  if ((g.ampm || '').toUpperCase() === 'AM' && h === 12) h = 0;
-  return new Date(yr, mon, day, h, m);
-}
-function _isGamePast(g) { const dt = _parseDT(g); return dt ? new Date(dt.getTime() + 90 * 60 * 1000) < new Date() : false; }
 
 function getNotifBadge() {
   try {
@@ -40,7 +25,7 @@ function getUpcomingBadge() {
   try {
     const list = JSON.parse(sessionStorage.getItem('pichanga_reservations'));
     if (!Array.isArray(list)) return undefined;
-    const n = list.filter(g => !_isGamePast(g)).length;
+    const n = list.filter(g => !isGamePast(g.dateKey, g.time24, g.durationMin)).length;
     return n === 0 ? undefined : n;
   } catch { return undefined; }
 }

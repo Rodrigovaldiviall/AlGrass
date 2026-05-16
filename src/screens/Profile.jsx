@@ -10,8 +10,9 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { abbreviateName, ensureUserCode } from '../utils/format';
 import { GAMES } from '../data/games';
-import { deriveGameState } from '../utils/deriveGameState';
+import { deriveGameState, isGamePast, isGameStarted, gameStartDate } from '../utils/deriveGameState';
 import { GameMetaLine } from '../components/GameMetaLine';
+import { saveRating } from '../services/ratingService';
 
 const USER = {
   name: 'Rodrigo',
@@ -24,12 +25,6 @@ const USER = {
 };
 
 
-const MON_MAP = {
-  'Ene': 0, 'Feb': 1, 'Mar': 2, 'Abr': 3, 'May': 4, 'Jun': 5,
-  'Jul': 6, 'Ago': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dic': 11,
-  'Enero': 0, 'Febrero': 1, 'Marzo': 2, 'Abril': 3, 'Mayo': 4, 'Junio': 5,
-  'Julio': 6, 'Agosto': 7, 'Septiembre': 8, 'Octubre': 9, 'Noviembre': 10, 'Diciembre': 11,
-};
 
 const POSITIONS = ['DEL', 'MED', 'DEF', 'ARQ'];
 
@@ -247,29 +242,8 @@ function calcAge(day, month, year) {
   return age >= 0 ? age : null;
 }
 
-function parseGameDateTime(g) {
-  if (!g) return null;
-  const parts = (g.date || '').split(' ');
-  if (parts.length < 4) return null;
-  const day = parseInt(parts[1]), mon = MON_MAP[parts[2]], yr = parseInt(parts[3]);
-  if (isNaN(day) || mon === undefined || isNaN(yr)) return null;
-  const [hStr = '0', mStr = '0'] = (g.time || '0:00').split(':');
-  let h = parseInt(hStr) || 0;
-  const m = parseInt(mStr) || 0;
-  if ((g.ampm || '').toUpperCase() === 'PM' && h !== 12) h += 12;
-  if ((g.ampm || '').toUpperCase() === 'AM' && h === 12) h = 0;
-  return new Date(yr, mon, day, h, m);
-}
-
-function isPast(g) {
-  const dt = parseGameDateTime(g);
-  if (!dt) return false;
-  return new Date(dt.getTime() + 90 * 60 * 1000) < new Date();
-}
-function isStarted(g) {
-  const dt = parseGameDateTime(g);
-  return dt ? dt <= new Date() : false;
-}
+function isPast(g)    { return isGamePast(g.dateKey, g.time24, g.durationMin); }
+function isStarted(g) { return isGameStarted(g.dateKey, g.time24); }
 
 function parseGameTime(t) {
   if (!t) return { time: '', ampm: 'AM' };
@@ -283,8 +257,11 @@ function sbReservationToRow(r) {
   const g = r.games;
   const { time, ampm } = parseGameTime(g?.time);
   return {
-    id:     r.game_id,
-    date:   fmtDateKey(g?.date_key),
+    id:      r.game_id,
+    dateKey:     g?.date_key    ?? null,
+    time24:      g?.time        ?? null,
+    durationMin: g?.duration_min ?? g?.fields?.duration_min ?? null,
+    date:        fmtDateKey(g?.date_key),
     time,
     ampm,
     field:      g?.fields?.venues?.name  || '',
@@ -360,7 +337,7 @@ function computeLivePrice(game) {
 
 function sortByDt(arr, desc) {
   return [...arr].sort((a, b) => {
-    const da = parseGameDateTime(a), db = parseGameDateTime(b);
+    const da = gameStartDate(a.dateKey, a.time24), db = gameStartDate(b.dateKey, b.time24);
     if (!da && !db) return 0;
     if (!da) return 1;
     if (!db) return -1;
@@ -1656,7 +1633,7 @@ function RatingModal({ game, onRate, onSkip }) {
 
   useEffect(() => { const t = setTimeout(() => setOpen(true), 50); return () => clearTimeout(t); }, []);
 
-  function submit() { setOpen(false); setTimeout(() => onRate({ stars, comment: comment.trim() }), 240); }
+  function submit() { setOpen(false); setTimeout(() => onRate({ stars, comment: comment.trim() || null }), 240); }
   function skip()   { setOpen(false); setTimeout(onSkip, 240); }
 
   const active = hovered || stars;
@@ -1846,12 +1823,13 @@ export default function Profile() {
   const [sbProfile, setSbProfile] = useState(null);
   const [myPlayerRows,      setMyPlayerRows]      = useState([]);
   const [myPlayerRowsReady, setMyPlayerRowsReady] = useState(false);
+  const [sbGamesReady,      setSbGamesReady]      = useState(false);
   const [payerNames,        setPayerNames]        = useState({});
 
   useEffect(() => {
-    if (!supabase) return;
+    if (!supabase) { setMyPlayerRowsReady(true); setSbGamesReady(true); return; }
     supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!session?.user?.id) return;
+      if (!session?.user?.id) { setMyPlayerRowsReady(true); setSbGamesReady(true); return; }
       const uid = session.user.id;
 
       supabase
@@ -1901,17 +1879,18 @@ export default function Profile() {
         .from('reservations')
         .select(`
           game_id, source, unit_price, promo_discount, credit_applied, total_amount,
-          games:game_id ( date_key, time, format, total_spots, game_amenities:amenities, fields:field_id ( format, total_spots, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
+          games:game_id ( date_key, time, format, total_spots, duration_min, game_amenities:amenities, fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
         `)
         .eq('user_id', uid)
         .eq('status', 'spend')
         .then(({ data, error }) => {
-          if (error) { console.warn('[Profile] reservations:', error.message); return; }
-          if (data) {
+          if (error) { console.warn('[Profile] reservations:', error.message); }
+          else if (data) {
             const rows = data.map(sbReservationToRow);
             setExtraGames(rows);
             try { localStorage.setItem(STORAGE_KEY, JSON.stringify(rows)); } catch {}
           }
+          setSbGamesReady(true);
         });
 
       // todos mis rows como jugador o como payer — fuente única de verdad
@@ -1919,11 +1898,11 @@ export default function Profile() {
         .from('game_players')
         .select(`
           game_id, user_id, payer_id, status, amount,
-          games:game_id ( date_key, time, format, total_spots, game_amenities:amenities, fields:field_id ( format, total_spots, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
+          games:game_id ( date_key, time, format, total_spots, duration_min, game_amenities:amenities, fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
         `)
         .or(`user_id.eq.${uid},payer_id.eq.${uid}`)
         .then(async ({ data, error }) => {
-          if (error) { console.warn('[Profile] player rows:', error.message); return; }
+          if (error) { console.warn('[Profile] player rows:', error.message); setMyPlayerRowsReady(true); return; }
           const rows = data ?? [];
           setMyPlayerRows(rows);
           setMyPlayerRowsReady(true);
@@ -1963,6 +1942,9 @@ export default function Profile() {
         return {
           id:               `${r.game_id}_g_${r.user_id}`,
           gameId:           r.game_id,
+          dateKey:          g?.date_key    ?? null,
+          time24:           g?.time        ?? null,
+          durationMin:      g?.duration_min ?? g?.fields?.duration_min ?? null,
           date:             fmtDateKey(g?.date_key),
           time,
           ampm,
@@ -2022,12 +2004,15 @@ export default function Profile() {
     }
     return [...seen.values()];
   })();
-  const upcoming      = sortByDt(allGames.filter(g => !isPast(g) && !(g.status === 'waitlist' && isStarted(g))), false);
-  const past          = sortByDt(allGames.filter(g =>  isPast(g) && g.status !== 'waitlist'), true);
+  const dataReady = myPlayerRowsReady && sbGamesReady;
+  // Only classify games that have valid temporal data and whose player status is settled
+  const temporalGames = dataReady ? allGames.filter(g => g.dateKey && g.time24) : [];
+  const upcoming      = sortByDt(temporalGames.filter(g => !isPast(g) && !(g.status === 'waitlist' && isStarted(g))), false);
+  const past          = sortByDt(temporalGames.filter(g =>  isPast(g) && g.status !== 'waitlist'), true);
   const pastGameCount = past.length;
   const visiblePast   = pastExpanded ? past : past.slice(0, 4);
 
-  const gameToRate = user
+  const gameToRate = (dataReady && user)
     ? past.find(g => !ratings[g.id] && !skippedRatings[g.id]) ?? null
     : null;
 
@@ -2107,27 +2092,24 @@ export default function Profile() {
     const baseState  = { infoMode: isGuest || (!isWaitlist && !isCanceledWithGuests && !isGuestCanceledWithSub), isPast: past, rating: ratings[navId] ?? null, backPath: '/profile' };
     sessionStorage.setItem('pf_back', '1');
     if (g.type === 'campo') {
-      navigate(`/field/${navId}`, { state: { ...baseState, field: { id: navId, field: g.field, date: g.date, time: g.time, ampm: g.ampm, format: g.format || '7v7', price: g.price || '', address: '', paymentBreakdown: g.paymentBreakdown ?? null, paidBy: isGuest ? (g.paidBy ?? null) : null, paidByCode: isGuest ? (g.paidByCode ?? null) : null } } });
+      navigate(`/field/${navId}`, { state: { ...baseState, field: { id: navId, dateKey: g.dateKey ?? null, time24: g.time24 ?? null, field: g.field, date: g.date, time: g.time, ampm: g.ampm, format: g.format || '7v7', price: g.price || '', address: '', paymentBreakdown: g.paymentBreakdown ?? null, paidBy: isGuest ? (g.paidBy ?? null) : null, paidByCode: isGuest ? (g.paidByCode ?? null) : null } } });
     } else {
-      const liveGame = GAMES.find(gm => gm.id === navId);
-      const livePrice = liveGame?.price != null
-        ? `S/. ${Number(liveGame.price).toFixed(2)}`
-        : isGuestCanceledWithSub && g.guestSubBreakdown?.unitPrice != null
-          ? `S/. ${Number(g.guestSubBreakdown.unitPrice).toFixed(2)}`
-          : (g.price || '0');
-      navigate(`/game/${navId}`, { state: { ...baseState, guestCanceledView: isGuestCanceledWithSub, game: { id: navId, field: g.field, date: g.date, time: g.time, ampm: g.ampm, format: g.format || '7v7', price: livePrice, openSpots: liveGame?.openSpots ?? 1, paymentBreakdown: g.paymentBreakdown ?? null, paidBy: isGuest ? (g.paidBy ?? null) : null, paidByCode: isGuest ? (g.paidByCode ?? null) : null, guestId: isGuest ? (g.guestId ?? null) : null, guestSubBreakdown: (isGuest || isGuestCanceledWithSub) ? (g.guestSubBreakdown ?? null) : null, guestCanceledView: isGuestCanceledWithSub } } });
+      // Only pass reservation-specific extras — GameDetail fetches canonical game data via getGameById
+      navigate(`/game/${navId}`, { state: { ...baseState, guestCanceledView: isGuestCanceledWithSub, game: { id: navId, dateKey: g.dateKey ?? null, time24: g.time24 ?? null, durationMin: g.durationMin ?? null, field: g.field, date: g.date, time: g.time, ampm: g.ampm, format: g.format || '7v7', paymentBreakdown: g.paymentBreakdown ?? null, paidBy: isGuest ? (g.paidBy ?? null) : null, paidByCode: isGuest ? (g.paidByCode ?? null) : null, guestId: isGuest ? (g.guestId ?? null) : null, guestSubBreakdown: (isGuest || isGuestCanceledWithSub) ? (g.guestSubBreakdown ?? null) : null, guestCanceledView: isGuestCanceledWithSub } } });
     }
   }
 
   function handleRate({ stars, comment }) {
     if (!gameToRate) return;
+    const cleanComment = comment?.trim() || null;
     const updated = {
       ...ratings,
-      [gameToRate.id]: { stars, comment, ratedAt: new Date().toISOString(), field: gameToRate.field, date: gameToRate.date },
+      [gameToRate.id]: { stars, comment: cleanComment, ratedAt: new Date().toISOString(), field: gameToRate.field, date: gameToRate.date },
     };
     setRatings(updated);
     try { localStorage.setItem(RATINGS_KEY, JSON.stringify(updated)); } catch {}
     savePlayedGame(gameToRate.id);
+    if (user?.id) saveRating({ gameId: gameToRate.gameId ?? gameToRate.id, raterId: user.id, stars, comment: cleanComment });
   }
 
   const displayName = sbProfile?.full_name || profileData.fullName || user?.name || USER.name;

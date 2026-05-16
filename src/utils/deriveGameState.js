@@ -1,4 +1,51 @@
 /**
+ * Parse a game's start time from canonical DB fields.
+ * @param {string} dateKey  "YYYY-MM-DD"
+ * @param {string} time24   "HH:MM" or "HH:MM:SS" (Postgres time, 24h)
+ */
+export function gameStartDate(dateKey, time24) {
+  if (!dateKey || !time24) return null;
+  const [y, mo, d] = dateKey.split('-').map(Number);
+  const [h, m] = time24.split(':').map(Number);
+  if ([y, mo, d, h, m].some(isNaN)) return null;
+  return new Date(y, mo - 1, d, h, m);
+}
+
+export function gameEndDate(dateKey, time24, durationMin) {
+  const start = gameStartDate(dateKey, time24);
+  return start ? new Date(start.getTime() + (durationMin ?? 90) * 60_000) : null;
+}
+
+/** now >= game_end */
+export function isGamePast(dateKey, time24, durationMin) {
+  const end = gameEndDate(dateKey, time24, durationMin);
+  return end ? end <= new Date() : false;
+}
+
+/** now >= game_start */
+export function isGameStarted(dateKey, time24) {
+  const start = gameStartDate(dateKey, time24);
+  return start ? start <= new Date() : false;
+}
+
+/**
+ * Derives the attendance display state from checked_in_at.
+ * @param {string|null} checkedInAt  ISO timestamp from game_players.checked_in_at
+ * @param {Date|null}   gameStart    Date object from gameStartDate()
+ * @param {boolean}     isPast       Whether the game has ended (now >= game_end)
+ * @returns {{ status: 'a_tiempo'|'tarde'|'ausente', minsLate: number|null } | null}
+ */
+export function deriveAttendance(checkedInAt, gameStart, isPast) {
+  if (checkedInAt && gameStart) {
+    const t = new Date(checkedInAt);
+    const minsLate = Math.max(0, Math.round((t.getTime() - gameStart.getTime()) / 60_000));
+    return { status: minsLate === 0 ? 'a_tiempo' : 'tarde', minsLate };
+  }
+  if (isPast) return { status: 'ausente', minsLate: null };
+  return null;
+}
+
+/**
  * Minimum required players for a format string ("7v7" → 14).
  * Used to derive "Con suplentes" state: total_spots > requiredPlayers(format).
  */

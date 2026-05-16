@@ -13,37 +13,11 @@ import RatingBlock from '../components/RatingBlock';
 import { useAuth } from '../context/AuthContext';
 import { cancelGamePlayer, cancelGuestPlayers } from '../services/reservationService';
 import { supabase } from '../lib/supabase';
-import { deriveGameState, requiredPlayers } from '../utils/deriveGameState';
+import { deriveGameState, requiredPlayers, gameStartDate, gameEndDate, isGamePast, isGameStarted, deriveAttendance } from '../utils/deriveGameState';
 
 const WAITLIST_KEY   = 'pichanga_waitlist';
-const ATTENDANCE_KEY = 'pichanga_attendance';
 const ROSTER_KEY_GD  = 'pichanga_game_rosters';
 
-const _MON_MAP_DET = { 'Ene': 0, 'Feb': 1, 'Mar': 2, 'Abr': 3, 'May': 4, 'Jun': 5, 'Jul': 6, 'Ago': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dic': 11 };
-
-const SEED_ATTENDANCE = {
-  'seed-past-1': {
-    'Carlos Pérez':  { status: 'a_tiempo', minsLate: 0  },
-    'Luis Ramos':    { status: 'tarde',    minsLate: 8  },
-    'Ana Torres':    { status: 'a_tiempo', minsLate: 0  },
-    'Diego Morales': { status: 'tarde',    minsLate: 12 },
-    'Pablo Suárez':  { status: 'a_tiempo', minsLate: 0  },
-    'Marco Vela':    { status: 'a_tiempo', minsLate: 1  },
-  },
-};
-
-function parseGameStart(g) {
-  const d = (g.date || '').split(' ');
-  if (d.length < 4) return null;
-  const day = parseInt(d[1]), mon = _MON_MAP_DET[d[2]], yr = parseInt(d[3]);
-  if (isNaN(day) || mon == null || isNaN(yr)) return null;
-  const t = (g.time || '').split(' ');
-  const [hStr = '0', mStr = '0'] = (t[0] || '').split(':');
-  let h = parseInt(hStr) || 0, m = parseInt(mStr) || 0;
-  if (t[1] === 'PM' && h !== 12) h += 12;
-  if (t[1] === 'AM' && h === 12) h = 0;
-  return new Date(yr, mon, day, h, m);
-}
 
 const _DOW = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const _MON = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -103,7 +77,7 @@ function buildGame(sel) {
     totalSpots: total,
     date: sel.date || formatDateEs(sel.dateKey),
     time: `${sel.time || '7:00'} ${sel.ampm || 'PM'}`,
-    duration: GAME_DEFAULTS.duration,
+    duration: `${sel.durationMin ?? 60} min`,
     fieldNumber: sel.fieldName || GAME_DEFAULTS.fieldNumber,
     address,
     chips,
@@ -123,6 +97,9 @@ function buildGame(sel) {
     paidBy:            sel.paidBy            ?? null,
     paidByCode:        sel.paidByCode        ?? null,
     guestSubBreakdown: sel.guestSubBreakdown ?? null,
+    dateKey:           sel.dateKey           ?? null,
+    time24:            sel.time24            ?? null,
+    durationMin:       sel.durationMin       ?? null,
   };
 }
 
@@ -249,13 +226,6 @@ const _StarIcon = (c = TEXT) => (
     <path d="M7 1.5l1.5 3.2 3.5.5-2.5 2.4.6 3.5L7 9.4l-3.1 1.7.6-3.5L2 5.2l3.5-.5L7 1.5z" stroke={c} strokeWidth="1.3" strokeLinejoin="round"/>
   </svg>
 );
-const _SubIcon = (c = TEXT) => (
-  <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-    <circle cx="5" cy="3.5" r="2" stroke={c} strokeWidth="1.3"/>
-    <path d="M1.5 11c0-2 1.5-3.5 3.5-3.5s3.5 1.5 3.5 3.5" stroke={c} strokeWidth="1.3" strokeLinecap="round"/>
-    <path d="M9.5 6l1.5 1.5L9.5 9M11 7.5H8" stroke={c} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
-  </svg>
-);
 const CHIP_ICON = {
   format:    I.twoPeople,
   filmed:    I.camera,
@@ -265,7 +235,7 @@ const CHIP_ICON = {
   master45:  _StarIcon,
   parking:   _ParkingIcon,
   showers:   _ShowerIcon,
-  suplentes: _SubIcon,
+  suplentes: I.sub,
 };
 function Chip({ kind, label }) {
   const icon = CHIP_ICON[kind];
@@ -433,10 +403,11 @@ function WaitlistRow({ inList, onToggle }) {
   );
 }
 
-// ── Attendance badge
-function AttendanceBadge({ record, canMark, onMark }) {
-  if (record) {
-    if (record.status === 'a_tiempo') {
+// ── Attendance badge — all state derived from checked_in_at + game timing
+function AttendanceBadge({ checkedInAt, gameStart, isPast, canMark, onMark }) {
+  const att = deriveAttendance(checkedInAt, gameStart, isPast);
+  if (att) {
+    if (att.status === 'a_tiempo') {
       return (
         <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -446,9 +417,16 @@ function AttendanceBadge({ record, canMark, onMark }) {
         </div>
       );
     }
+    if (att.status === 'tarde') {
+      return (
+        <span style={{ fontSize: 11, fontWeight: 700, color: ORANGE, whiteSpace: 'nowrap', flexShrink: 0 }}>
+          {att.minsLate} min tarde
+        </span>
+      );
+    }
     return (
-      <span style={{ fontSize: 11, fontWeight: 700, color: ORANGE, whiteSpace: 'nowrap', flexShrink: 0 }}>
-        {record.minsLate} min tarde
+      <span style={{ fontSize: 11, fontWeight: 600, color: SUB, whiteSpace: 'nowrap', flexShrink: 0 }}>
+        Ausente
       </span>
     );
   }
@@ -930,7 +908,6 @@ export default function GameDetail() {
   const location = useLocation();
   const { id } = useParams();
 
-  const isPastGame = location.state?.isPast    ?? false;
   const rating     = location.state?.rating    ?? null;
   const backPath   = location.state?.backPath  ?? '/games';
 
@@ -938,12 +915,27 @@ export default function GameDetail() {
   const [sbRoster, setSbRoster] = useState([]);
 
   const stateGame = location.state?.game ?? null;
-  const sel = stateGame ?? sbGame ?? GAMES.find(g => g.id === id) ?? null;
+  // sbGame (canonical DB fetch) wins for game data; stateGame contributes reservation extras only
+  const sel = useMemo(() => {
+    const base = sbGame ?? stateGame ?? GAMES.find(gm => gm.id === id) ?? null;
+    if (!base || !stateGame) return base;
+    return {
+      ...base,
+      paymentBreakdown:  stateGame.paymentBreakdown  ?? base.paymentBreakdown,
+      paidBy:            stateGame.paidBy            ?? base.paidBy,
+      paidByCode:        stateGame.paidByCode        ?? base.paidByCode,
+      guestSubBreakdown: stateGame.guestSubBreakdown ?? base.guestSubBreakdown,
+    };
+  }, [sbGame, stateGame, id]);
   const g = useMemo(() => buildGame(sel), [sel]);
 
   const { user } = useAuth();
   const gameId  = sel?.id ?? id ?? null;
   const guestId = location.state?.game?.guestId ?? null;
+
+  // Derived live from date+time — not from stale navigation state
+  const isPastGame  = useMemo(() => isGamePast(g.dateKey, g.time24, g.durationMin), [g.dateKey, g.time24, g.durationMin]);
+  const isStarted   = useMemo(() => isGameStarted(g.dateKey, g.time24), [g.dateKey, g.time24]);
 
   const gameState = useMemo(() => deriveGameState(sbRoster, user?.id), [sbRoster, user?.id]);
   const { isBooked, mySlotCanceled } = gameState;
@@ -972,11 +964,12 @@ export default function GameDetail() {
           ? p.preferred_position.join(' · ')
           : (p.preferred_position || null);
         return {
-          user_id:  p.user_id,
-          name:     p.full_name || p.user_code || 'Jugador',
-          position: pos,
-          age:      ageFromDate(p.birth_date),
-          hue:      p.avatar_hue ?? null,
+          user_id:      p.user_id,
+          name:         p.full_name || p.user_code || 'Jugador',
+          position:     pos,
+          age:          ageFromDate(p.birth_date),
+          hue:          p.avatar_hue ?? null,
+          checked_in_at: p.checked_in_at ?? null,
         };
       });
   }, [confirmedRoster]);
@@ -1002,17 +995,13 @@ export default function GameDetail() {
   const [paymentDetailOpen, setPaymentDetailOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [now, setNow] = useState(() => new Date());
-  const [attendance, setAttendance] = useState(() => {
-    try {
-      const stored = (JSON.parse(localStorage.getItem(ATTENDANCE_KEY)) || {})[gameId] || {};
-      return { ...(SEED_ATTENDANCE[gameId] || {}), ...stored };
-    } catch { return SEED_ATTENDANCE[gameId] || {}; }
-  });
 
-  const gameStart = useMemo(() => parseGameStart(g), [g]);
-  const attendanceOpen = infoMode && !!gameStart
+  const gameStart = useMemo(() => gameStartDate(g.dateKey, g.time24), [g.dateKey, g.time24]);
+  const gameEnd   = useMemo(() => gameEndDate(g.dateKey, g.time24, g.durationMin), [g.dateKey, g.time24, g.durationMin]);
+  // Attendance window: [game_start - 15min, game_end)
+  const attendanceOpen = infoMode && !!gameStart && !!gameEnd
     && now >= new Date(gameStart.getTime() - 15 * 60_000)
-    && now <  new Date(gameStart.getTime() + 2 * 60 * 60_000);
+    && now <  gameEnd;
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 30_000);
@@ -1030,7 +1019,7 @@ export default function GameDetail() {
     if (!supabase || !gameId) return;
     supabase
       .from('game_players')
-      .select('user_id, payer_id, status, joined_at, users:user_id(full_name, user_code, avatar_hue, preferred_position, birth_date)')
+      .select('user_id, payer_id, status, joined_at, checked_in_at, users:user_id(full_name, user_code, avatar_hue, preferred_position, birth_date)')
       .eq('game_id', gameId)
       .then(({ data, error }) => {
         if (error) { console.error('[GameDetail] game_players fetch error:', error); return; }
@@ -1048,18 +1037,19 @@ export default function GameDetail() {
 
   useEffect(() => { fetchRoster(); }, [gameId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function markAttendance(player) {
-    if (!gameStart) return;
-    const markedAt = new Date();
-    const minsLate = Math.max(0, Math.round((markedAt.getTime() - gameStart.getTime()) / 60_000));
-    const entry = { markedAt: markedAt.toISOString(), status: minsLate === 0 ? 'a_tiempo' : 'tarde', minsLate };
-    const next = { ...attendance, [player.user_id || player.name]: entry };
-    setAttendance(next);
-    try {
-      const all = JSON.parse(localStorage.getItem(ATTENDANCE_KEY)) || {};
-      all[gameId] = next;
-      localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(all));
-    } catch {}
+  async function markAttendance(player) {
+    if (!gameStart || !supabase || !player.user_id) return;
+    const checkedInAt = new Date().toISOString();
+    const { error } = await supabase
+      .from('game_players')
+      .update({ checked_in_at: checkedInAt })
+      .eq('game_id', gameId)
+      .eq('user_id', player.user_id)
+      .eq('status', 'confirmed');
+    if (error) { console.warn('[attendance]', error.message); return; }
+    setSbRoster(prev => prev.map(r =>
+      r.user_id === player.user_id ? { ...r, checked_in_at: checkedInAt } : r
+    ));
   }
 
 
@@ -1230,9 +1220,7 @@ export default function GameDetail() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {liveRoster.map((p) => {
-                const displayName = p.name || '';
-                const attRecord   = attendance[p.user_id] ?? null;
-                const showAtt     = attendanceOpen || isPastGame;
+                const showAtt = attendanceOpen || isPastGame;
                 return (
                   <div key={p.user_id}
                     onClick={() => setSelectedPlayer(p)}
@@ -1244,7 +1232,7 @@ export default function GameDetail() {
                     <Avatar name={p.name} size={36} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 'var(--gd-player, 14.5px)', fontWeight: 600, color: TEXT, lineHeight: 1.2 }}>
-                        {displayName}
+                        {p.name || ''}
                       </div>
                       {(p.age != null || p.position) && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3, fontSize: 11.5, color: SUB }}>
@@ -1256,8 +1244,10 @@ export default function GameDetail() {
                     </div>
                     {showAtt && (
                       <AttendanceBadge
-                        record={attRecord}
-                        canMark={attendanceOpen && !attRecord}
+                        checkedInAt={p.checked_in_at}
+                        gameStart={gameStart}
+                        isPast={isPastGame}
+                        canMark={attendanceOpen && !p.checked_in_at}
                         onMark={() => markAttendance(p)}
                       />
                     )}
@@ -1269,13 +1259,13 @@ export default function GameDetail() {
 
           <div style={{ height: 8 }} />
         </div>
-        {!infoMode && (isFull || inWaitlist) && (
+        {!infoMode && !isStarted && (isFull || inWaitlist) && (
           <WaitlistRow inList={inWaitlist} onToggle={handleWaitlistToggle} />
         )}
         {(isBooked || infoMode) ? (
           <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}` }}>
-            {isPastGame && infoMode && <PaymentDetail price={g.price} breakdown={liveBreakdown} paidBy={livePaidBy} userName={user?.name || 'Usuario'} titularCanceled={titularCanceled || mySlotCanceled} activeGuestCount={isGuest ? guestOwnGuests.length : guestsInRoster.length} guestSubBreakdown={isGuest ? g.guestSubBreakdown : null} />}
-            {(isBooked || guestsInRoster.length > 0) && !isPastGame && (
+            {(isPastGame || isStarted) && infoMode && <PaymentDetail price={g.price} breakdown={liveBreakdown} paidBy={livePaidBy} userName={user?.name || 'Usuario'} titularCanceled={titularCanceled || mySlotCanceled} activeGuestCount={isGuest ? guestOwnGuests.length : guestsInRoster.length} guestSubBreakdown={isGuest ? g.guestSubBreakdown : null} />}
+            {(isBooked || guestsInRoster.length > 0) && !isStarted && (
               <div style={{ padding: '12px 16px' }}>
                 <button
                   onClick={() => setModifyOpen(true)}
@@ -1290,7 +1280,7 @@ export default function GameDetail() {
             {isCanceledWithGuests && (() => {
               return (
               <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}` }}>
-                {!isPastGame && (
+                {!isStarted && (
                   <div style={{ padding: '12px 16px 0' }}>
                     <button
                       onClick={() => setModifyOpen(true)}
@@ -1302,7 +1292,7 @@ export default function GameDetail() {
               </div>
               );
             })()}
-            <CTA
+            {!isStarted && <CTA
               price={g.price}
               disabled={isFull}
               hideTopBorder={isFull || isCanceledWithGuests}
@@ -1324,7 +1314,7 @@ export default function GameDetail() {
                 };
                 navigate('/checkout', { state: { game: checkoutGame } });
               }}
-            />
+            />}
           </>
         )}
         <TabBar />

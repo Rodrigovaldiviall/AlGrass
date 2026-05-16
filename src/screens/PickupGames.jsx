@@ -7,7 +7,7 @@ import { getGames } from '../services/gameService';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { deriveGameState, requiredPlayers } from '../utils/deriveGameState';
+import { deriveGameState, requiredPlayers, isGameStarted } from '../utils/deriveGameState';
 import { GameMetaLine } from '../components/GameMetaLine';
 import { abbreviateName } from '../utils/format';
 
@@ -73,21 +73,13 @@ const StarIcon = (c = TEXT) => (
     <path d="M7 1.5l1.5 3.2 3.5.5-2.5 2.4.6 3.5L7 9.4l-3.1 1.7.6-3.5L2 5.2l3.5-.5L7 1.5z" stroke={c} strokeWidth="1.3" strokeLinejoin="round"/>
   </svg>
 );
-const SubIcon = (c = TEXT) => (
-  <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-    <circle cx="5" cy="3.5" r="2" stroke={c} strokeWidth="1.3"/>
-    <path d="M1.5 11c0-2 1.5-3.5 3.5-3.5s3.5 1.5 3.5 3.5" stroke={c} strokeWidth="1.3" strokeLinecap="round"/>
-    <path d="M9.5 6l1.5 1.5L9.5 9M11 7.5H8" stroke={c} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
-  </svg>
-);
-
 const PANEL_CHECKS = [
   { key: 'cubierta',        label: 'Cubierta',       icon: c => I.roof(c)      },
   { key: 'estacionamiento', label: 'Estacionamiento', icon: c => ParkingIcon(c) },
   { key: 'duchas',          label: 'Duchas',          icon: c => ShowerIcon(c)  },
   { key: 'mujeres',         label: 'Para mujeres',    icon: c => I.female(c)    },
   { key: 'master45',        label: 'Master 45+',      icon: c => StarIcon(c)    },
-  { key: 'suplentes',       label: 'Con suplentes',   icon: c => SubIcon(c)     },
+  { key: 'suplentes',       label: 'Con suplentes',   icon: c => I.sub(c)       },
 ];
 const PANEL_FORMATOS  = ['5v5', '6v6', '7v7', '8v8', '11v11'];
 const PANEL_DIAS      = [
@@ -528,7 +520,7 @@ function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount
       <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
         <div style={{ fontSize: 'var(--gm-title, 16px)', fontWeight: 600, color: TEXT, lineHeight: 1.2, letterSpacing: -0.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.field}</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, color: SUB, fontSize: 11, flexWrap: 'nowrap', overflow: 'hidden' }}>
-          <GameMetaLine format={g.format} totalSpots={g.totalSpots} womenOnly={g.womenOnly} parking={g.parking} covered={g.covered} />
+          <GameMetaLine format={g.format} totalSpots={g.totalSpots} durationMin={g.durationMin} womenOnly={g.womenOnly} parking={g.parking} covered={g.covered} />
           {g.price !== undefined && (
             <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0, fontSize: 13, fontWeight: 600, color: TEXT }}>
               S/.{g.price}
@@ -757,6 +749,7 @@ export default function PickupGames() {
   const filteredGames = useMemo(() => {
     console.log('[PickupGames] filter — games.length:', games.length, '| userCity:', userCity, '| flt:', JSON.stringify(flt));
     const result = games.filter(g => {
+      if (isGameStarted(g.dateKey, g.time24)) return false;   // now >= game_start → out of marketplace
       if (g.city && g.city !== userCity) return false;
       if (flt.cubierta        && !g.covered)   return false;
       if (flt.estacionamiento && !g.parking)   return false;

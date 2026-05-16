@@ -9,19 +9,25 @@ const ParkingIcon = (c = SUB) => (
 );
 
 /**
- * Fila secundaria de metadata de partido: format · Con suplentes · amenities.
+ * Fila secundaria de metadata de partido: format · 90' oficial · Con suplentes · amenities.
  * Renders as a fragment — el padre controla gap, fontSize base y color.
- * Props: format, totalSpots, womenOnly, parking, covered
+ * Props: format, totalSpots, durationMin, womenOnly, parking, covered
  */
-export function GameMetaLine({ format, totalSpots, womenOnly, parking, covered }) {
-  const hasSubs = (totalSpots ?? 0) > requiredPlayers(format);
+export function GameMetaLine({ format, totalSpots, durationMin, womenOnly, parking, covered }) {
+  const hasSubs   = (totalSpots ?? 0) > requiredPlayers(format);
+  const is90min   = durationMin === 90;
   return (
     <>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0, fontSize: 13, fontWeight: 500 }}>
         {I.twoPeople(SUB)}<span>{format}</span>
       </span>
+      {is90min && (
+        <span style={{ flexShrink: 0, lineHeight: 1.2, textAlign: 'center' }}>90'<br/>oficial</span>
+      )}
       {hasSubs && (
-        <span style={{ flexShrink: 0, lineHeight: 1.2, textAlign: 'center' }}>Con<br/>suplentes</span>
+        is90min
+          ? <span style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center' }}>{I.sub(SUB)}</span>
+          : <span style={{ flexShrink: 0, lineHeight: 1.2, textAlign: 'center' }}>Con<br/>suplentes</span>
       )}
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0, overflow: 'hidden' }}>
         {womenOnly ? (

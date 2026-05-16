@@ -100,6 +100,14 @@ const I = {
       <path d="M1 5h2v4H1M15 5h-2v4h2" stroke={c} strokeWidth="1.3"/>
     </svg>
   ),
+  sub: (c = TEXT) => (
+    <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+      <circle cx="5" cy="3.5" r="2" stroke={c} strokeWidth="1.3"/>
+      <path d="M1 11c0-2.2 1.8-4 4-4" stroke={c} strokeWidth="1.3" strokeLinecap="round"/>
+      <circle cx="9.5" cy="8" r="1.5" stroke={c} strokeWidth="1.3"/>
+      <path d="M7 12c0-1.4 1.1-2.5 2.5-2.5S12 10.6 12 12" stroke={c} strokeWidth="1.3" strokeLinecap="round"/>
+    </svg>
+  ),
   joinIcon: (c = '#1B1B1F') => (
     <svg width="18" height="14" viewBox="0 0 18 14" fill="none">
       <circle cx="6" cy="4" r="2.5" stroke={c} strokeWidth="1.6"/>

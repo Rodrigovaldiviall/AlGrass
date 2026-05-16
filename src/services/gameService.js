@@ -21,18 +21,20 @@ function parseTime(t) {
 const GAME_SELECT = `
   id,
   type,
+  status,
   date_key,
   time,
   price_per_person,
   current_players,
   total_spots,
   format,
+  duration_min,
   game_amenities:amenities,
   fields:field_id (
     name,
     format,
-    players_per_team,
     total_spots,
+    duration_min,
     field_amenities:amenities,
     venues:venue_id (
       name,
@@ -47,24 +49,26 @@ function mapGame(g) {
   const { time, ampm } = parseTime(g.time);
   const field     = g.fields;
   const venue     = field?.venues;
-  // Priority: games.total_spots → fields.total_spots → fields.players_per_team * 2
-  const totalSpots = g.total_spots
-    ?? field?.total_spots
-    ?? (field?.players_per_team ?? 0) * 2;
+  // Priority: games.total_spots → fields.total_spots
+  const totalSpots = g.total_spots ?? field?.total_spots ?? 0;
   const openSpots  = Math.max(0, totalSpots - (g.current_players ?? 0));
   return {
-    id:        g.id,
-    type:      g.type                             ?? '',
-    city:      venue?.city                        ?? '',
-    dateKey:   g.date_key                         ?? '',
+    id:          g.id,
+    type:        g.type                             ?? '',
+    status:      g.status                           ?? null,
+    city:        venue?.city                        ?? '',
+    dateKey:     g.date_key                         ?? '',
+    time24:      g.time                             ?? null,   // raw "HH:MM:SS" for temporal logic
     time,
     ampm,
-    field:     venue?.name                        ?? '',
-    fieldName: field?.name                        ?? '',
-    address:   venue?.address                     ?? '',
+    field:       venue?.name                        ?? '',
+    fieldName:   field?.name                        ?? '',
+    address:     venue?.address                     ?? '',
     // Priority: games.format → fields.format
-    format:    g.format ?? field?.format ?? '',
-    price:     g.price_per_person                 ?? 0,
+    format:      g.format ?? field?.format ?? '',
+    // Priority: games.duration_min → fields.duration_min → null
+    durationMin: g.duration_min ?? field?.duration_min ?? null,
+    price:       g.price_per_person                 ?? 0,
     openSpots,
     totalSpots,
     filmed:    g.game_amenities?.filmed           ?? false,
@@ -91,7 +95,8 @@ export async function getGames() {
   const { data, error } = await supabase
     .from('games')
     .select(GAME_SELECT)
-    .eq('type', 'match');
+    .eq('type', 'match')
+    .eq('status', 'published');
 
   console.log('[getGames] raw data:', data, '| error:', error);
   if (error) { console.error('getGames:', error); return []; }
