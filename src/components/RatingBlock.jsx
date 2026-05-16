@@ -26,11 +26,15 @@ export default function RatingBlock({ gameId, existingRating }) {
   const active   = hovered || stars;
 
   async function handleSave() {
+    const cleanComment = comment.trim() || null;
     const all = await getRatings();
-    all[gameId] = { stars, comment: comment.trim(), ratedAt: new Date().toISOString() };
+    all[gameId] = { stars, comment: cleanComment, ratedAt: new Date().toISOString() };
     await setRatings(all);
+    setComment(cleanComment ?? '');
     setSaved(true);
   }
+
+  const displayComment = (comment ?? '').trim() || null;
 
   return (
     <div style={{ padding: '18px 16px', borderTop: `1px solid ${HAIR}` }}>
@@ -56,31 +60,33 @@ export default function RatingBlock({ gameId, existingRating }) {
         ))}
       </div>
 
-      <textarea
-        value={comment}
-        readOnly={frozen}
-        onChange={e => !frozen && setComment(e.target.value)}
-        placeholder="Cuéntanos más. (Opcional)"
-        rows={3}
-        style={{
-          width: '100%', boxSizing: 'border-box',
-          border: `1px solid ${HAIR}`, borderRadius: 12,
-          padding: '10px 12px', resize: 'none',
-          fontSize: 13.5, fontFamily: 'inherit', lineHeight: 1.5,
-          outline: 'none',
-          background: frozen ? '#F7F7F9' : SOFT,
-          color: frozen ? SUB : TEXT,
-        }}
-      />
+      {frozen ? (
+        <div style={{ fontSize: 13.5, lineHeight: 1.5, color: displayComment ? TEXT : SUB, fontStyle: displayComment ? 'normal' : 'italic' }}>
+          {displayComment ?? 'Sin comentarios'}
+        </div>
+      ) : (
+        <textarea
+          value={comment}
+          onChange={e => setComment(e.target.value)}
+          placeholder="Cuéntanos más. (Opcional)"
+          rows={3}
+          style={{
+            width: '100%', boxSizing: 'border-box',
+            border: `1px solid ${HAIR}`, borderRadius: 12,
+            padding: '10px 12px', resize: 'none',
+            fontSize: 13.5, fontFamily: 'inherit', lineHeight: 1.5,
+            outline: 'none', background: SOFT, color: TEXT,
+          }}
+        />
+      )}
 
-      {!preRated && stars > 0 && (
+      {!frozen && stars > 0 && (
         <button
-          onClick={saved ? undefined : handleSave}
+          onClick={handleSave}
           style={{
             marginTop: 10, width: '100%', height: 46, borderRadius: 14,
-            background: saved ? '#E8E8EC' : ORANGE,
-            color: saved ? '#9A9AA0' : '#1B1B1F',
-            border: 'none', cursor: saved ? 'default' : 'pointer',
+            background: ORANGE, color: '#1B1B1F',
+            border: 'none', cursor: 'pointer',
             fontSize: 15, fontWeight: 700, fontFamily: 'inherit', letterSpacing: -0.1,
             WebkitTapHighlightColor: 'transparent', outline: 'none',
           }}>

@@ -69,23 +69,67 @@ export function AuthProvider({ children }) {
         // Fetch canonical full_name + user_code from profiles table — overrides auth metadata
         supabase
           .from('users')
-          .select('full_name, user_code')
+          .select('full_name, user_code, city')
           .eq('id', su.id)
           .maybeSingle()
-          .then(async ({ data }) => {
-            if (!data?.full_name) return;
+          .then(async ({ data: initialData, error: rowError }) => {
+            console.log('[AuthCity] SIGNED_IN user_id:', su.id);
+            console.log('[AuthCity] users row:', initialData ? { full_name: initialData.full_name, city: initialData.city } : null, '| rowError:', rowError?.message ?? null);
+
+            // For brand-new users the trigger that creates the users row may not
+            // have run yet — retry once after a short delay.
+            let data = initialData;
+            if (!data?.full_name) {
+              console.log('[AuthCity] no users row yet, retrying in 1.5 s…');
+              await new Promise(r => setTimeout(r, 1500));
+              const { data: retried, error: retryError } = await supabase
+                .from('users')
+                .select('full_name, user_code, city')
+                .eq('id', su.id)
+                .maybeSingle();
+              console.log('[AuthCity] retry row:', retried ? { full_name: retried.full_name, city: retried.city } : null, '| retryError:', retryError?.message ?? null);
+              data = retried;
+              if (!data?.full_name) return;
+            }
+
             let userCode = data.user_code || null;
-            // Generate user_code if missing
             if (!userCode) {
               userCode = await ensureUserCode(supabase, su.id, data.full_name);
             }
-            const canonical = { ...baseUser, name: data.full_name, ...(userCode && { userCode }) };
+
+            // If DB has no city yet, promote the onboarding city from localStorage
+            let resolvedCity = data.city || null;
+            if (!resolvedCity) {
+              try {
+                const localCity = JSON.parse(localStorage.getItem('pichanga_profile') || '{}').city || null;
+                console.log('[AuthCity] db.city=null | local city:', localCity);
+                if (localCity) {
+                  resolvedCity = localCity;
+                  const { error: cityErr, status } = await supabase
+                    .from('users')
+                    .update({ city: localCity })
+                    .eq('id', su.id);
+                  console.log('[AuthCity] city update status:', status, '| error:', cityErr?.message ?? null);
+                }
+              } catch (e) {
+                console.error('[AuthCity] city sync threw:', e);
+              }
+            } else {
+              console.log('[AuthCity] db.city already set:', data.city);
+            }
+
+            const canonical = {
+              ...baseUser,
+              name: data.full_name,
+              ...(userCode      && { userCode }),
+              ...(resolvedCity  && { city: resolvedCity }),
+            };
             login(canonical);
-            // Propagate to localStorage so legacy pichanga_profile reads are correct
             try {
               const stored = JSON.parse(localStorage.getItem('pichanga_profile') || '{}');
               stored.fullName = data.full_name;
-              if (userCode) stored.userCode = userCode;
+              if (userCode)     stored.userCode = userCode;
+              if (resolvedCity) stored.city     = resolvedCity;
               localStorage.setItem('pichanga_profile', JSON.stringify(stored));
             } catch {}
           });

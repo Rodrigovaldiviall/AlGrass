@@ -498,7 +498,7 @@ function PlayerModal({ player, onClose }) {
     if (!player.user_id || !supabase) return;
     supabase
       .from('users')
-      .select('full_name, user_code, avatar_hue, sex, birth_date, preferred_position')
+      .select('full_name, user_code, avatar_hue, sex, birth_date, preferred_position, city')
       .eq('id', player.user_id)
       .maybeSingle()
       .then(({ data }) => { if (data) setProfile(data); });
@@ -525,6 +525,7 @@ function PlayerModal({ player, onClose }) {
   const position = profile
     ? (Array.isArray(profile.preferred_position) ? profile.preferred_position.join(' · ') : (profile.preferred_position || null))
     : (player.position || null);
+  const city = profile?.city ?? null;
 
   const stat = (v, l) => (
     <div>
@@ -596,6 +597,12 @@ function PlayerModal({ player, onClose }) {
             </div>
             <div style={{ height: 1, background: HAIR, marginBottom: 10 }} />
             {stat(position, 'Posición')}
+            {city && (
+              <>
+                <div style={{ height: 1, background: HAIR, margin: '10px 0' }} />
+                {stat(city, 'Ciudad')}
+              </>
+            )}
           </div>
         </div>
       </div>
