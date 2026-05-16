@@ -5,6 +5,7 @@ import TabBar from '../components/TabBar';
 import I from '../icons';
 import fieldImg from '../assets/cancha.jpg';
 import { useAuth } from '../context/AuthContext';
+import { useStaff } from '../context/StaffContext';
 
 const STORAGE_KEY = 'pichanga_notifications_v2';
 const SEVEN_DAYS  = 7 * 24 * 60 * 60 * 1000;
@@ -200,9 +201,54 @@ function Empty() {
   );
 }
 
+// ── Staff invite row — shown at top of Notifications when invitation is pending
+function StaffInviteRow({ invite, onOpen }) {
+  const dateStr = invite.created_at
+    ? new Date(invite.created_at).toLocaleDateString('es-PE', { day: 'numeric', month: 'long' })
+    : null;
+  return (
+    <button
+      onClick={onOpen}
+      style={{
+        width: '100%', display: 'flex', alignItems: 'center', gap: 0,
+        padding: '9px 12px 9px 7px',
+        background: '#EEF2FF',
+        border: 'none', cursor: 'pointer', textAlign: 'left',
+        fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none',
+        borderRadius: 13,
+      }}>
+      <div style={{
+        width: 44, height: 44, borderRadius: 11, background: BLUE, flexShrink: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <svg width="20" height="20" viewBox="0 0 22 22" fill="none">
+          <circle cx="8" cy="7" r="3" stroke="#fff" strokeWidth="1.5"/>
+          <path d="M2 18c0-3.3 2.7-6 6-6" stroke="#fff" strokeWidth="1.5" strokeLinecap="round"/>
+          <circle cx="15" cy="12" r="3" stroke="#fff" strokeWidth="1.5"/>
+          <path d="M9 21c0-3.3 2.7-6 6-6s6 2.7 6 6" stroke="#fff" strokeWidth="1.5" strokeLinecap="round"/>
+        </svg>
+      </div>
+      <div style={{ width: 1, background: '#C6DEFF', marginLeft: 8, marginRight: 8, alignSelf: 'stretch' }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, marginBottom: 2 }}>
+          <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: TEXT, lineHeight: 1.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {invite.venues?.name ?? 'Venue'}
+          </span>
+        </div>
+        <div style={{ fontSize: 12.5, color: '#3C3C44', lineHeight: 1.42 }}>
+          {dateStr ? `${dateStr} · ` : ''}
+          Te invitó a formar parte del staff · <span style={{ color: BLUE, fontWeight: 600 }}>Ver</span>
+        </div>
+      </div>
+      <div style={{ width: 8, height: 8, borderRadius: 4, background: BLUE, flexShrink: 0, marginLeft: 8 }} />
+    </button>
+  );
+}
+
 // ── Screen
 export default function Notifications() {
   const { user }   = useAuth();
+  const staff      = useStaff();
   const navigate   = useNavigate();
   const [notifications, setNotifications] = useState(() => purgeExpired(loadNotifications()));
   const [expandedIds, setExpandedIds]     = useState(() => new Set());
@@ -269,9 +315,27 @@ export default function Notifications() {
 
       <div ref={notifScrollRef} className="no-sb" style={{ flex: 1, overflowY: 'auto', background: SOFT, WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'contain' }}>
         <div style={{ minHeight: 'calc(100% + 1px)', display: 'flex', flexDirection: 'column' }}>
-          {groups.length === 0 ? (
+          {/* Pending staff invitations — shown above regular notifications */}
+          {(staff?.pendingInvites?.length > 0) && (
+            <div>
+              <div style={{ padding: '14px 16px 6px', fontSize: 11.5, fontWeight: 600, color: SUB, letterSpacing: 0.3, textTransform: 'uppercase' }}>
+                Invitaciones pendientes
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingLeft: 12, paddingRight: 12 }}>
+                {staff.pendingInvites.map(inv => (
+                  <StaffInviteRow
+                    key={inv.id}
+                    invite={inv}
+                    onOpen={() => staff.setModalVisible(true)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {groups.length === 0 && !staff?.pendingInvites?.length ? (
             <Empty />
-          ) : (
+          ) : groups.length === 0 ? null : (
             groups.map(([dateKey, items]) => (
               <div key={dateKey}>
                 <div style={{ padding: '14px 16px 6px', fontSize: 11.5, fontWeight: 600, color: SUB, letterSpacing: 0.3, textTransform: 'uppercase' }}>

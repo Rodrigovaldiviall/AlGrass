@@ -25,7 +25,9 @@
       "Bash(npx vite *)",
       "Bash(npm run *)",
       "Bash(Get-ChildItem -Path \"c:\\\\Claude Code\\\\AlGrass\\\\src\" -Recurse -Name)",
-      "Bash(xargs grep -l \"guests\\\\|attendees\\\\|players\")"
+      "Bash(xargs grep -l \"guests\\\\|attendees\\\\|players\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\Claude Code\\\\AlGrass\\\\src\\\\services\\\\\" -ErrorAction SilentlyContinue | Select-Object Name)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Claude Code\\\\AlGrass\\\\src\\\\services\\\\\" | Select-Object -ExpandProperty Name)"
     ]
   }
 }

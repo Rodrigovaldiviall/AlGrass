@@ -2,7 +2,15 @@ import { lazy, Suspense, useEffect } from 'react';
 import * as gameService from './services/gameService';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
+import { StaffProvider, useStaff } from './context/StaffContext';
+import StaffInviteModal from './components/StaffInviteModal';
 import Sidebar from './components/Sidebar';
+
+function StaffModalBridge() {
+  const staff = useStaff();
+  if (!staff?.modalVisible || !staff?.pendingInvites?.length) return null;
+  return <StaffInviteModal />;
+}
 
 const Welcome      = lazy(() => import('./screens/Welcome'));
 const PickupGames  = lazy(() => import('./screens/PickupGames'));
@@ -47,6 +55,7 @@ export default function App() {
 
   return (
     <AuthProvider>
+    <StaffProvider>
     <BrowserRouter>
       <div style={{
         position: 'fixed', top: 0, left: 0, right: 0,
@@ -77,7 +86,9 @@ export default function App() {
           </Suspense>
         </div>
       </div>
+      <StaffModalBridge />
     </BrowserRouter>
+    </StaffProvider>
     </AuthProvider>
   );
 }
