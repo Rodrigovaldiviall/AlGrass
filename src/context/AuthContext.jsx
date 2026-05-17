@@ -16,6 +16,7 @@ export function AuthProvider({ children }) {
   function logout() {
     setUserState(null);
     removeUser();
+    try { localStorage.removeItem('pichanga_profile'); } catch {}
     supabase?.auth.signOut();
   }
 
@@ -44,50 +45,38 @@ export function AuthProvider({ children }) {
     if (!supabase) return;
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_IN' && session) {
+      // INITIAL_SESSION fires on every page load with the persisted Supabase session —
+      // handling it here ensures the React user state is always derived from the live
+      // Supabase session, not from a potentially stale pichanga_user localStorage entry.
+      if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session) {
         const su = session.user;
         const metaName = su.user_metadata?.full_name || su.user_metadata?.name || null;
         const name = metaName || 'Usuario';
         const email = su.email || '';
-
-        // Proveedor principal de la cuenta (el primero con el que se registró).
         const provider = su.app_metadata?.provider || 'email';
-
-        // Lista completa de proveedores vinculados a esta cuenta.
-        // Con "Automatic identity linking" activo en Supabase, si el usuario
-        // se autenticó con un proveedor diferente al mismo email, Supabase
-        // fusionó las cuentas y aquí aparecerán todos los proveedores.
-        // Cada identidad: { id, provider, identity_data, created_at, ... }
         const providers = (su.identities ?? []).map(i => i.provider);
-
-        // identities se guarda para permitir unlinkProvider() — necesita el id.
         const identities = (su.identities ?? []).map(({ id, provider: p }) => ({ id, provider: p }));
 
         const baseUser = { id: su.id, name, email, provider, providers, identities };
         login(baseUser);
 
-        // Fetch canonical full_name + user_code from profiles table — overrides auth metadata
+        // Fetch canonical full_name + user_code from public.users — overrides auth metadata
         supabase
           .from('users')
           .select('full_name, user_code, city')
           .eq('id', su.id)
           .maybeSingle()
-          .then(async ({ data: initialData, error: rowError }) => {
-            console.log('[AuthCity] SIGNED_IN user_id:', su.id);
-            console.log('[AuthCity] users row:', initialData ? { full_name: initialData.full_name, city: initialData.city } : null, '| rowError:', rowError?.message ?? null);
-
+          .then(async ({ data: initialData }) => {
             // For brand-new users the trigger that creates the users row may not
             // have run yet — retry once after a short delay.
             let data = initialData;
             if (!data?.full_name) {
-              console.log('[AuthCity] no users row yet, retrying in 1.5 s…');
               await new Promise(r => setTimeout(r, 1500));
-              const { data: retried, error: retryError } = await supabase
+              const { data: retried } = await supabase
                 .from('users')
                 .select('full_name, user_code, city')
                 .eq('id', su.id)
                 .maybeSingle();
-              console.log('[AuthCity] retry row:', retried ? { full_name: retried.full_name, city: retried.city } : null, '| retryError:', retryError?.message ?? null);
               data = retried;
               if (!data?.full_name) return;
             }
@@ -98,35 +87,29 @@ export function AuthProvider({ children }) {
             }
 
             // If DB has no city yet, promote the onboarding city from localStorage
+            // Only read from pichanga_profile if it belongs to this user
             let resolvedCity = data.city || null;
             if (!resolvedCity) {
               try {
-                const localCity = JSON.parse(localStorage.getItem('pichanga_profile') || '{}').city || null;
-                console.log('[AuthCity] db.city=null | local city:', localCity);
+                const stored = JSON.parse(localStorage.getItem('pichanga_profile') || '{}');
+                const localCity = (stored.userId === su.id || !stored.userId) ? (stored.city || null) : null;
                 if (localCity) {
                   resolvedCity = localCity;
-                  const { error: cityErr, status } = await supabase
-                    .from('users')
-                    .update({ city: localCity })
-                    .eq('id', su.id);
-                  console.log('[AuthCity] city update status:', status, '| error:', cityErr?.message ?? null);
+                  await supabase.from('users').update({ city: localCity }).eq('id', su.id);
                 }
-              } catch (e) {
-                console.error('[AuthCity] city sync threw:', e);
-              }
-            } else {
-              console.log('[AuthCity] db.city already set:', data.city);
+              } catch {}
             }
 
             const canonical = {
               ...baseUser,
               name: data.full_name,
-              ...(userCode      && { userCode }),
-              ...(resolvedCity  && { city: resolvedCity }),
+              ...(userCode     && { userCode }),
+              ...(resolvedCity && { city: resolvedCity }),
             };
             login(canonical);
             try {
               const stored = JSON.parse(localStorage.getItem('pichanga_profile') || '{}');
+              stored.userId   = su.id;
               stored.fullName = data.full_name;
               if (userCode)     stored.userCode = userCode;
               if (resolvedCity) stored.city     = resolvedCity;
@@ -137,6 +120,7 @@ export function AuthProvider({ children }) {
       if (event === 'SIGNED_OUT') {
         setUserState(null);
         removeUser();
+        try { localStorage.removeItem('pichanga_profile'); } catch {}
       }
     });
 

@@ -716,6 +716,7 @@ export default function ConfirmReservation() {
   }
 
   function handleConfirm() {
+    if (game?.hostUserId && authUser?.id && game.hostUserId === authUser.id) return;
     if (total === 0) {
       setCreditLoading(true);
       setTimeout(() => {
@@ -730,6 +731,7 @@ export default function ConfirmReservation() {
 
   async function handlePaid(paymentMethod) {
     setPayOpen(false);
+    if (game?.hostUserId && authUser?.id && game.hostUserId === authUser.id) return;
     if (addGuestsMode) {
       const gameId = game?.id;
       if (gameId && guests.length > 0) {

@@ -38,7 +38,7 @@ export function GameMetaLine({ format, totalSpots, durationMin, womenOnly, parki
           </>
         ) : parking ? (
           <>
-            {ParkingIcon()}{!hasSubs && <span style={{ whiteSpace: 'nowrap' }}>Estacionamiento</span>}
+            {ParkingIcon()}{!hasSubs && <span style={{ whiteSpace: 'nowrap' }}>Estac.</span>}
             {covered && <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 3 }}>{I.roof(SUB)}</span>}
           </>
         ) : covered ? (

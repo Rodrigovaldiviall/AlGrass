@@ -2,7 +2,6 @@ import { createContext, useContext, useState, useEffect, useCallback } from 'rea
 import { useAuth } from './AuthContext';
 import {
   fetchMyVenueStaff,
-  fetchManagedVenues,
   fetchHostedGames,
   acceptStaffInvite,
   rejectStaffInvite,
@@ -38,53 +37,33 @@ export function StaffProvider({ children }) {
   const isGameHost     = hostedGames.length > 0;
 
   const refresh = useCallback(async () => {
-    console.log('[Staff] refresh() | user?.id:', user?.id ?? 'MISSING');
     if (!user?.id) {
       setReady(true);
       return;
     }
 
-    const [staffRes, venuesRes, gamesRes] = await Promise.allSettled([
+    const [staffRes, gamesRes] = await Promise.allSettled([
       fetchMyVenueStaff(user.id),
-      fetchManagedVenues(user.id),
       fetchHostedGames(user.id),
     ]);
 
-    // ── venue_staff ──
-    console.log('[Staff] staffRes.status:', staffRes.status);
     if (staffRes.status === 'fulfilled') {
       const { data: rawStaff, error: staffErr } = staffRes.value;
-      console.log('[Staff] staffErr:', staffErr?.message ?? null, '| code:', staffErr?.code ?? null);
-      console.log('[Staff] rawStaff rows (post-merge):', rawStaff?.length ?? 0, rawStaff);
       if (!staffErr && rawStaff) {
-        rawStaff.forEach(r => {
-          console.log('[Staff] row → id:', r.id, '| user_id:', r.user_id, '| status:', r.status, '| venues:', r.venues);
-        });
         const accepted = rawStaff.filter(r => r.status === 'accepted');
         const pending  = rawStaff.filter(r => r.status === 'pending');
-        console.log('[Staff] accepted:', accepted.length, '| pending:', pending.length);
         setAcceptedStaff(accepted);
         setPendingInvites(pending);
-        if (pending.length > 0 && shouldAutoShow()) {
-          console.log('[Staff] setting modalVisible = true (cooldown passed)');
-          setModalVisible(true);
-        } else if (pending.length > 0) {
-          console.log('[Staff] pending exists but within 24h cooldown — skipping auto-show');
-        }
+        // manager_user_id is now included in venues — derive managed venues without extra query
+        // (Supabase trigger guarantees manager_user_id → venue_staff accepted)
+        const managed = accepted
+          .filter(r => r.venues?.manager_user_id === user.id)
+          .map(r => ({ id: r.venue_id, name: r.venues?.name ?? '' }));
+        setManagedVenues(managed);
+        if (pending.length > 0 && shouldAutoShow()) setModalVisible(true);
       }
-    } else {
-      console.error('[Staff] staffRes rejected:', staffRes.reason);
     }
 
-    // ── venues (manager) ──
-    console.log('[Staff] venuesRes.status:', venuesRes.status);
-    if (venuesRes.status === 'fulfilled') {
-      const { data: rawVenues, error: venuesErr } = venuesRes.value;
-      console.log('[Staff] venuesErr:', venuesErr?.message ?? null, '| managed venues:', rawVenues?.length ?? 0, rawVenues);
-      if (!venuesErr) setManagedVenues(rawVenues ?? []);
-    }
-
-    // ── hosted games ──
     if (gamesRes.status === 'fulfilled' && !gamesRes.value.error) {
       setHostedGames(gamesRes.value.data ?? []);
     }
@@ -93,10 +72,6 @@ export function StaffProvider({ children }) {
   }, [user?.id]);
 
   useEffect(() => { refresh(); }, [refresh]);
-
-  useEffect(() => {
-    console.log('[Staff] modalVisible changed →', modalVisible, '| pendingInvites:', pendingInvites.length);
-  }, [modalVisible, pendingInvites.length]);
 
   function dismissModal() {
     try { localStorage.setItem(DISMISS_KEY, String(Date.now())); } catch {}

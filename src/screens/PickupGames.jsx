@@ -32,6 +32,7 @@ function headerLabel(d) {
 // ── Filter state ───────────────────────────────────────────────────────────
 
 const EMPTY_FLT = {
+  organiza: false,
   cubierta: false, estacionamiento: false, duchas: false, mujeres: false, master45: false,
   suplentes: false,
   formatos: [], minSpots: null, dias: [], horarios: [],
@@ -344,7 +345,7 @@ const CHIP_DEFS = [
   { id: 'duchas',          label: 'Duchas',           icon: c => ShowerIcon(c)   },
 ];
 
-function FilterRow({ chipActive, onToggleChip, onOpenPanel, panelHasExtra }) {
+function FilterRow({ chipActive, onToggleChip, onOpenPanel, panelHasExtra, hasHostedInFeed }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px 8px', background: '#fff' }}>
       <FilterButton onClick={onOpenPanel} hasActive={panelHasExtra} />
@@ -353,10 +354,16 @@ function FilterRow({ chipActive, onToggleChip, onOpenPanel, panelHasExtra }) {
         flex: 1, minWidth: 0, display: 'flex', gap: 8, overflowX: 'auto',
         scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch',
       }}>
+        {hasHostedInFeed && (
+          <Chip key="organiza" label="Organiza"
+            icon={c => <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><circle cx="5" cy="4" r="2.5" stroke={c} strokeWidth="1.4"/><path d="M1 12c0-2.2 1.8-4 4-4" stroke={c} strokeWidth="1.4" strokeLinecap="round"/><circle cx="10" cy="8.5" r="2.5" stroke={c} strokeWidth="1.4"/><path d="M7 13c0-1.7 1.3-3 3-3s3 1.3 3 3" stroke={c} strokeWidth="1.4" strokeLinecap="round"/></svg>}
+            active={!!chipActive.organiza} onClick={() => onToggleChip('organiza')}
+            last={CHIP_DEFS.length === 0} />
+        )}
         {CHIP_DEFS.map((c, i) => (
           <Chip key={c.id} label={c.label} icon={c.icon}
             active={!!chipActive[c.id]} onClick={() => onToggleChip(c.id)}
-            last={i === CHIP_DEFS.length - 1} />
+            last={!hasHostedInFeed && i === CHIP_DEFS.length - 1} />
         ))}
       </div>
     </div>
@@ -413,11 +420,23 @@ function DateStrip({ dates, selectedKey, onSelect, scrollerRef, cellRefs, eventD
 
 // ── List rows ──────────────────────────────────────────────────────────────
 
-function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount = 0 }) {
+function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount = 0, isHost = false, totalSpots = 0 }) {
+  const PILL_MIN = 64;
+  if (isHost) {
+    const confirmed = totalSpots - openSpots;
+    return (
+      <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', minWidth: PILL_MIN, padding: '4px 8px', borderRadius: 999, background: ORANGE, flexShrink: 0 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#1B1B1F', lineHeight: 1.2 }}>Organiza</span>
+        {totalSpots > 0 && (
+          <span style={{ fontSize: 10, fontWeight: 600, color: '#1B1B1F', opacity: 0.75, lineHeight: 1.2 }}>{confirmed}/{totalSpots}</span>
+        )}
+      </div>
+    );
+  }
   if (canceledCount != null) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-        <div style={{ height: 22, padding: '0 8px', borderRadius: 999, background: '#FFF0F0', border: `1.2px solid ${RED}40`, color: RED, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center' }}>
+        <div style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, background: '#FFF0F0', border: `1.2px solid ${RED}40`, color: RED, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
           Cancelado
         </div>
         <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
@@ -429,7 +448,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
   if (guestInfo) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-        <div style={{ height: 22, padding: '0 8px', borderRadius: 999, background: '#EDF5FF', border: `1.2px solid ${BLUE}40`, color: BLUE, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center' }}>
+        <div style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, background: '#EDF5FF', border: `1.2px solid ${BLUE}40`, color: BLUE, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
           Invitado
         </div>
         <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
@@ -444,7 +463,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
     if (activeGuestCount > 0) {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-          <div style={{ height: 22, padding: '0 8px', borderRadius: 999, background: BLUE, color: '#fff', fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>Inscrito</div>
+          <div style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, background: BLUE, color: '#fff', fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>Inscrito</div>
           <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
             {activeGuestCount} {activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}
           </div>
@@ -453,18 +472,18 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
     }
     return (
       <div style={{
-        height: 22, padding: '0 8px', borderRadius: 999,
+        height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999,
         background: BLUE, color: '#fff',
         fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600,
-        display: 'inline-flex', alignItems: 'center',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
       }}>Inscrito</div>
     );
   }
   if (inWaitlist) {
     const capPill = openSpots <= 0 ? (
-      <div style={{ height: 22, padding: '0 8px', borderRadius: 999, border: `1.2px solid ${RED}`, color: RED, fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>Completo</div>
+      <div style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, border: `1.2px solid ${RED}`, color: RED, fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>Completo</div>
     ) : (
-      <div style={{ height: 22, minWidth: 64, padding: '0 8px', borderRadius: 999, background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN, fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{openSpots} {openSpots === 1 ? 'cupo' : 'cupos'}</div>
+      <div style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN, fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{openSpots} {openSpots === 1 ? 'cupo' : 'cupos'}</div>
     );
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
@@ -476,10 +495,10 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
   if (openSpots <= 0) {
     return (
       <div style={{
-        height: 22, padding: '0 8px', borderRadius: 999,
+        height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999,
         border: `1.2px solid ${RED}`, color: RED,
         fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 500,
-        display: 'inline-flex', alignItems: 'center',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
       }}>Completo</div>
     );
   }
@@ -493,7 +512,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
   );
 }
 
-function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount, liveOpenSpots }) {
+function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount, liveOpenSpots, isHost = false }) {
   const [pressed, setPressed] = useState(false);
   return (
     <div role="button" tabIndex={0}
@@ -528,7 +547,7 @@ function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount
           )}
         </div>
       </div>
-      <StatusPill openSpots={liveOpenSpots ?? g.openSpots} booked={booked} inWaitlist={inWaitlist} guestInfo={guestInfo} canceledCount={canceledCount} activeGuestCount={activeGuestCount} />
+      <StatusPill openSpots={liveOpenSpots ?? g.openSpots} booked={booked} inWaitlist={inWaitlist} guestInfo={guestInfo} canceledCount={canceledCount} activeGuestCount={activeGuestCount} isHost={isHost} totalSpots={g.totalSpots ?? 0} />
       <div style={{ pointerEvents: 'none', marginLeft: 6 }}>{I.chev()}</div>
     </div>
   );
@@ -727,8 +746,14 @@ export default function PickupGames() {
     return map;
   }, [games, confirmedCountMap]);
 
+  const hasHostedInFeed = useMemo(
+    () => !!user?.id && games.some(g => g.hostUserId === user.id),
+    [games, user?.id]
+  );
+
   // Chip active state mirrors flt
   const chipActive = {
+    organiza:        flt.organiza,
     spots:           flt.minSpots !== null,
     cubierta:        flt.cubierta,
     mujeres:         flt.mujeres,
@@ -750,6 +775,7 @@ export default function PickupGames() {
     console.log('[PickupGames] filter — games.length:', games.length, '| userCity:', userCity, '| flt:', JSON.stringify(flt));
     const result = games.filter(g => {
       if (isGameStarted(g.dateKey, g.time24)) return false;   // now >= game_start → out of marketplace
+      if (flt.organiza && g.hostUserId !== user?.id) return false;
       if (g.city && g.city !== userCity) return false;
       if (flt.cubierta        && !g.covered)   return false;
       if (flt.estacionamiento && !g.parking)   return false;
@@ -895,6 +921,7 @@ export default function PickupGames() {
         onToggleChip={toggleChip}
         onOpenPanel={() => setPanelOpen(true)}
         panelHasExtra={panelHasExtra}
+        hasHostedInFeed={hasHostedInFeed}
       />
       <DateStrip
         dates={DATE_WINDOW}
@@ -919,15 +946,17 @@ export default function PickupGames() {
               <DateHeader dateKey={dateKey} refEl={(el) => { headerRefs.current[dateKey] = el; }} />
               {games.map((g, i) => {
                 const st = gameStateMap.get(g.id);
+                const isHost = !!user?.id && g.hostUserId === user.id;
                 return (
                 <GameRow key={g.id} g={g}
                   last={i === games.length - 1 && isLast}
-                  booked={st?.isBooked}
-                  inWaitlist={waitlistGameIds.has(g.id)}
-                  guestInfo={st?.isGuestConfirmed ? { paidBy: st.paidBy, payerCode: st.payerCode, guestId: st.guestId, activeGuestCount: st.activeGuestCount } : undefined}
-                  canceledCount={st?.relationship === 'canceled-with-guests' ? st.activeGuestCount : undefined}
+                  booked={!isHost && st?.isBooked}
+                  inWaitlist={!isHost && waitlistGameIds.has(g.id)}
+                  guestInfo={!isHost && st?.isGuestConfirmed ? { paidBy: st.paidBy, payerCode: st.payerCode, guestId: st.guestId, activeGuestCount: st.activeGuestCount } : undefined}
+                  canceledCount={!isHost && st?.relationship === 'canceled-with-guests' ? st.activeGuestCount : undefined}
                   activeGuestCount={st?.activeGuestCount ?? 0}
                   liveOpenSpots={liveOpenSpotsMap.get(g.id)}
+                  isHost={isHost}
                   onOpen={() => {
                     if (st?.isGuestConfirmed) {
                       navigate(`/game/${g.id}`, { state: { game: { ...g, paidBy: st.paidBy, paidByCode: st.payerCode, guestId: st.guestId }, infoMode: true, backPath: '/games' } });

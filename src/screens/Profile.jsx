@@ -7,6 +7,7 @@ import { faWhatsapp } from '@fortawesome/free-brands-svg-icons';
 import { faHeadset, faCoins } from '@fortawesome/free-solid-svg-icons';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
+import { useStaff } from '../context/StaffContext';
 import { supabase } from '../lib/supabase';
 import { abbreviateName, ensureUserCode } from '../utils/format';
 import { GAMES } from '../data/games';
@@ -270,6 +271,7 @@ function sbReservationToRow(r) {
     womenOnly:  g?.game_amenities?.women_only ?? false,
     covered:    g?.fields?.field_amenities?.covered ?? false,
     parking:    g?.fields?.venues?.venue_amenities?.parking ?? false,
+    hostUserId: g?.host_user_id ?? null,
     status: 'reserved',
     type:   r.source === 'campo' ? 'campo' : 'game',
     price:  r.total_amount != null ? `S/. ${Number(r.total_amount).toFixed(2)}` : null,
@@ -282,6 +284,35 @@ function sbReservationToRow(r) {
       guestsTotal:   0,
       total:         r.total_amount    || 0,
     } : null,
+    activeGuestCount: 0,
+  };
+}
+
+function sbHostedGameToRow(g) {
+  const { time, ampm } = parseGameTime(g?.time);
+  const field      = g?.fields;
+  const venue      = field?.venues;
+  const totalSpots = g?.total_spots ?? field?.total_spots ?? 0;
+  const openSpots  = Math.max(0, totalSpots - (g?.current_players ?? 0));
+  return {
+    id:          g.id,
+    dateKey:     g.date_key    ?? null,
+    time24:      g.time        ?? null,
+    durationMin: g.duration_min ?? field?.duration_min ?? null,
+    date:        fmtDateKey(g.date_key),
+    time,
+    ampm,
+    field:       venue?.name || '',
+    format:      g.format ?? field?.format ?? '7v7',
+    totalSpots,
+    openSpots,
+    womenOnly:   g.game_amenities?.women_only ?? false,
+    covered:     field?.field_amenities?.covered ?? false,
+    parking:     venue?.venue_amenities?.parking ?? false,
+    hostUserId:  g.host_user_id ?? null,
+    status:      'reserved',
+    type:        'game',
+    price:       null,
     activeGuestCount: 0,
   };
 }
@@ -674,8 +705,8 @@ function NationalityPicker({ value, onChange }) {
 
   return (
     <div style={{ flex: 1 }}>
-      <button ref={btnRef} style={selBtn} onClick={handleOpen}>
-        {value}
+      <button ref={btnRef} style={{ ...selBtn, color: value ? TEXT : SUB }} onClick={handleOpen}>
+        {value || 'Seleccionar'}
       </button>
       {open && createPortal(
         <>
@@ -837,8 +868,8 @@ function CityPicker({ value, onChange }) {
 
   return (
     <div style={{ flex: 1 }}>
-      <button ref={btnRef} style={selBtn} onClick={handleOpen}>
-        {value}
+      <button ref={btnRef} style={{ ...selBtn, color: value ? TEXT : SUB }} onClick={handleOpen}>
+        {value || 'Seleccionar'}
       </button>
       {open && createPortal(
         <>
@@ -946,7 +977,7 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
     (profileData.phonePrefix || '+51').replace(/^\+/, '')
   );
   const [phone,       setPhone]       = useState(profileData.phone || '');
-  const [nationality, setNationality] = useState(profileData.nationality || 'Perú');
+  const [nationality, setNationality] = useState(profileData.nationality || null);
   const [city,        setCity]        = useState(profileData.city || 'Arequipa');
   const [occupation,  setOccupation]  = useState(profileData.occupation || '');
   const [photoDataUrl, setPhotoDataUrl] = useState(profileData.photoDataUrl || null);
@@ -1467,9 +1498,10 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
 
 // ── GameRow ────────────────────────────────────────────────────────────────
 
-function GameRow({ game, onPress, muted = false }) {
+function GameRow({ game, onPress, muted = false, userId = null }) {
   const [pressed, setPressed] = useState(false);
   const isCampo = game.type === 'campo';
+  const isHost = !!userId && !!game.hostUserId && game.hostUserId === userId;
   return (
     <div
       onClick={onPress}
@@ -1497,51 +1529,61 @@ function GameRow({ game, onPress, muted = false }) {
             : <GameMetaLine format={game.format} totalSpots={game.totalSpots} womenOnly={game.womenOnly} parking={game.parking} covered={game.covered} />}
         </div>
       </div>
-      {game.status === 'waitlist' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
-          {(game.openSpots ?? 0) <= 0 ? (
-            <div style={{ height: 24, padding: '0 10px', borderRadius: 999, border: `1.2px solid ${RED}`, color: RED, fontSize: 12, fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>Completo</div>
-          ) : (
-            <div style={{ height: 24, padding: '0 10px', borderRadius: 999, background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN, fontSize: 12, fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>{game.openSpots} {game.openSpots === 1 ? 'cupo' : 'cupos'}</div>
-          )}
-          <div style={{ fontSize: 11, fontWeight: 700, color: BLUE, letterSpacing: 0.2, alignSelf: 'flex-end', marginRight: 10 }}>En lista</div>
-        </div>
-      ) : muted ? (
-        <div style={{ fontSize: 13, fontWeight: 600, color: SUB, whiteSpace: 'nowrap' }}>
-          Finalizado
-        </div>
-      ) : (game.status === 'canceled-with-guests' || game.status === 'guest-canceled-with-sub-guests') ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-          <div style={{ height: 22, padding: '0 8px', borderRadius: 999, background: '#FFF0F0', border: `1.2px solid ${RED}40`, color: RED, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center' }}>
-            Cancelado
+      {(() => {
+        const PM = 76;
+        const pillBase = { height: 26, minWidth: PM, padding: '0 10px', borderRadius: 999, fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' };
+        if (isHost) return (
+          <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', minWidth: PM, padding: '5px 8px', borderRadius: 999, background: ORANGE, flexShrink: 0 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: '#1B1B1F', lineHeight: 1.2 }}>Organiza</span>
+            {game.totalSpots > 0 && game.openSpots != null && (
+              <span style={{ fontSize: 10.5, fontWeight: 600, color: '#1B1B1F', opacity: 0.75, lineHeight: 1.2 }}>{game.totalSpots - game.openSpots}/{game.totalSpots}</span>
+            )}
           </div>
-          <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
-            {game.activeGuestCount} {game.activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}
+        );
+        if (game.status === 'waitlist') return (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
+            {(game.openSpots ?? 0) <= 0
+              ? <div style={{ ...pillBase, border: `1.2px solid ${RED}`, color: RED, fontWeight: 500 }}>Completo</div>
+              : <div style={{ ...pillBase, background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN }}>{game.openSpots} {game.openSpots === 1 ? 'cupo' : 'cupos'}</div>
+            }
+            <div style={{ fontSize: 11, fontWeight: 700, color: BLUE, letterSpacing: 0.2, alignSelf: 'flex-end', marginRight: 10 }}>En lista</div>
           </div>
-        </div>
-      ) : game.status === 'guest' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-          <div style={{ height: 26, padding: '0 12px', borderRadius: 999, background: '#EDF5FF', border: `1.2px solid ${BLUE}40`, color: BLUE, fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center' }}>
-            Invitado
-          </div>
-          <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
-            {game.activeGuestCount > 0
-              ? `${game.activeGuestCount} ${game.activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}`
-              : `por ${abbreviateName(game.paidBy)}`}
-          </div>
-        </div>
-      ) : game.status === 'reserved' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-          <div style={{ height: 26, padding: '0 12px', borderRadius: 999, background: BLUE, color: '#fff', fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
-            {game.type === 'campo' ? 'Reservado' : 'Inscrito'}
-          </div>
-          {game.type !== 'campo' && game.activeGuestCount > 0 && (
+        );
+        if (muted) return (
+          <div style={{ ...pillBase, background: 'transparent', color: SUB, fontWeight: 600, border: 'none' }}>Finalizado</div>
+        );
+        if (game.status === 'canceled-with-guests' || game.status === 'guest-canceled-with-sub-guests') return (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+            <div style={{ ...pillBase, height: 22, fontSize: 11, fontWeight: 700, background: '#FFF0F0', border: `1.2px solid ${RED}40`, color: RED }}>Cancelado</div>
             <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
               {game.activeGuestCount} {game.activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}
             </div>
-          )}
-        </div>
-      ) : null}
+          </div>
+        );
+        if (game.status === 'guest') return (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+            <div style={{ ...pillBase, background: '#EDF5FF', border: `1.2px solid ${BLUE}40`, color: BLUE }}>Invitado</div>
+            <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
+              {game.activeGuestCount > 0
+                ? `${game.activeGuestCount} ${game.activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}`
+                : `por ${abbreviateName(game.paidBy)}`}
+            </div>
+          </div>
+        );
+        if (game.status === 'reserved') return (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+            <div style={{ ...pillBase, background: BLUE, color: '#fff' }}>
+              {game.type === 'campo' ? 'Reservado' : 'Inscrito'}
+            </div>
+            {game.type !== 'campo' && game.activeGuestCount > 0 && (
+              <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
+                {game.activeGuestCount} {game.activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}
+              </div>
+            )}
+          </div>
+        );
+        return null;
+      })()}
       <ChevIcon />
     </div>
   );
@@ -1739,6 +1781,7 @@ function RatingModal({ game, onRate, onSkip }) {
 export default function Profile() {
   const navigate = useNavigate();
   const { user, login } = useAuth();
+  const { isVenueStaff, isVenueManager, isGameHost } = useStaff();
   const { state } = useLocation();
   const profileScrollRef = useRef(null);
   const initPfScrollRef = useRef(undefined);
@@ -1799,7 +1842,12 @@ export default function Profile() {
     return cg;
   });
   const [profileData,    setProfileData]    = useState(() => {
-    try { return JSON.parse(localStorage.getItem(PROFILE_KEY)) || {}; } catch { return {}; }
+    try {
+      const stored = JSON.parse(localStorage.getItem(PROFILE_KEY)) || {};
+      // Discard stored data if it belongs to a different user — prevents cross-account leakage
+      if (stored.userId && stored.userId !== user?.id) return {};
+      return stored;
+    } catch { return {}; }
   });
   const [extraGames, setExtraGames] = useState(() => {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; }
@@ -1824,12 +1872,15 @@ export default function Profile() {
   const [myPlayerRows,      setMyPlayerRows]      = useState([]);
   const [myPlayerRowsReady, setMyPlayerRowsReady] = useState(false);
   const [sbGamesReady,      setSbGamesReady]      = useState(false);
+  const [hostedRows,        setHostedRows]        = useState([]);
+  const [hostedReady,       setHostedReady]       = useState(false);
+  const [hostedConfirmed,   setHostedConfirmed]   = useState({});
   const [payerNames,        setPayerNames]        = useState({});
 
   useEffect(() => {
-    if (!supabase) { setMyPlayerRowsReady(true); setSbGamesReady(true); return; }
+    if (!supabase) { setMyPlayerRowsReady(true); setSbGamesReady(true); setHostedReady(true); return; }
     supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!session?.user?.id) { setMyPlayerRowsReady(true); setSbGamesReady(true); return; }
+      if (!session?.user?.id) { setMyPlayerRowsReady(true); setSbGamesReady(true); setHostedReady(true); return; }
       const uid = session.user.id;
 
       supabase
@@ -1861,6 +1912,7 @@ export default function Profile() {
             if (userCode) {
               try {
                 const stored = JSON.parse(localStorage.getItem('pichanga_profile') || '{}');
+                stored.userId   = uid;
                 stored.userCode = userCode;
                 localStorage.setItem('pichanga_profile', JSON.stringify(stored));
               } catch {}
@@ -1879,7 +1931,7 @@ export default function Profile() {
         .from('reservations')
         .select(`
           game_id, source, unit_price, promo_discount, credit_applied, total_amount,
-          games:game_id ( date_key, time, format, total_spots, duration_min, game_amenities:amenities, fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
+          games:game_id ( date_key, time, format, total_spots, duration_min, host_user_id, game_amenities:amenities, fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
         `)
         .eq('user_id', uid)
         .eq('status', 'spend')
@@ -1898,7 +1950,7 @@ export default function Profile() {
         .from('game_players')
         .select(`
           game_id, user_id, payer_id, status, amount,
-          games:game_id ( date_key, time, format, total_spots, duration_min, game_amenities:amenities, fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
+          games:game_id ( date_key, time, format, total_spots, duration_min, host_user_id, game_amenities:amenities, fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
         `)
         .or(`user_id.eq.${uid},payer_id.eq.${uid}`)
         .then(async ({ data, error }) => {
@@ -1914,10 +1966,38 @@ export default function Profile() {
             setPayerNames(map);
           }
         });
+
+      // hosted games — host is outside game_players; query games directly
+      supabase
+        .from('games')
+        .select(`
+          id, date_key, time, format, total_spots, current_players, duration_min, status, host_user_id,
+          game_amenities:amenities,
+          fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) )
+        `)
+        .eq('host_user_id', uid)
+        .in('status', ['published', 'active'])
+        .then(async ({ data, error }) => {
+          if (error) { console.warn('[Profile] hosted games:', error.message); }
+          else if (data?.length) {
+            setHostedRows(data);
+            const ids = data.map(g => g.id);
+            const { data: cpRows } = await supabase
+              .from('game_players')
+              .select('game_id')
+              .in('game_id', ids)
+              .eq('status', 'confirmed');
+            const map = {};
+            (cpRows ?? []).forEach(r => { map[r.game_id] = (map[r.game_id] ?? 0) + 1; });
+            setHostedConfirmed(map);
+          }
+          setHostedReady(true);
+        });
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const [pastExpanded, setPastExpanded] = useState(false);
+  const [pastExpanded, setPastExpanded]         = useState(false);
+  const [upcomingExpanded, setUpcomingExpanded] = useState(false);
 
   const profileGameStateMap = useMemo(() => {
     if (!user?.id) return new Map();
@@ -1954,6 +2034,7 @@ export default function Profile() {
           womenOnly:  g?.game_amenities?.women_only ?? false,
           covered:    g?.fields?.field_amenities?.covered ?? false,
           parking:    g?.fields?.venues?.venue_amenities?.parking ?? false,
+          hostUserId:       g?.host_user_id ?? null,
           type:             'game',
           price:            null,
           status:           'guest',
@@ -1967,6 +2048,18 @@ export default function Profile() {
 
   const canceledGames = useMemo(() => deriveCanceledWithGuestsGames(), [extraGames]);
 
+  const hostedGameRows = useMemo(
+    () => hostedRows.map(g => {
+      const row = sbHostedGameToRow(g);
+      const liveConfirmed = hostedConfirmed[g.id] ?? null;
+      if (liveConfirmed !== null) {
+        row.openSpots = Math.max(0, row.totalSpots - liveConfirmed);
+      }
+      return row;
+    }),
+    [hostedRows, hostedConfirmed]
+  );
+
   // status priority: lower = wins dedup
   const STATUS_PRIORITY = { reserved: 0, guest: 1, 'canceled-with-guests': 2, 'guest-canceled-with-sub-guests': 3, waitlist: 4 };
 
@@ -1975,11 +2068,11 @@ export default function Profile() {
       ...extraGames.map(g => {
         if (g.status === 'reserved' && g.type !== 'campo' && myPlayerRowsReady) {
           const state = profileGameStateMap.get(g.id);
-          if (!state || !state.isVisible) return null;
-          if (state.relationship === 'canceled-with-guests') {
+          if (state && !state.isVisible) return null;
+          if (state?.relationship === 'canceled-with-guests') {
             return { ...g, status: 'canceled-with-guests', activeGuestCount: state.activeGuestCount };
           }
-          if (state.relationship === 'guest') return null; // guestGames handles this
+          if (state?.relationship === 'guest') return null; // guestGames handles this
         }
         let row = g.paymentBreakdown ? { ...g, price: computeLivePrice(g) } : g;
         if (row.status === 'reserved' && row.type !== 'campo' && row.id) {
@@ -1991,6 +2084,7 @@ export default function Profile() {
       ...waitlistEntries,
       ...guestGames,
       ...canceledGames,
+      ...hostedGameRows, // fallback: makes hosted games visible when not in reservations/game_players
     ];
     // one card per game — keep highest-priority status row
     const seen = new Map();
@@ -2004,21 +2098,23 @@ export default function Profile() {
     }
     return [...seen.values()];
   })();
-  const dataReady = myPlayerRowsReady && sbGamesReady;
+  const dataReady = myPlayerRowsReady && sbGamesReady && hostedReady;
   // Only classify games that have valid temporal data and whose player status is settled
   const temporalGames = dataReady ? allGames.filter(g => g.dateKey && g.time24) : [];
   const upcoming      = sortByDt(temporalGames.filter(g => !isPast(g) && !(g.status === 'waitlist' && isStarted(g))), false);
   const past          = sortByDt(temporalGames.filter(g =>  isPast(g) && g.status !== 'waitlist'), true);
   const pastGameCount = past.length;
-  const visiblePast   = pastExpanded ? past : past.slice(0, 4);
+  const visiblePast     = pastExpanded     ? past     : past.slice(0, 4);
+  const visibleUpcoming = upcomingExpanded ? upcoming : upcoming.slice(0, 10);
 
   const gameToRate = (dataReady && user)
     ? past.find(g => !ratings[g.id] && !skippedRatings[g.id]) ?? null
     : null;
 
   async function handleSave(updated) {
-    setProfileData(updated);
-    try { localStorage.setItem(PROFILE_KEY, JSON.stringify(updated)); } catch {}
+    const stamped = user?.id ? { ...updated, userId: user.id } : updated;
+    setProfileData(stamped);
+    try { localStorage.setItem(PROFILE_KEY, JSON.stringify(stamped)); } catch {}
     if (!supabase) return;
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -2125,8 +2221,21 @@ export default function Profile() {
     birthMonth:  profileData.birthMonth  ?? null,
     birthYear:   profileData.birthYear   ?? null,
     city:        profileData.city        ?? null,
+    phone:       profileData.phone       ?? null,
+    nationality: profileData.nationality ?? null,
     photoDataUrl: profileData.photoDataUrl ?? null,
   };
+
+  const hasPosition  = (cardUser.positions?.length > 0) || !!cardUser.position;
+  const hasBirthDate = !!(cardUser.birthYear && cardUser.birthMonth && cardUser.birthDay);
+
+  const isOrganizerProfile = isVenueStaff || isVenueManager;
+  // Organizer completeness: photo + position + birth date + phone + nationality
+  const isOrganizerProfileComplete = !!cardUser.photoDataUrl && hasPosition && hasBirthDate && !!cardUser.phone && !!cardUser.nationality;
+  // Player completeness: photo + position + birth date + phone
+  const isProfileComplete = isOrganizerProfile
+    ? isOrganizerProfileComplete
+    : !!cardUser.photoDataUrl && hasPosition && hasBirthDate && !!cardUser.phone && !!cardUser.nationality;
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden', position: 'relative' }}>
@@ -2167,21 +2276,25 @@ export default function Profile() {
 
           <ProfileCard user={cardUser} gamesPlayedCount={pastGameCount} onEdit={() => setEditOpen(true)} />
 
-<div style={{ padding: '16px 16px 0', textAlign: 'center' }}>
-            <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, letterSpacing: -0.1 }}>
-              Completa tu perfil para obtener<br />mejores recomendaciones
+{!isProfileComplete && (
+            <div style={{ padding: '16px 16px 0', textAlign: 'center' }}>
+              <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, letterSpacing: -0.1 }}>
+                {isOrganizerProfile
+                  ? <>Completa tu perfil para<br />poder organizar partidos.</>
+                  : <>Completa tu perfil para obtener<br />mejores recomendaciones</>}
+              </div>
+              <button
+                onClick={() => setEditOpen(true)}
+                style={{
+                  marginTop: 6, padding: '4px 8px',
+                  background: 'transparent', border: 'none', cursor: 'pointer',
+                  fontSize: 14, fontWeight: 700, color: ORANGE, letterSpacing: -0.1,
+                  fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none',
+                }}>
+                Edita tu perfil
+              </button>
             </div>
-            <button
-              onClick={() => setEditOpen(true)}
-              style={{
-                marginTop: 6, padding: '4px 8px',
-                background: 'transparent', border: 'none', cursor: 'pointer',
-                fontSize: 14, fontWeight: 700, color: ORANGE, letterSpacing: -0.1,
-                fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none',
-              }}>
-              Edita tu perfil
-            </button>
-          </div>
+          )}
 
           {creditBalance > 0 && (
             <div style={{ margin: '4px 16px 0', padding: '14px 16px', borderRadius: 14, background: '#fff', border: `1px solid ${HAIR}`, boxShadow: '0 1px 6px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: 14 }}>
@@ -2200,18 +2313,31 @@ export default function Profile() {
           {upcoming.length === 0 ? (
             <div style={{ padding: '4px 16px 8px', fontSize: 14, color: SUB }}>No tienes ningún partido</div>
           ) : (
-            (() => {
-              const byDate = {};
-              upcoming.forEach(g => { const k = g.date || ''; (byDate[k] = byDate[k] || []).push(g); });
-              return Object.entries(byDate).map(([date, games]) => (
-                <div key={date || '_'}>
-                  {date && date !== 'Próximo partido' && (
-                    <div style={{ padding: '4px 16px 8px', fontSize: 13.5, fontWeight: 600, color: TEXT }}>{date}</div>
-                  )}
-                  {games.map(g => <GameRow key={g.id} game={g} onPress={() => openGameDetail(g)} />)}
-                </div>
-              ));
-            })()
+            <>
+              {(() => {
+                const byDate = {};
+                visibleUpcoming.forEach(g => { const k = g.date || ''; (byDate[k] = byDate[k] || []).push(g); });
+                return Object.entries(byDate).map(([date, games]) => (
+                  <div key={date || '_'}>
+                    {date && date !== 'Próximo partido' && (
+                      <div style={{ padding: '4px 16px 8px', fontSize: 13.5, fontWeight: 600, color: TEXT }}>{date}</div>
+                    )}
+                    {games.map(g => <GameRow key={g.id} game={g} onPress={() => openGameDetail(g)} userId={user?.id} />)}
+                  </div>
+                ));
+              })()}
+              {!upcomingExpanded && upcoming.length > 10 && (
+                <button onClick={() => setUpcomingExpanded(true)} style={{
+                  display: 'block', width: '100%', padding: '10px 16px',
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  fontSize: 14, fontWeight: 600, color: '#3F5FE0',
+                  textAlign: 'center', fontFamily: 'inherit',
+                  WebkitTapHighlightColor: 'transparent', outline: 'none',
+                }}>
+                  Ver más
+                </button>
+              )}
+            </>
           )}
 
           <SectionHeader title="Eventos pasados" count={past.length} />
@@ -2227,7 +2353,7 @@ export default function Profile() {
                     {date && date !== 'Próximo partido' && (
                       <div style={{ padding: '4px 16px 8px', fontSize: 13.5, fontWeight: 600, color: SUB }}>{date}</div>
                     )}
-                    {games.map(g => <GameRow key={g.id} game={g} onPress={() => openGameDetail(g)} muted />)}
+                    {games.map(g => <GameRow key={g.id} game={g} onPress={() => openGameDetail(g)} muted userId={user?.id} />)}
                   </div>
                 ));
               })()}

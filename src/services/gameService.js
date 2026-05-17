@@ -29,12 +29,14 @@ const GAME_SELECT = `
   total_spots,
   format,
   duration_min,
+  host_user_id,
   game_amenities:amenities,
   fields:field_id (
     name,
     format,
     total_spots,
     duration_min,
+    default_host_user_id,
     field_amenities:amenities,
     venues:venue_id (
       name,
@@ -77,6 +79,10 @@ function mapGame(g) {
     covered:   field?.field_amenities?.covered    ?? false,
     parking:   venue?.venue_amenities?.parking    ?? false,
     showers:   venue?.venue_amenities?.showers    ?? false,
+    // games.host_user_id is the sole runtime SoT — field default is for creation only
+    hostUserId:          g.host_user_id                ?? null,
+    fieldDefaultHostId:  field?.default_host_user_id   ?? null,
+    effectiveHostUserId: g.host_user_id                ?? null,
   };
 }
 

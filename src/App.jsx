@@ -8,7 +8,7 @@ import Sidebar from './components/Sidebar';
 
 function StaffModalBridge() {
   const staff = useStaff();
-  if (!staff?.modalVisible || !staff?.pendingInvites?.length) return null;
+  if (!staff?.modalVisible) return null;
   return <StaffInviteModal />;
 }
 

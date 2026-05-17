@@ -9,11 +9,12 @@ export async function fetchMyVenueStaff(userId) {
 
   if (error || !staffRows?.length) return { data: staffRows ?? [], error };
 
-  // Step 2: fetch venue names separately
+  // Step 2: fetch venue info separately — includes manager_user_id so callers can
+  // derive isVenueManager without a second query (trigger guarantees manager → staff accepted)
   const venueIds = [...new Set(staffRows.map(r => r.venue_id).filter(Boolean))];
   const { data: venues } = await supabase
     .from('venues')
-    .select('id, name')
+    .select('id, name, manager_user_id')
     .in('id', venueIds);
 
   const venueMap = Object.fromEntries((venues ?? []).map(v => [v.id, v]));
@@ -22,21 +23,32 @@ export async function fetchMyVenueStaff(userId) {
   return { data: merged, error: null };
 }
 
-export async function fetchManagedVenues(userId) {
-  const { data, error } = await supabase
-    .from('venues')
-    .select('id, name')
-    .eq('manager_user_id', userId);
-  return { data: data ?? [], error };
-}
-
 export async function fetchHostedGames(userId) {
-  const { data, error } = await supabase
-    .from('games')
-    .select('id')
-    .eq('host_user_id', userId)
-    .eq('status', 'active');
-  return { data: data ?? [], error };
+  // Query 1: games where user is explicit host
+  const [explicitRes, fieldsRes] = await Promise.all([
+    supabase.from('games').select('id').eq('host_user_id', userId).eq('status', 'active'),
+    supabase.from('fields').select('id').eq('default_host_user_id', userId),
+  ]);
+
+  const explicit = explicitRes.data ?? [];
+
+  // Query 2: games on fields where user is default host AND no explicit override
+  let defaultHosted = [];
+  if (fieldsRes.data?.length) {
+    const fieldIds = fieldsRes.data.map(f => f.id);
+    const { data } = await supabase
+      .from('games')
+      .select('id')
+      .in('field_id', fieldIds)
+      .is('host_user_id', null)
+      .eq('status', 'active');
+    defaultHosted = data ?? [];
+  }
+
+  // Deduplicate by id
+  const seen = new Set();
+  const all  = [...explicit, ...defaultHosted].filter(g => seen.has(g.id) ? false : seen.add(g.id));
+  return { data: all, error: null };
 }
 
 export async function acceptStaffInvite(rowId) {

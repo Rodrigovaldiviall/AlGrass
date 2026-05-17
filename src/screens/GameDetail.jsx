@@ -100,6 +100,8 @@ function buildGame(sel) {
     dateKey:           sel.dateKey           ?? null,
     time24:            sel.time24            ?? null,
     durationMin:       sel.durationMin       ?? null,
+    hostUserId:        sel.hostUserId        ?? null,
+    effectiveHostUserId: sel.effectiveHostUserId ?? null,
   };
 }
 
@@ -584,6 +586,7 @@ function PlayerModal({ player, onClose }) {
               {name}
             </div>
             <div style={{ fontSize: 12, color: BLUE, fontWeight: 600, marginTop: 3 }}>{code}</div>
+            {city && <div style={{ fontSize: 11.5, color: SUB, fontWeight: 500, marginTop: 3 }}>{city}</div>}
           </div>
 
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', paddingTop: 4 }}>
@@ -597,12 +600,6 @@ function PlayerModal({ player, onClose }) {
             </div>
             <div style={{ height: 1, background: HAIR, marginBottom: 10 }} />
             {stat(position, 'Posición')}
-            {city && (
-              <>
-                <div style={{ height: 1, background: HAIR, margin: '10px 0' }} />
-                {stat(city, 'Ciudad')}
-              </>
-            )}
           </div>
         </div>
       </div>
@@ -947,8 +944,10 @@ export default function GameDetail() {
   const gameState = useMemo(() => deriveGameState(sbRoster, user?.id), [sbRoster, user?.id]);
   const { isBooked, mySlotCanceled } = gameState;
 
+  const isHost = !!user?.id && !!g.hostUserId && user.id === g.hostUserId;
+
   const guestCanceledView = location.state?.guestCanceledView ?? false;
-  const infoMode  = (location.state?.infoMode ?? false) || isBooked;
+  const infoMode  = (location.state?.infoMode ?? false) || isBooked || isHost;
   const isGuest   = !!g.paidBy;
 
   const confirmedRoster  = useMemo(() => sbRoster.filter(p => p.status === 'confirmed'), [sbRoster]);
@@ -1002,12 +1001,18 @@ export default function GameDetail() {
   const [paymentDetailOpen, setPaymentDetailOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [now, setNow] = useState(() => new Date());
+  const [hostProfile, setHostProfile] = useState(null);
 
   const gameStart = useMemo(() => gameStartDate(g.dateKey, g.time24), [g.dateKey, g.time24]);
   const gameEnd   = useMemo(() => gameEndDate(g.dateKey, g.time24, g.durationMin), [g.dateKey, g.time24, g.durationMin]);
   // Attendance window: [game_start - 15min, game_end)
   const attendanceOpen = infoMode && !!gameStart && !!gameEnd
     && now >= new Date(gameStart.getTime() - 15 * 60_000)
+    && now <  gameEnd;
+
+  // Host action window: [game_start - 60min, game_end)
+  const hostWindowOpen = isHost && !!gameStart && !!gameEnd
+    && now >= new Date(gameStart.getTime() - 60 * 60_000)
     && now <  gameEnd;
 
   useEffect(() => {
@@ -1021,6 +1026,16 @@ export default function GameDetail() {
       if (fetched) setSbGame(fetched);
     });
   }, [gameId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!g.hostUserId || !supabase) return;
+    supabase
+      .from('users')
+      .select('full_name, user_code, avatar_hue')
+      .eq('id', g.hostUserId)
+      .maybeSingle()
+      .then(({ data }) => { if (data) setHostProfile(data); });
+  }, [g.hostUserId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function fetchRoster() {
     if (!supabase || !gameId) return;
@@ -1149,6 +1164,11 @@ export default function GameDetail() {
                 </span>
               ) : isPastGame ? (
                 <span style={{ display: 'inline-flex', alignItems: 'center', padding: '5px 14px', borderRadius: 999, background: '#F0FFF4', fontSize: 13, fontWeight: 600, color: GREEN }}>Finalizado</span>
+              ) : isHost ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 16px', borderRadius: 999, background: ORANGE, fontSize: 13, fontWeight: 700, color: '#1B1B1F', letterSpacing: -0.1 }}>
+                  <span>Organizador</span>
+                  <span style={{ fontWeight: 600, opacity: 0.75 }}>· {confirmed}/{g.totalSpots}</span>
+                </span>
               ) : g.paidBy ? (
                 <button onClick={() => setSelectedPlayer({ name: g.paidBy, user_id: payerUserId })} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 14px', borderRadius: 999, background: '#F0FFF4', border: 'none', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: GREEN }}>Invitado por</span>
@@ -1184,7 +1204,7 @@ export default function GameDetail() {
               icon={I.cal()}
               primary={g.date}
               secondary={`${g.time} · ${g.duration}`}
-              action={<WAChatButton />}
+              action={(isHost || isBooked || isGuest || guestsInRoster.length > 0) ? <WAChatButton /> : undefined}
             />
             <InfoRow
               icon={I.fieldIcon()}
@@ -1210,12 +1230,24 @@ export default function GameDetail() {
           </Section>
 
           <Section title="Organizador">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <Avatar name={g.organizer.name} size={44} />
-              <div style={{ fontSize: 'var(--gd-body, 14px)', color: TEXT, lineHeight: 1.4 }}>
-                Este juego es organizado por <span style={{ fontWeight: 700 }}>{g.organizer.name}</span>
+            {g.hostUserId ? (
+              <button
+                onClick={() => setSelectedPlayer({ name: hostProfile?.full_name || '', user_id: g.hostUserId })}
+                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 12, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                <Avatar name={hostProfile?.full_name || ''} size={44} />
+                <div style={{ fontSize: 'var(--gd-body, 14px)', color: TEXT, lineHeight: 1.4 }}>
+                  Este juego está organizado por{' '}
+                  <span style={{ fontWeight: 700 }}>{hostProfile?.full_name || '…'}</span>
+                </div>
+              </button>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <Avatar name={g.organizer.name} size={44} />
+                <div style={{ fontSize: 'var(--gd-body, 14px)', color: TEXT, lineHeight: 1.4 }}>
+                  Este juego es organizado por <span style={{ fontWeight: 700 }}>{g.organizer.name}</span>
+                </div>
               </div>
-            </div>
+            )}
           </Section>
 
           <Section title="Jugadores">
@@ -1254,7 +1286,7 @@ export default function GameDetail() {
                         checkedInAt={p.checked_in_at}
                         gameStart={gameStart}
                         isPast={isPastGame}
-                        canMark={attendanceOpen && !p.checked_in_at}
+                        canMark={attendanceOpen && !p.checked_in_at && isHost}
                         onMark={() => markAttendance(p)}
                       />
                     )}
@@ -1266,10 +1298,22 @@ export default function GameDetail() {
 
           <div style={{ height: 8 }} />
         </div>
-        {!infoMode && !isStarted && (isFull || inWaitlist) && (
+        {!infoMode && !isStarted && !isHost && (isFull || inWaitlist) && (
           <WaitlistRow inList={inWaitlist} onToggle={handleWaitlistToggle} />
         )}
-        {(isBooked || infoMode) ? (
+        {isHost ? (
+          /* ── Host action bar ───────────────────────────── */
+          hostWindowOpen && (
+            <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '12px 16px' }}>
+              <button
+                onClick={() => setModifyOpen(true)}
+                style={{ width: '100%', height: 46, borderRadius: 14, background: ORANGE, color: '#1B1B1F', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 700, fontFamily: 'inherit', letterSpacing: -0.1, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                Agregar jugadores · {liveOpenSpots} cupos
+              </button>
+            </div>
+          )
+        ) : (isBooked || infoMode) ? (
+          /* ── Player: payment + gestionar ────────────────── */
           <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}` }}>
             {(isPastGame || isStarted) && infoMode && <PaymentDetail price={g.price} breakdown={liveBreakdown} paidBy={livePaidBy} userName={user?.name || 'Usuario'} titularCanceled={titularCanceled || mySlotCanceled} activeGuestCount={isGuest ? guestOwnGuests.length : guestsInRoster.length} guestSubBreakdown={isGuest ? g.guestSubBreakdown : null} />}
             {(isBooked || guestsInRoster.length > 0) && !isStarted && (
@@ -1283,9 +1327,9 @@ export default function GameDetail() {
             )}
           </div>
         ) : !infoMode && (
+          /* ── Non-booked player: CTA / canceled-guests ────── */
           <>
-            {isCanceledWithGuests && (() => {
-              return (
+            {isCanceledWithGuests && (() => (
               <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}` }}>
                 {!isStarted && (
                   <div style={{ padding: '12px 16px 0' }}>
@@ -1297,8 +1341,7 @@ export default function GameDetail() {
                   </div>
                 )}
               </div>
-              );
-            })()}
+            ))()}
             {!isStarted && <CTA
               price={g.price}
               disabled={isFull}
