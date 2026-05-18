@@ -369,22 +369,12 @@ export default function Settings() {
   async function saveCity(raw) {
     haptic();
     const v = raw.trim() || 'Arequipa';
-    console.log('[SaveCity] triggered | prev:', city, '→ next:', v, '| user.id:', user?.id ?? 'MISSING');
     setCity(v);
     const updated = { ...profileData, city: v };
     setProfileData(updated);
     try { localStorage.setItem(PROFILE_KEY, JSON.stringify(updated)); } catch {}
-    if (!supabase) {
-      console.warn('[SaveCity] supabase client is null — skipping DB update');
-    } else if (!user?.id) {
-      console.warn('[SaveCity] user.id missing — skipping DB update | user:', user);
-    } else {
-      console.log('[SaveCity] calling supabase.update({ city:', v, '}) for user_id:', user.id);
-      const { error, status } = await supabase
-        .from('users')
-        .update({ city: v })
-        .eq('id', user.id);
-      console.log('[SaveCity] update result | status:', status, '| error:', error?.message ?? null, '| code:', error?.code ?? null);
+    if (supabase && user?.id) {
+      await supabase.from('users').update({ city: v }).eq('id', user.id);
     }
     shellRef.current?.animate(
       [{ transform: 'scale(1)' }, { transform: 'scale(1.014)' }, { transform: 'scale(1)' }],

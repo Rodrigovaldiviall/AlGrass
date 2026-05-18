@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { isExpiredPeru } from '../lib/peruTime';
 
 // ── internal helpers ──────────────────────────────────────────────────────────
 
@@ -8,22 +9,18 @@ async function getSession() {
 }
 
 async function ensureWalletSummary(userId) {
-  const { data, error } = await supabase.from('wallet_summary').select('user_id').eq('user_id', userId).maybeSingle();
-  console.log('[wallet] ensureWalletSummary select → data:', data, '| error:', error);
+  const { data } = await supabase.from('wallet_summary').select('user_id').eq('user_id', userId).maybeSingle();
   if (!data) {
-    const ins = await supabase.from('wallet_summary').insert({ user_id: userId, total_amount: 0, reserved_balance: 0, credit_balance: 0 });
-    console.log('[wallet] ensureWalletSummary insert → error:', ins.error, '| status:', ins.status);
+    await supabase.from('wallet_summary').insert({ user_id: userId, total_amount: 0, reserved_balance: 0, credit_balance: 0 });
   }
 }
 
 // Read-modify-write on wallet_summary. Race condition acceptable for this app.
 async function applySpend(userId, { totalAmount, subtotalAmount, creditApplied = 0 }) {
-  console.log('[wallet] applySpend called — userId:', userId?.slice(-6), '| totalAmount:', totalAmount, '| subtotalAmount:', subtotalAmount, '| creditApplied:', creditApplied);
   await ensureWalletSummary(userId);
-  const { data, error: selErr } = await supabase.from('wallet_summary')
+  const { data } = await supabase.from('wallet_summary')
     .select('total_amount, reserved_balance, credit_balance')
     .eq('user_id', userId).single();
-  console.log('[wallet] applySpend read → data:', data, '| error:', selErr);
   const cur = data ?? { total_amount: 0, reserved_balance: 0, credit_balance: 0 };
   const next = {
     user_id:          userId,
@@ -31,16 +28,12 @@ async function applySpend(userId, { totalAmount, subtotalAmount, creditApplied =
     reserved_balance: cur.reserved_balance + subtotalAmount,
     credit_balance:   Math.max(0, cur.credit_balance - creditApplied),
   };
-  console.log('[wallet] applySpend upsert payload:', next);
-  const { data: upData, error: upErr } = await supabase.from('wallet_summary').upsert(next, { onConflict: 'user_id' }).select();
-  console.log('[wallet] applySpend upsert → data:', upData, '| error:', upErr);
+  await supabase.from('wallet_summary').upsert(next, { onConflict: 'user_id' });
 }
 
 async function applyRefund(userId, refundAmount) {
-  console.log('[wallet] applyRefund called — userId:', userId?.slice(-6), '| refundAmount:', refundAmount);
   // RPC with SECURITY DEFINER: bypasses RLS for cross-user refunds (e.g. guest cancels, refund goes to payer)
-  const { error } = await supabase.rpc('apply_wallet_refund', { p_user_id: userId, p_amount: refundAmount });
-  console.log('[wallet] applyRefund rpc → error:', error);
+  await supabase.rpc('apply_wallet_refund', { p_user_id: userId, p_amount: refundAmount });
 }
 
 const deaccent = s => (s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '');
@@ -76,15 +69,14 @@ export async function getWalletBalance() {
 
 export async function validatePromoCode(code, unitPrice) {
   if (!supabase || !code?.trim()) return { error: 'invalid' };
-  const now = new Date().toISOString();
   const { data, error } = await supabase
     .from('promo_codes')
-    .select('discount_percent')
+    .select('discount_percent, expires_at')
     .eq('code', code.trim().toUpperCase())
     .eq('active', true)
-    .or(`expires_at.is.null,expires_at.gt.${now}`)
     .maybeSingle();
   if (error || !data) return { error: 'invalid' };
+  if (isExpiredPeru(data.expires_at)) return { error: 'invalid' };
   const discount = Math.min(unitPrice * (data.discount_percent / 100), unitPrice);
   return { discount, value: data.discount_percent, code: code.trim().toUpperCase() };
 }
@@ -139,20 +131,22 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoDis
   const { data, error } = await supabase
     .from('reservations')
     .insert({
-      game_id:         gameId,
-      user_id:         session.user.id,
-      status:          'spend',
-      unit_price:      unitPrice,
-      promo_code:      promoCode || null,
-      promo_discount:  promoDiscount || 0,
-      credit_applied:  creditApplied || 0,
-      total_amount:    totalAmount > 0 ? totalAmount : null,
-      subtotal_amount: subtotalAmount || totalAmount,
-      players_count:   playersCount || 1,
-      guest_total:     guestTotal || 0,
-      payment_method:  totalAmount > 0 ? paymentMethod : null,
-      source:          source || 'match',
-      reserved_at:     new Date().toISOString(),
+      game_id:             gameId,
+      user_id:             session.user.id,
+      status:              'spend',
+      unit_price:          unitPrice,
+      promo_code:          promoCode || null,
+      promo_discount:      promoDiscount || 0,
+      credit_applied:      creditApplied || 0,
+      total_amount:        totalAmount > 0 ? totalAmount : null,
+      subtotal_amount:     subtotalAmount || totalAmount,
+      players_count:       playersCount || 1,
+      guest_total:         guestTotal || 0,
+      payment_method:      totalAmount > 0 ? paymentMethod : null,
+      source:              source || 'match',
+      reserved_at:         new Date().toISOString(),
+      reservation_type:    'normal',
+      invited_by_user_id:  null,
     })
     .select('id')
     .single();
@@ -161,7 +155,7 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoDis
 }
 
 // Activates (or reactivates) a game_players slot via upsert on (game_id, user_id, payer_id).
-export async function createGamePlayer({ gameId, userId = null, payerId = null, reservationId = null, amount = 0 }) {
+export async function createGamePlayer({ gameId, userId = null, payerId = null, reservationId = null, amount = 0, reservationType = 'normal', invitedByUserId = null }) {
   if (!supabase) return { skipped: true };
   const session = await getSession();
   if (!session?.user?.id) return { skipped: true };
@@ -170,18 +164,54 @@ export async function createGamePlayer({ gameId, userId = null, payerId = null, 
   const { data, error } = await supabase
     .from('game_players')
     .upsert({
-      game_id:        gameId,
-      user_id:        resolvedUserId,
-      payer_id:       resolvedPayerId,
-      reservation_id: reservationId,
-      amount:         amount,
-      status:         'confirmed',
-      canceled_at:    null,
-      joined_at:      new Date().toISOString(),
+      game_id:            gameId,
+      user_id:            resolvedUserId,
+      payer_id:           resolvedPayerId,
+      reservation_id:     reservationId,
+      amount:             amount,
+      status:             'confirmed',
+      canceled_at:        null,
+      joined_at:          new Date().toISOString(),
+      reservation_type:   reservationType,
+      invited_by_user_id: invitedByUserId,
     }, { onConflict: 'game_id,user_id,payer_id' })
     .select('id')
     .single();
   if (error) console.error('[createGamePlayer]', error);
+  return { data, error };
+}
+
+// Organizer invites players for free — no wallet spend, reservation_type = 'invited'.
+// user_id = host (same ownership pattern as addGuestsMode reservations).
+// Individual invited players are linked via game_players.user_id, not via reservations.user_id.
+export async function createInvitedReservation({ gameId, playersCount = 1, unitPrice }) {
+  if (!supabase) return { skipped: true };
+  const session = await getSession();
+  if (!session?.user?.id) return { skipped: true };
+  const inviteTotal = unitPrice * playersCount;
+  const { data, error } = await supabase
+    .from('reservations')
+    .insert({
+      game_id:            gameId,
+      user_id:            session.user.id,  // host — satisfies RLS auth.uid() check
+      status:             'spend',
+      unit_price:         unitPrice,
+      promo_code:         null,
+      promo_discount:     inviteTotal,      // full discount → net = 0
+      credit_applied:     0,
+      total_amount:       0,
+      subtotal_amount:    inviteTotal,
+      players_count:      playersCount,
+      guest_total:        inviteTotal,
+      payment_method:     null,
+      source:             'organizer_invite',
+      reserved_at:        new Date().toISOString(),
+      reservation_type:   'invited',
+      invited_by_user_id: session.user.id,
+    })
+    .select('id')
+    .single();
+  if (error) console.error('[createInvitedReservation]', error);
   return { data, error };
 }
 
@@ -201,7 +231,6 @@ export async function cancelGamePlayer(gameId) {
     .eq('status', 'confirmed')
     .limit(1);
 
-  console.log('[cancelGamePlayer] confirmed row:', rows?.[0], '| findErr:', findErr);
   if (findErr || !rows?.length) {
     console.warn('[cancelGamePlayer] no confirmed row — skipping');
     return { skipped: true };
@@ -231,7 +260,6 @@ export async function cancelGamePlayer(gameId) {
     await applyRefund(refundTo, row.amount);
   }
 
-  console.log('[cancelGamePlayer] done — row.id:', row.id, '| refund:', row.amount);
   return { data: row };
 }
 
@@ -250,7 +278,6 @@ export async function cancelGuestPlayers(gameId, guestUserIds) {
     .eq('payer_id', session.user.id)
     .eq('status', 'confirmed');
 
-  console.log('[cancelGuestPlayers] confirmed rows:', rows, '| findErr:', findErr);
   if (findErr || !rows?.length) {
     console.warn('[cancelGuestPlayers] no confirmed guest rows — skipping');
     return { skipped: true };
@@ -278,8 +305,56 @@ export async function cancelGuestPlayers(gameId, guestUserIds) {
     });
     if (ledgerErr) console.error('[cancelGuestPlayers] refund ledger insert failed:', ledgerErr);
     await applyRefund(session.user.id, refundTotal);
-    console.log('[cancelGuestPlayers] done — canceled:', ids.length, '| total refund:', refundTotal);
   }
+
+  return { data: rows };
+}
+
+// Cancels invited player slots — no wallet movement (net cost was 0).
+// unitPrice is the gross spot price: stored in the refund ledger for financial analytics.
+export async function cancelInvitedPlayers(gameId, invitedUserIds, unitPrice = 0) {
+  if (!supabase || !invitedUserIds?.length) return { skipped: true };
+  const session = await getSession();
+  if (!session?.user?.id) return { skipped: true };
+
+  const { data: rows, error: findErr } = await supabase
+    .from('game_players')
+    .select('id, user_id')
+    .eq('game_id', gameId)
+    .in('user_id', invitedUserIds)
+    .eq('invited_by_user_id', session.user.id)
+    .eq('status', 'confirmed');
+
+  if (findErr || !rows?.length) {
+    console.warn('[cancelInvitedPlayers] no confirmed invited rows — skipping');
+    return { skipped: true };
+  }
+
+  const ids = rows.map(r => r.id);
+  const { error } = await supabase
+    .from('game_players')
+    .update({ status: 'canceled', canceled_at: new Date().toISOString() })
+    .in('id', ids);
+
+  if (error) { console.error('[cancelInvitedPlayers]', error); return { error }; }
+
+  const grossTotal = unitPrice * rows.length;
+  const { error: ledgerErr } = await supabase.from('reservations').insert({
+    game_id:            gameId,
+    user_id:            session.user.id,
+    canceled_by:        session.user.id,
+    status:             'refund',
+    unit_price:         unitPrice,
+    promo_discount:     grossTotal,
+    subtotal_amount:    grossTotal,
+    total_amount:       0,
+    players_count:      rows.length,
+    guest_total:        grossTotal,
+    canceled_at:        new Date().toISOString(),
+    reservation_type:   'invited',
+    invited_by_user_id: session.user.id,
+  });
+  if (ledgerErr) console.error('[cancelInvitedPlayers] ledger insert failed:', ledgerErr);
 
   return { data: rows };
 }

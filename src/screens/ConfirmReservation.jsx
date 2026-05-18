@@ -6,7 +6,7 @@ import I from '../icons';
 import { shareOrCopy } from '../utils/share';
 import { addPlayers as addPlayersToRoster, createRoster } from '../services/gameService';
 import { supabase } from '../lib/supabase';
-import { createReservation, createGamePlayer, validatePromoCode, searchUsers, getWalletBalance } from '../services/reservationService';
+import { createReservation, createGamePlayer, createInvitedReservation, validatePromoCode, searchUsers, getWalletBalance } from '../services/reservationService';
 
 // ── Player database & history ──────────────────────────────────────────────
 
@@ -168,10 +168,8 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
 
   useEffect(() => {
     if (!q) { setSbResults([]); return; }
-    console.log('[AddPlayers] searching:', q);
     searchUsers(q, { excludeIds: [...selectedIds] })
       .then(results => {
-        console.log('[AddPlayers] sbResults:', results.length, results);
         setSbResults(results);
         setSbPlayerMap(prev => {
           const next = { ...prev };
@@ -643,7 +641,6 @@ export default function ConfirmReservation() {
   const user = state?.user ?? { name: 'Usuario', email: 'usuario@email.com' };
   // Canonical display name: DB-fetched name from AuthContext takes precedence over navigation state
   const canonicalName = authUser?.name || user.name;
-  console.log('[checkout] state:', state, '| game:', game);
 
   const [guests, setGuests]         = useState([]);
   const [subView, setSubView]       = useState('confirm');
@@ -674,12 +671,13 @@ export default function ConfirmReservation() {
 
   const isCampo       = game?.source === 'campo';
   const addGuestsMode = game?.addGuestsMode ?? false;
+  const invitedMode   = game?.invitedMode   ?? false;
   const maxNewGuests  = game?.maxNewGuests  ?? 99;
   const rawSpots      = game?.openSpots;
-  const guestSlots    = addGuestsMode ? maxNewGuests : (rawSpots != null ? Math.max(0, rawSpots - 1) : undefined);
+  const guestSlots    = (addGuestsMode || invitedMode) ? maxNewGuests : (rawSpots != null ? Math.max(0, rawSpots - 1) : undefined);
   const displaySpots  = guestSlots;
   const spotsLabel    = (() => {
-    if (addGuestsMode) {
+    if (addGuestsMode || invitedMode) {
       if (displaySpots === undefined) return null;
       if (displaySpots === 0) return 'No quedan más cupos disponibles';
       return `Solo ${displaySpots === 1 ? 'queda 1 cupo disponible' : `quedan ${displaySpots} cupos disponibles`}`;
@@ -695,15 +693,15 @@ export default function ConfirmReservation() {
 
   const titularNet   = unitPrice - (promoApplied?.discount ?? 0);
   const guestsTotal  = guests.length * unitPrice;
-  const subtotal     = addGuestsMode ? Math.max(0, guestsTotal) : Math.max(0, titularNet + guestsTotal);
-  const creditApplied = Math.min(creditBalance, subtotal);
-  const total        = Math.max(0, subtotal - creditApplied);
+  const subtotal     = invitedMode ? 0 : addGuestsMode ? Math.max(0, guestsTotal) : Math.max(0, titularNet + guestsTotal);
+  const creditApplied = invitedMode ? 0 : Math.min(creditBalance, subtotal);
+  const total        = invitedMode ? 0 : Math.max(0, subtotal - creditApplied);
 
   const unitStr  = fmt(unitPrice);
-  const totalStr = addGuestsMode
+  const totalStr = (addGuestsMode || invitedMode)
     ? fmt(total)
     : (promoApplied || guests.length > 0 || creditApplied > 0) ? fmt(total) : unitStr;
-  const seats = addGuestsMode ? guests.length : 1 + guests.length;
+  const seats = (addGuestsMode || invitedMode) ? guests.length : 1 + guests.length;
 
   async function applyCode() {
     if (!promoInput.trim() || promoLoading) return;
@@ -716,7 +714,13 @@ export default function ConfirmReservation() {
   }
 
   function handleConfirm() {
-    if (game?.hostUserId && authUser?.id && game.hostUserId === authUser.id) return;
+    if (!invitedMode && game?.hostUserId && authUser?.id && game.hostUserId === authUser.id) return;
+    if (invitedMode) {
+      if (!guests.length) return;
+      setFreeConfirming(true);
+      handlePaid();
+      return;
+    }
     if (total === 0) {
       setCreditLoading(true);
       setTimeout(() => {
@@ -731,7 +735,22 @@ export default function ConfirmReservation() {
 
   async function handlePaid(paymentMethod) {
     setPayOpen(false);
-    if (game?.hostUserId && authUser?.id && game.hostUserId === authUser.id) return;
+    if (!invitedMode && game?.hostUserId && authUser?.id && game.hostUserId === authUser.id) return;
+    if (invitedMode) {
+      const gameId = game?.id;
+      if (gameId && guests.length > 0) {
+        const { data: resData, error } = await createInvitedReservation({ gameId, playersCount: guests.length, unitPrice });
+        if (!error && resData) {
+          const reservationId = resData.id;
+          await Promise.all(guests.map(guest =>
+            createGamePlayer({ gameId, userId: guest.id, payerId: authUser?.id, reservationId, amount: 0, reservationType: 'invited', invitedByUserId: authUser?.id })
+          ));
+        }
+      }
+      setFreeConfirming(false);
+      navigate(-1);
+      return;
+    }
     if (addGuestsMode) {
       const gameId = game?.id;
       if (gameId && guests.length > 0) {
@@ -789,15 +808,18 @@ export default function ConfirmReservation() {
     }).then(({ data: resData, error, skipped }) => {
       if (skipped || error) { if (error) console.warn('[checkout] reservation failed:', error); return; }
       const reservationId = resData?.id ?? null;
-      console.log('[checkout] reservation created:', reservationId);
-      createGamePlayer({ gameId: game?.id, reservationId, amount: unitPrice });
+      createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet });
       guests.forEach(guest => createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice }));
     });
     navigate('/profile', { state: { confirmedGame: {
       id:           game?.id,
       field:        game?.field,
       date:         game?.date,
+      dateKey:      game?.dateKey   ?? null,
       time:         game?.time,
+      ampm:         game?.ampm      ?? null,
+      time24:       game?.time24    ?? null,
+      durationMin:  game?.durationMin ?? null,
       format:       game?.format || '7v7',
       amount:       total,
       price:        game?.price,
@@ -819,8 +841,8 @@ export default function ConfirmReservation() {
         onConfirm={selected => { setGuests(selected); setSubView('confirm'); }}
         paidPlayers={paidPlayers}
         maxGuests={guestSlots ?? 99}
-        spotsCount={addGuestsMode ? (maxNewGuests < 99 ? maxNewGuests : undefined) : rawSpots}
-        isInscribed={addGuestsMode}
+        spotsCount={(addGuestsMode || invitedMode) ? (maxNewGuests < 99 ? maxNewGuests : undefined) : rawSpots}
+        isInscribed={addGuestsMode || invitedMode}
         gameId={game?.id}
         rosterPlayerIds={rosterPlayerIds}
       />
@@ -830,9 +852,9 @@ export default function ConfirmReservation() {
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden', position: 'relative' }}>
       <TopBar
-        title={addGuestsMode ? 'Agregar invitados' : 'Confirmación de reserva'}
+        title={invitedMode ? 'Agregar jugadores' : addGuestsMode ? 'Agregar invitados' : 'Confirmación de reserva'}
         onCancel={() => {
-          if (addGuestsMode) { navigate(-1); return; }
+          if (addGuestsMode || invitedMode) { navigate(-1); return; }
           const dest = game?.backPath ?? (game?.source === 'campo' ? '/fields' : '/games');
           if (game?.gameDetailBackPath && dest.startsWith('/game/')) {
             navigate(dest, { state: { backPath: game.gameDetailBackPath } });
@@ -858,13 +880,13 @@ export default function ConfirmReservation() {
               </div>
               <div style={{ flex: 1, paddingTop: 2 }}>
                 <div style={{ fontSize: 15, fontWeight: 600, color: TEXT, lineHeight: 1.3 }}>{game.date}</div>
-                <div style={{ marginTop: 2, fontSize: 13.5, color: SUB, lineHeight: 1.4 }}>{game.time} · {game.duration}</div>
+                <div style={{ marginTop: 2, fontSize: 13.5, color: SUB, lineHeight: 1.4 }}>{[game.time, game.ampm].filter(Boolean).join(' ')} · {game.duration}</div>
               </div>
             </div>
           </>
         )}
 
-        {!isCampo && !addGuestsMode && (
+        {!isCampo && !addGuestsMode && !invitedMode && (
           <div style={{ padding: '24px 16px 0' }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, letterSpacing: -0.1 }}>
               Reservando {seats} {seats === 1 ? 'lugar' : 'lugares'} para
@@ -872,7 +894,7 @@ export default function ConfirmReservation() {
           </div>
         )}
 
-        {!isCampo && !addGuestsMode && (
+        {!isCampo && !addGuestsMode && !invitedMode && (
           <div style={{ padding: '12px 16px 0' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0' }}>
               <UserAvatar size={44} />
@@ -933,7 +955,7 @@ export default function ConfirmReservation() {
       </div>
 
       <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '10px 16px calc(12px + env(safe-area-inset-bottom))' }}>
-        {!promoOpen && !promoApplied && !addGuestsMode && (
+        {!promoOpen && !promoApplied && !addGuestsMode && !invitedMode && (
           <button onClick={() => setPromoOpen(true)} style={{ padding: '6px 4px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, color: ORANGE, letterSpacing: -0.1, display: 'inline-flex', alignItems: 'center', gap: 6, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <path d="M2 7.5V2.5h5l7 7-5 5-7-7z" stroke={ORANGE} strokeWidth="1.4" strokeLinejoin="round"/>
@@ -943,7 +965,7 @@ export default function ConfirmReservation() {
           </button>
         )}
 
-        {promoOpen && !promoApplied && !addGuestsMode && (
+        {promoOpen && !promoApplied && !addGuestsMode && !invitedMode && (
           <div style={{ padding: '4px 0 10px' }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <div style={{ flex: 1, height: 42, padding: '0 12px', borderRadius: 10, border: `1px solid ${promoError ? DANGER : HAIR}`, background: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -986,25 +1008,37 @@ export default function ConfirmReservation() {
         )}
 
         <div style={{ padding: '4px 0 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {!addGuestsMode && (promoApplied || guests.length > 0 || creditApplied > 0) && (
+          {invitedMode && guests.length > 0 && (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
+                <span>Precio{guests.length > 1 ? ` × ${guests.length}` : ''}</span>
+                <span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{fmt(guestsTotal)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: '#1F6B36' }}>
+                <span>Descuento Invitado</span>
+                <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>−{fmt(guestsTotal)}</span>
+              </div>
+            </>
+          )}
+          {!invitedMode && !addGuestsMode && (promoApplied || guests.length > 0 || creditApplied > 0) && (
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
               <span>Titular</span>
               <span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{unitStr}</span>
             </div>
           )}
-          {!addGuestsMode && promoApplied && (
+          {!invitedMode && !addGuestsMode && promoApplied && (
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: '#1F6B36' }}>
               <span>Descuento{promoApplied.kind === 'percent' ? ` · ${promoApplied.value}%` : ''}</span>
               <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>−{fmt(promoApplied.discount)}</span>
             </div>
           )}
-          {guests.length > 0 && (
+          {!invitedMode && guests.length > 0 && (
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
               <span>Invitados ({guests.length})</span>
               <span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{fmt(guestsTotal)}</span>
             </div>
           )}
-          {creditApplied > 0 && (
+          {!invitedMode && creditApplied > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: '#1F6B36' }}>
                 <span>Crédito aplicado</span>
@@ -1013,13 +1047,13 @@ export default function ConfirmReservation() {
               <div style={{ fontSize: 11, color: SUB }}>Saldo disponible: {fmt(creditBalance)}</div>
             </div>
           )}
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, paddingTop: (promoApplied || guests.length > 0 || creditApplied > 0) ? 8 : 0, borderTop: (promoApplied || guests.length > 0 || creditApplied > 0) ? `1px solid ${HAIR}` : 'none', marginTop: (promoApplied || guests.length > 0 || creditApplied > 0) ? 4 : 0, fontSize: 15, fontWeight: 700, color: TEXT, letterSpacing: -0.1 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, paddingTop: (invitedMode ? guests.length > 0 : promoApplied || guests.length > 0 || creditApplied > 0) ? 8 : 0, borderTop: (invitedMode ? guests.length > 0 : promoApplied || guests.length > 0 || creditApplied > 0) ? `1px solid ${HAIR}` : 'none', marginTop: (invitedMode ? guests.length > 0 : promoApplied || guests.length > 0 || creditApplied > 0) ? 4 : 0, fontSize: 15, fontWeight: 700, color: TEXT, letterSpacing: -0.1 }}>
             <span>Total</span>
             <span style={{ whiteSpace: 'nowrap' }}>{totalStr}</span>
           </div>
         </div>
 
-        <CtaButton onPress={handleConfirm} disabled={(addGuestsMode && guests.length === 0) || creditLoading || freeConfirming}>
+        <CtaButton onPress={handleConfirm} disabled={((addGuestsMode || invitedMode) && guests.length === 0) || creditLoading || freeConfirming}>
           {creditLoading ? (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
               <span style={{ width: 16, height: 16, borderRadius: '50%', border: '2.5px solid rgba(27,27,31,0.2)', borderTop: '2.5px solid #1B1B1F', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />

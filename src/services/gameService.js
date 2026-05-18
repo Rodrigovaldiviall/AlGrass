@@ -4,7 +4,6 @@ const ROSTER_KEY = 'pichanga_game_rosters';
 
 export async function testConnection() {
   const result = await supabase.from('games').select('*');
-  console.log(result.data);
 }
 
 // Convierte "HH:MM:SS" (Postgres time) → { time: "H:MM", ampm: "AM"|"PM" }
@@ -104,13 +103,8 @@ export async function getGames() {
     .eq('type', 'match')
     .eq('status', 'published');
 
-  console.log('[getGames] raw data:', data, '| error:', error);
   if (error) { console.error('getGames:', error); return []; }
-
-  const mapped = data.map(mapGame);
-
-  console.log('[getGames] mapped result:', mapped.length, 'games', mapped[0] ?? '(empty)');
-  return mapped;
+  return data.map(mapGame);
 }
 
 function readRosters() {

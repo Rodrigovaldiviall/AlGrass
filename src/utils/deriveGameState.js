@@ -1,14 +1,15 @@
+import { parsePeruDateTime } from '../lib/peruTime';
+
 /**
- * Parse a game's start time from canonical DB fields.
+ * Parse a game's start time as a UTC Date anchored to Lima time (UTC-5).
  * @param {string} dateKey  "YYYY-MM-DD"
- * @param {string} time24   "HH:MM" or "HH:MM:SS" (Postgres time, 24h)
+ * @param {string} time24   "HH:MM" or "HH:MM:SS" (Postgres time, 24h Peru)
  */
 export function gameStartDate(dateKey, time24) {
   if (!dateKey || !time24) return null;
-  const [y, mo, d] = dateKey.split('-').map(Number);
-  const [h, m] = time24.split(':').map(Number);
-  if ([y, mo, d, h, m].some(isNaN)) return null;
-  return new Date(y, mo - 1, d, h, m);
+  const hhmm = time24.slice(0, 5); // "HH:MM" from "HH:MM:SS"
+  const d = parsePeruDateTime(dateKey, hhmm);
+  return isNaN(d.getTime()) ? null : d;
 }
 
 export function gameEndDate(dateKey, time24, durationMin) {

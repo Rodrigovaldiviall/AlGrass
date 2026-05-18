@@ -65,6 +65,15 @@ export const GAMES = [
   { id: 'g30', city: 'Lima', dateKey: ymd(new Date(2026, 4, 2)), time: '7:00',  ampm: 'PM', field: 'Miraflores', format: '7v7', filmed: true,  covered: false, womenOnly: false, openSpots: 3, price: 10, parking: false, showers: false, master45: false },
 ];
 
+// Derive time24 ("HH:MM") from 12h display fields — matches parsePeruDateTime's expected format.
+GAMES.forEach(g => {
+  const [h, m = '00'] = g.time.split(':');
+  let hh = parseInt(h, 10);
+  if (g.ampm === 'PM' && hh !== 12) hh += 12;
+  if (g.ampm === 'AM' && hh === 12) hh = 0;
+  g.time24 = `${String(hh).padStart(2, '0')}:${m}`;
+});
+
 export const FIELD_INFO = {
   'Xaloc':              { address: ['Xaloc - Cayma',      'Av. Ejemplo 123'] },
   'La Satalia':         { address: ['La Satalia',          'Carrer Eivissa 12'] },

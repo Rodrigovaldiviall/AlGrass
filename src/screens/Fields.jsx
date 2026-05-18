@@ -427,7 +427,8 @@ function FieldRow({ f, last, onPress, userBooked }) {
 }
 
 function DateHeader({ dateKey, refEl }) {
-  const d = new Date(dateKey + 'T00:00:00');
+  const [_y, _mo, _d] = dateKey.split('-').map(Number);
+  const d = new Date(_y, _mo - 1, _d);
   return (
     <div data-date-header={dateKey} ref={refEl} style={{ padding: '14px 16px 8px', color: SUB, fontSize: 13.5, fontWeight: 500, background: '#fff' }}>
       {headerLabel(d)}
@@ -491,7 +492,8 @@ export default function Fields() {
     if (!flt.noDisp         && f.reserved)  return false;
     if (flt.formatos.length && !flt.formatos.includes(f.format)) return false;
     if (flt.dias.length) {
-      const dow = new Date(f.dateKey + 'T00:00:00').getDay();
+      const [_y, _mo, _d] = f.dateKey.split('-').map(Number);
+      const dow = new Date(_y, _mo - 1, _d).getDay();
       if (!flt.dias.includes(dow)) return false;
     }
     if (flt.horarios.length) {

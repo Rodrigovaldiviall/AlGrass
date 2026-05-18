@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, DANGER, RED, WHATSAPP_NUMBER } from '../constants';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -11,7 +11,7 @@ import { getActivePlayers, getRoster, removePlayers, setTitularCanceled as markT
 import TabBar from '../components/TabBar';
 import RatingBlock from '../components/RatingBlock';
 import { useAuth } from '../context/AuthContext';
-import { cancelGamePlayer, cancelGuestPlayers } from '../services/reservationService';
+import { cancelGamePlayer, cancelGuestPlayers, cancelInvitedPlayers } from '../services/reservationService';
 import { supabase } from '../lib/supabase';
 import { deriveGameState, requiredPlayers, gameStartDate, gameEndDate, isGamePast, isGameStarted, deriveAttendance } from '../utils/deriveGameState';
 
@@ -38,7 +38,7 @@ function buildGame(sel) {
   if (!sel) {
     return {
       field: 'Xaloc', openSpots: 2, totalSpots: 14,
-      date: 'Sáb 25 Abr 2026', time: '7:30 PM',
+      date: 'Sáb 25 Abr 2026', time: '7:30', ampm: 'PM',
       duration: GAME_DEFAULTS.duration, fieldNumber: GAME_DEFAULTS.fieldNumber,
       address: FIELD_INFO['Xaloc'].address,
       chips: [
@@ -76,7 +76,8 @@ function buildGame(sel) {
     openSpots: sel.openSpots ?? 0,
     totalSpots: total,
     date: sel.date || formatDateEs(sel.dateKey),
-    time: `${sel.time || '7:00'} ${sel.ampm || 'PM'}`,
+    time: sel.time || '7:00',
+    ampm: sel.ampm || 'PM',
     duration: `${sel.durationMin ?? 60} min`,
     fieldNumber: sel.fieldName || GAME_DEFAULTS.fieldNumber,
     address,
@@ -406,24 +407,46 @@ function WaitlistRow({ inList, onToggle }) {
 }
 
 // ── Attendance badge — all state derived from checked_in_at + game timing
-function AttendanceBadge({ checkedInAt, gameStart, isPast, canMark, onMark }) {
+function ResetBtn({ onReset }) {
+  return (
+    <button
+      onClick={e => { e.stopPropagation(); onReset(); }}
+      style={{
+        flexShrink: 0, width: 18, height: 18, borderRadius: '50%',
+        border: 'none', background: 'rgba(0,0,0,0.08)',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        cursor: 'pointer', outline: 'none', padding: 0,
+        WebkitTapHighlightColor: 'transparent',
+      }}>
+      <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+        <path d="M1.5 1.5l5 5M6.5 1.5l-5 5" stroke={SUB} strokeWidth="1.5" strokeLinecap="round"/>
+      </svg>
+    </button>
+  );
+}
+
+function AttendanceBadge({ checkedInAt, gameStart, isPast, canMark, onMark, canReset, onReset }) {
   const att = deriveAttendance(checkedInAt, gameStart, isPast);
   if (att) {
     if (att.status === 'a_tiempo') {
       return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
             <path d="M2 6.5l2.5 2.5 5.5-5.5" stroke={GREEN} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
           <span style={{ fontSize: 11, fontWeight: 700, color: GREEN, whiteSpace: 'nowrap' }}>A tiempo</span>
+          {canReset && <ResetBtn onReset={onReset} />}
         </div>
       );
     }
     if (att.status === 'tarde') {
       return (
-        <span style={{ fontSize: 11, fontWeight: 700, color: ORANGE, whiteSpace: 'nowrap', flexShrink: 0 }}>
-          {att.minsLate} min tarde
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: ORANGE, whiteSpace: 'nowrap' }}>
+            {att.minsLate} min tarde
+          </span>
+          {canReset && <ResetBtn onReset={onReset} />}
+        </div>
       );
     }
     return (
@@ -608,7 +631,7 @@ function PlayerModal({ player, onClose }) {
 }
 
 // ── ModifySheet
-function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail }) {
+function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0 }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
@@ -618,34 +641,141 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
       <path d="M1 1l6 6-6 6" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   );
+  const canAdd = isHost ? (canAddPlayers && canAddGuests) : canAddGuests;
   return (
     <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease' }}>
       <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(20px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
         <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 20px' }} />
-        <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 16, textAlign: 'center', letterSpacing: -0.2 }}>Gestionar la reserva</div>
-        <button onClick={onPaymentDetail} style={rowStyle}>
-          <div style={{ flex: 1 }}>
-            <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Ver detalles del pago</span>
-          </div>
-          {chevron()}
-        </button>
+        <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 16, textAlign: 'center', letterSpacing: -0.2 }}>
+          {isHost ? 'Gestionar el partido' : 'Gestionar la reserva'}
+        </div>
+        {!isHost && (
+          <button onClick={onPaymentDetail} style={rowStyle}>
+            <div style={{ flex: 1 }}>
+              <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Ver detalles del pago</span>
+            </div>
+            {chevron()}
+          </button>
+        )}
         <button
-          onClick={canAddGuests ? onAddGuests : undefined}
-          style={{ ...rowStyle, cursor: canAddGuests ? 'pointer' : 'default', opacity: canAddGuests ? 1 : 0.45 }}>
+          onClick={canAdd ? onAddGuests : undefined}
+          style={{ ...rowStyle, cursor: canAdd ? 'pointer' : 'default', opacity: canAdd ? 1 : 0.45 }}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Agregar jugadores</span>
-            <span style={{ fontSize: 13, color: canAddGuests ? SUB : '#BEBEC8' }}>
-              · {canAddGuests ? `${openSpots} ${openSpots === 1 ? 'cupo disponible' : 'cupos disponibles'}` : 'Sin cupos'}
+            <span style={{ fontSize: 13, color: canAdd ? SUB : '#BEBEC8' }}>
+              {isHost && !canAddPlayers
+                ? '· Solo desde 1h antes'
+                : canAdd
+                  ? `· ${openSpots} ${openSpots === 1 ? 'cupo disponible' : 'cupos disponibles'}`
+                  : '· Sin cupos'}
             </span>
           </div>
-          {canAddGuests && chevron()}
+          {canAdd && chevron()}
         </button>
-        <button onClick={onCancel} style={{ ...rowStyle, marginBottom: 0 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: DANGER }}>Cancelar reserva</div>
+        {isHost ? (
+          invitedCount > 0 && (
+            <button onClick={onCancel} style={{ ...rowStyle, marginBottom: 0 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 15, fontWeight: 600, color: DANGER }}>Cancelar jugadores invitados</div>
+                <div style={{ fontSize: 12.5, color: SUB, marginTop: 1 }}>{invitedCount} {invitedCount === 1 ? 'jugador invitado' : 'jugadores invitados'}</div>
+              </div>
+              {chevron(DANGER + '80')}
+            </button>
+          )
+        ) : (
+          <button onClick={onCancel} style={{ ...rowStyle, marginBottom: 0 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: DANGER }}>Cancelar reserva</div>
+            </div>
+            {chevron(DANGER + '80')}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── HostCancelInvitedSheet
+function HostCancelInvitedSheet({ gameId, invitedPlayers, unitPrice = 0, onClose, onDone }) {
+  const [open,    setOpen]    = useState(false);
+  const [checked, setChecked] = useState(new Set());
+  const [step,    setStep]    = useState('select');
+
+  useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
+  function dismiss() { if (step === 'processing') return; setOpen(false); setTimeout(onClose, 220); }
+
+  function toggle(uid) {
+    setChecked(prev => { const n = new Set(prev); n.has(uid) ? n.delete(uid) : n.add(uid); return n; });
+  }
+
+  async function confirm() {
+    if (!checked.size) return;
+    setStep('processing');
+    const { error } = await cancelInvitedPlayers(gameId, [...checked], unitPrice);
+    if (error) { setStep('select'); return; }
+    setTimeout(() => { setStep('done'); setTimeout(onDone, 1200); }, 600);
+  }
+
+  const checkboxStyle = active => ({
+    width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+    border: `2px solid ${active ? DANGER : '#C7C7CC'}`,
+    background: active ? DANGER : '#fff',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  });
+  const checkMark = (
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+      <path d="M2 5l2.5 2.5L8 2.5" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+
+  return (
+    <div className="sheet-overlay" onClick={step !== 'processing' ? dismiss : undefined}
+      style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease' }}>
+      <div className="sheet-panel" onClick={e => e.stopPropagation()}
+        style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+
+        {step === 'done' ? (
+          <div style={{ padding: '32px 20px calc(32px + env(safe-area-inset-bottom))', textAlign: 'center' }}>
+            <div style={{ fontSize: 17, fontWeight: 700, color: TEXT }}>Cancelación completada</div>
+            <div style={{ fontSize: 13, color: SUB, marginTop: 6 }}>
+              {checked.size === 1 ? '1 jugador removido del partido' : `${checked.size} jugadores removidos del partido`}
+            </div>
           </div>
-          {chevron(DANGER + '80')}
-        </button>
+        ) : (
+          <>
+            <div style={{ padding: '20px 16px 0', flexShrink: 0 }}>
+              <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 16px' }} />
+              <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, letterSpacing: -0.2 }}>Cancelar jugadores invitados</div>
+              <div style={{ fontSize: 13, color: SUB, marginTop: 4, marginBottom: 10 }}>Sin reembolso — estos jugadores no realizaron pago</div>
+            </div>
+            <div className="no-sb" style={{ overflowY: 'auto', flex: 1 }}>
+              {invitedPlayers.map(p => {
+                const isChecked = checked.has(p.user_id);
+                const hue = p.avatar_hue ?? ([...(p.full_name || '·')].reduce((a, c) => a + c.charCodeAt(0), 0) % 360);
+                const initials = (p.full_name || '?').split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
+                return (
+                  <button key={p.user_id} onClick={() => toggle(p.user_id)}
+                    style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, borderBottom: `1px solid ${HAIR}`, fontFamily: 'inherit', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                    <span style={checkboxStyle(isChecked)}>{isChecked && checkMark}</span>
+                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: `hsl(${hue} 35% 92%)`, color: `hsl(${hue} 45% 35%)`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{initials}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14.5, fontWeight: 600, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.full_name || 'Jugador'}</div>
+                      {p.user_code && <div style={{ fontSize: 12, color: BLUE, marginTop: 1 }}>@{p.user_code}</div>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ padding: '14px 16px calc(20px + env(safe-area-inset-bottom))', flexShrink: 0 }}>
+              <button
+                onClick={confirm}
+                disabled={!checked.size || step === 'processing'}
+                style={{ width: '100%', height: 48, borderRadius: 14, background: checked.size ? DANGER : '#F2F2F4', color: checked.size ? '#fff' : SUB, border: 'none', cursor: checked.size ? 'pointer' : 'default', fontSize: 15, fontWeight: 700, fontFamily: 'inherit', transition: 'background .15s, color .15s', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                {step === 'processing' ? 'Cancelando…' : `Cancelar ${checked.size > 0 ? `(${checked.size})` : ''}`}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -999,6 +1129,7 @@ export default function GameDetail() {
   const [modifyOpen, setModifyOpen] = useState(false);
   const [cancelOpen,  setCancelOpen]  = useState(false);
   const [paymentDetailOpen, setPaymentDetailOpen] = useState(false);
+  const [hostCancelInvitedOpen, setHostCancelInvitedOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [hostProfile, setHostProfile] = useState(null);
@@ -1041,7 +1172,7 @@ export default function GameDetail() {
     if (!supabase || !gameId) return;
     supabase
       .from('game_players')
-      .select('user_id, payer_id, status, joined_at, checked_in_at, users:user_id(full_name, user_code, avatar_hue, preferred_position, birth_date)')
+      .select('user_id, payer_id, status, joined_at, checked_in_at, reservation_type, invited_by_user_id, users:user_id(full_name, user_code, avatar_hue, preferred_position, birth_date)')
       .eq('game_id', gameId)
       .then(({ data, error }) => {
         if (error) { console.error('[GameDetail] game_players fetch error:', error); return; }
@@ -1052,12 +1183,22 @@ export default function GameDetail() {
           avatar_hue:         p.users?.avatar_hue         ?? null,
           preferred_position: p.users?.preferred_position ?? null,
           birth_date:         p.users?.birth_date         ?? null,
+          reservation_type:   p.reservation_type          ?? null,
+          invited_by_user_id: p.invited_by_user_id        ?? null,
         }));
         setSbRoster(rows);
       });
   }
 
   useEffect(() => { fetchRoster(); }, [gameId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-fetch roster when game transitions to past — ensures players see the final
+  // attendance state even if they had GameDetail open before the host marked.
+  const wasPastRef = useRef(isPastGame);
+  useEffect(() => {
+    if (isPastGame && !wasPastRef.current) fetchRoster();
+    wasPastRef.current = isPastGame;
+  }, [isPastGame]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function markAttendance(player) {
     if (!gameStart || !supabase || !player.user_id) return;
@@ -1072,11 +1213,36 @@ export default function GameDetail() {
     setSbRoster(prev => prev.map(r =>
       r.user_id === player.user_id ? { ...r, checked_in_at: checkedInAt } : r
     ));
+    // Persist host presence silently on first mark — no-op if already set
+    supabase.from('games')
+      .update({ host_checked_in_at: checkedInAt })
+      .eq('id', gameId)
+      .is('host_checked_in_at', null);
+  }
+
+  async function resetAttendance(player) {
+    if (!supabase || !player.user_id) return;
+    const { error } = await supabase
+      .from('game_players')
+      .update({ checked_in_at: null })
+      .eq('game_id', gameId)
+      .eq('user_id', player.user_id)
+      .eq('status', 'confirmed');
+    if (error) { console.warn('[attendance-reset]', error.message); return; }
+    setSbRoster(prev => prev.map(r =>
+      r.user_id === player.user_id ? { ...r, checked_in_at: null } : r
+    ));
   }
 
 
   // guests that current user paid for — same derivation as guestsInRoster, scoped to me as payer
   const guestOwnGuests = guestsInRoster;
+
+  // players the host invited (reservation_type = 'invited', invited by current host)
+  const invitedByHost = useMemo(() =>
+    confirmedRoster.filter(p => p.reservation_type === 'invited' && p.invited_by_user_id === user?.id),
+    [confirmedRoster, user?.id]
+  );
 
   // user_id of whoever invited the current user (for "Invitado por" profile card)
   const payerUserId = useMemo(() => {
@@ -1099,22 +1265,50 @@ export default function GameDetail() {
   function handleAddGuests() {
     setModifyOpen(false);
     const addGuestPrice = sbGame?.price ?? g.paymentBreakdown?.unitPrice ?? g.priceNumber;
-    navigate('/checkout', { state: {
-      game: {
-        id:          gameId,
-        field:       g.field,
-        date:        g.date,
-        time:        g.time,
-        format:      g.format,
-        price:       `S/. ${addGuestPrice.toFixed(2)}`,
-        priceNumber: addGuestPrice,
-        currency:    'S/.',
-        source:      'pichanga',
-        addGuestsMode: true,
-        maxNewGuests:  liveOpenSpots,
-      },
-      user: { name: user?.name || 'Usuario', email: user?.email || '' },
-    }});
+    if (isHost) {
+      navigate('/checkout', { state: {
+        game: {
+          id:           gameId,
+          field:        g.field,
+          date:         g.date,
+          dateKey:      g.dateKey,
+          time:         g.time,
+          ampm:         g.ampm,
+          time24:       g.time24,
+          durationMin:  g.durationMin,
+          format:       g.format,
+          price:        `S/. ${addGuestPrice.toFixed(2)}`,
+          priceNumber:  addGuestPrice,
+          currency:     'S/.',
+          source:       'pichanga',
+          invitedMode:  true,
+          maxNewGuests: liveOpenSpots,
+          hostUserId:   user?.id,
+        },
+        user: { name: user?.name || 'Usuario', email: user?.email || '' },
+      }});
+    } else {
+      navigate('/checkout', { state: {
+        game: {
+          id:            gameId,
+          field:         g.field,
+          date:          g.date,
+          dateKey:       g.dateKey,
+          time:          g.time,
+          ampm:          g.ampm,
+          time24:        g.time24,
+          durationMin:   g.durationMin,
+          format:        g.format,
+          price:         `S/. ${addGuestPrice.toFixed(2)}`,
+          priceNumber:   addGuestPrice,
+          currency:      'S/.',
+          source:        'pichanga',
+          addGuestsMode: true,
+          maxNewGuests:  liveOpenSpots,
+        },
+        user: { name: user?.name || 'Usuario', email: user?.email || '' },
+      }});
+    }
   }
 
   function handleCancelDone() {
@@ -1148,7 +1342,7 @@ export default function GameDetail() {
           showShare={(!isFull || isBooked) && !isPastGame}
           onShare={() => {
             if (!gameId) return;
-            shareOrCopy({ url: `${window.location.origin}/game/${gameId}`, title: g.field, text: `${g.date} · ${g.time}`, onCopied: () => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); } });
+            shareOrCopy({ url: `${window.location.origin}/game/${gameId}`, title: g.field, text: `${g.date} · ${g.time} ${g.ampm}`, onCopied: () => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); } });
           }} />
         <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', background: '#fff' }}>
           <HeroImage />
@@ -1203,7 +1397,7 @@ export default function GameDetail() {
             <InfoRow
               icon={I.cal()}
               primary={g.date}
-              secondary={`${g.time} · ${g.duration}`}
+              secondary={`${g.time} ${g.ampm} · ${g.duration}`}
               action={(isHost || isBooked || isGuest || guestsInRoster.length > 0) ? <WAChatButton /> : undefined}
             />
             <InfoRow
@@ -1288,6 +1482,8 @@ export default function GameDetail() {
                         isPast={isPastGame}
                         canMark={attendanceOpen && !p.checked_in_at && isHost}
                         onMark={() => markAttendance(p)}
+                        canReset={attendanceOpen && !!p.checked_in_at && isHost}
+                        onReset={() => resetAttendance(p)}
                       />
                     )}
                   </div>
@@ -1303,12 +1499,12 @@ export default function GameDetail() {
         )}
         {isHost ? (
           /* ── Host action bar ───────────────────────────── */
-          hostWindowOpen && (
+          !isPastGame && (
             <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '12px 16px' }}>
               <button
                 onClick={() => setModifyOpen(true)}
                 style={{ width: '100%', height: 46, borderRadius: 14, background: ORANGE, color: '#1B1B1F', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 700, fontFamily: 'inherit', letterSpacing: -0.1, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-                Agregar jugadores · {liveOpenSpots} cupos
+                Gestionar el partido
               </button>
             </div>
           )
@@ -1351,7 +1547,11 @@ export default function GameDetail() {
                   id:          g.id,
                   field:       g.field,
                   date:        g.date,
+                  dateKey:     g.dateKey,
                   time:        g.time,
+                  ampm:        g.ampm,
+                  time24:      g.time24,
+                  durationMin: g.durationMin,
                   format:      g.format,
                   price:       g.price,
                   priceNumber: g.priceNumber,
@@ -1375,8 +1575,20 @@ export default function GameDetail() {
           openSpots={liveOpenSpots}
           onClose={() => setModifyOpen(false)}
           onAddGuests={handleAddGuests}
-          onCancel={() => { setModifyOpen(false); setCancelOpen(true); }}
+          onCancel={() => { setModifyOpen(false); isHost ? setHostCancelInvitedOpen(true) : setCancelOpen(true); }}
           onPaymentDetail={() => { setModifyOpen(false); setPaymentDetailOpen(true); }}
+          isHost={isHost}
+          canAddPlayers={hostWindowOpen}
+          invitedCount={invitedByHost.length}
+        />
+      )}
+      {hostCancelInvitedOpen && (
+        <HostCancelInvitedSheet
+          gameId={gameId}
+          invitedPlayers={invitedByHost}
+          unitPrice={liveUnitPrice}
+          onClose={() => setHostCancelInvitedOpen(false)}
+          onDone={() => { setHostCancelInvitedOpen(false); fetchRoster(); }}
         />
       )}
       {paymentDetailOpen && (

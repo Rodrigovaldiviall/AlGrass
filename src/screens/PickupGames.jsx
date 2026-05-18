@@ -45,16 +45,6 @@ function parseHour(time, ampm) {
   return h;
 }
 
-function formatGameTime(t) {
-  if (!t) return { hhmm: '--:--', ampm: '' };
-  const [hStr, mStr] = t.split(':');
-  let h = parseInt(hStr, 10);
-  const m = mStr.padStart(2, '0');
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  if (h > 12) h -= 12;
-  if (h === 0) h = 12;
-  return { hhmm: `${h}:${m}`, ampm };
-}
 
 // ── Filter panel constants ─────────────────────────────────────────────────
 
@@ -533,8 +523,8 @@ function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount
         WebkitTapHighlightColor: 'transparent', outline: 'none', userSelect: 'none',
       }}>
       <div style={{ width: 52, flexShrink: 0, textAlign: 'center', borderRight: `1px solid ${HAIR}`, marginRight: 6 }}>
-        <div style={{ fontSize: 'var(--gm-time, 15px)', fontWeight: 600, color: TEXT, lineHeight: 1.1 }}>{formatGameTime(g.time).hhmm}</div>
-        <div style={{ fontSize: 'var(--gm-ampm, 12px)', fontWeight: 500, color: SUB, lineHeight: 1.1, marginTop: 2 }}>{formatGameTime(g.time).ampm}</div>
+        <div style={{ fontSize: 'var(--gm-time, 15px)', fontWeight: 600, color: TEXT, lineHeight: 1.1 }}>{g.time}</div>
+        <div style={{ fontSize: 'var(--gm-ampm, 12px)', fontWeight: 500, color: SUB, lineHeight: 1.1, marginTop: 2 }}>{g.ampm}</div>
       </div>
       <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
         <div style={{ fontSize: 'var(--gm-title, 16px)', fontWeight: 600, color: TEXT, lineHeight: 1.2, letterSpacing: -0.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.field}</div>
@@ -554,7 +544,8 @@ function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount
 }
 
 function DateHeader({ dateKey, refEl }) {
-  const d = new Date(dateKey + 'T00:00:00');
+  const [_y, _mo, _d] = dateKey.split('-').map(Number);
+  const d = new Date(_y, _mo - 1, _d);
   return (
     <div data-date-header={dateKey} ref={refEl} style={{
       padding: '14px 16px 8px', color: SUB, fontSize: 'var(--gm-dhr, 13.5px)', fontWeight: 500,
@@ -640,7 +631,6 @@ export default function PickupGames() {
   const [loading, setLoading] = useState(_gamesCache.length === 0);
   useEffect(() => {
     getGames().then(data => {
-      console.log('[PickupGames] getGames resolved:', data.length, 'games');
       _gamesCache = data; setGames(data); setLoading(false);
     });
   }, []);
@@ -772,7 +762,6 @@ export default function PickupGames() {
   }
 
   const filteredGames = useMemo(() => {
-    console.log('[PickupGames] filter — games.length:', games.length, '| userCity:', userCity, '| flt:', JSON.stringify(flt));
     const result = games.filter(g => {
       if (isGameStarted(g.dateKey, g.time24)) return false;   // now >= game_start → out of marketplace
       if (flt.organiza && g.hostUserId !== user?.id) return false;
@@ -786,7 +775,8 @@ export default function PickupGames() {
       if (flt.minSpots !== null && (liveOpenSpotsMap.get(g.id) ?? g.openSpots) < flt.minSpots) return false;
       if (flt.formatos.length && !flt.formatos.includes(g.format)) return false;
       if (flt.dias.length) {
-        const dow = new Date(g.dateKey + 'T00:00:00').getDay();
+        const [_y, _mo, _d] = g.dateKey.split('-').map(Number);
+        const dow = new Date(_y, _mo - 1, _d).getDay();
         if (!flt.dias.includes(dow)) return false;
       }
       if (flt.horarios.length) {
@@ -799,7 +789,6 @@ export default function PickupGames() {
       }
       return true;
     });
-    console.log('[PickupGames] filteredGames.length:', result.length, '| sample dateKeys:', result.slice(0,3).map(g => g.dateKey));
     return result;
   }, [flt, userCity, games, liveOpenSpotsMap]);
 
@@ -809,6 +798,8 @@ export default function PickupGames() {
       if (!map.has(g.dateKey)) map.set(g.dateKey, []);
       map.get(g.dateKey).push(g);
     }
+    const toMins = t24 => { const [h, m] = (t24 ?? '00:00').split(':').map(Number); return h * 60 + m; };
+    for (const games of map.values()) games.sort((a, b) => toMins(a.time24) - toMins(b.time24));
     return [...map.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1);
   }, [filteredGames]);
 

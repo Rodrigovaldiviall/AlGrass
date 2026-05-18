@@ -120,7 +120,7 @@ function fmtDateKey(dateKey) {
 function waitlistGameToRow(gameId) {
   const g = GAMES.find(gm => gm.id === gameId);
   if (!g) return null;
-  return { id: g.id, date: fmtDateKey(g.dateKey), time: g.time, ampm: g.ampm, field: g.field, format: g.format || '7v7', status: 'waitlist', type: 'game', price: g.price != null ? `S/. ${Number(g.price).toFixed(2)}` : null, openSpots: g.openSpots ?? 0 };
+  return { id: g.id, dateKey: g.dateKey, time24: g.time24 ?? null, date: fmtDateKey(g.dateKey), time: g.time, ampm: g.ampm, field: g.field, format: g.format || '7v7', status: 'waitlist', type: 'game', price: g.price != null ? `S/. ${Number(g.price).toFixed(2)}` : null, openSpots: g.openSpots ?? 0 };
 }
 const RATINGS_KEY  = 'pichanga_ratings';
 const SHOWN_KEY    = 'pichanga_shown_confirmations';
@@ -161,6 +161,8 @@ function deriveGuestGames(reservations) {
             const sub = roster.guestSubBreakdowns[myCode];
             rows.push({
               id: `${gameId}_gc_${myCode}`, gameId,
+              dateKey: payerGame.dateKey ?? null,
+              time24:  payerGame.time24  ?? null,
               date: payerGame.date, time: payerGame.time, ampm: payerGame.ampm,
               field: payerGame.field, format: payerGame.format, type: payerGame.type || 'game',
               price: `S/. ${(mySubGuests.length * (sub.unitPrice || 0)).toFixed(2)}`,
@@ -177,6 +179,8 @@ function deriveGuestGames(reservations) {
       rows.push({
         id:        `${gameId}_g_${myEntry.id}`,
         gameId,
+        dateKey:   payerGame.dateKey ?? null,
+        time24:    payerGame.time24  ?? null,
         date:      payerGame.date,
         time:      payerGame.time,
         ampm:      payerGame.ampm,
@@ -217,6 +221,8 @@ function deriveCanceledWithGuestsGames() {
         : null;
       rows.push({
         id: gameId,
+        dateKey: g.dateKey,
+        time24: g.time24 ?? null,
         date: fmtDateKey(g.dateKey),
         time: g.time,
         ampm: g.ampm,
@@ -329,9 +335,12 @@ function confirmedGameToRow(cg) {
   }
   return {
     id: gameId ?? ('c-' + Date.now()),
+    dateKey:     cg.dateKey  ?? null,
+    time24:      cg.time24   ?? null,
+    durationMin: cg.durationMin ?? null,
     date: cg.date || '',
     time: parts[0] || cg.time || '',
-    ampm: parts[1] || '',
+    ampm: cg.ampm || parts[1] || '',
     field: cg.field || 'Cancha',
     format: cg.format || '7v7',
     status: 'reserved',
