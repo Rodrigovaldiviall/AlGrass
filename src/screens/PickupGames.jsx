@@ -2,31 +2,21 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, RED, GREEN, ORANGE } from '../constants';
 import I from '../icons';
-import { DATE_WINDOW, TODAY_KEY, TOMORROW_KEY, ymd } from '../data/games';
+import { DATE_WINDOW, TODAY_KEY, ymd } from '../data/games';
 import { getGames } from '../services/gameService';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { deriveGameState, requiredPlayers, isGameStarted } from '../utils/deriveGameState';
 import { GameMetaLine } from '../components/GameMetaLine';
-import { abbreviateName } from '../utils/format';
+import { abbreviateName, formatDateLabel } from '../utils/format';
 
-const DOW_ES   = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-const MONTH_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+const DOW_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
 function chipLabel(d) {
   const k = ymd(d);
   if (k === TODAY_KEY) return { top: 'Hoy', bottom: d.getDate() };
   return { top: DOW_ES[d.getDay()], bottom: d.getDate() };
-}
-
-function headerLabel(d) {
-  const dayName = DOW_ES[d.getDay()];
-  const base = `${dayName} ${d.getDate()} ${MONTH_ES[d.getMonth()]} ${d.getFullYear()}`;
-  const k = ymd(d);
-  if (k === TODAY_KEY) return `Hoy, ${base}`;
-  if (k === TOMORROW_KEY) return `Mañana, ${base}`;
-  return base;
 }
 
 // ── Filter state ───────────────────────────────────────────────────────────
@@ -551,7 +541,7 @@ function DateHeader({ dateKey, refEl }) {
       padding: '14px 16px 8px', color: SUB, fontSize: 'var(--gm-dhr, 13.5px)', fontWeight: 500,
       background: '#fff',
     }}>
-      {headerLabel(d)}
+      {formatDateLabel(ymd(d))}
     </div>
   );
 }

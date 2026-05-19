@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, TAB_INACTIVE, ORANGE } from '../constants';
 import I from '../icons';
@@ -10,13 +11,26 @@ const TABS = [
   { id: 'perfil',         icon: I.profile, label: 'Perfil',         route: '/profile' },
 ];
 
-function tabFromPath(pathname, backPath) {
+// Routes whose pathname exactly equals the key are "root" screens for that tab.
+const ROOT_ROUTES = {
+  '/games':         'partidos',
+  '/fields':        'campos',
+  '/notifications': 'notificaciones',
+  '/profile':       'perfil',
+};
+
+const SESSION_KEY = 'algr_sidebar_ctx';
+
+function tabFromPath(pathname) {
+  // Exact root match
+  if (ROOT_ROUTES[pathname]) return ROOT_ROUTES[pathname];
+  // Prefix-rooted sub-paths (e.g. /profile/x, /fields/x)
   if (pathname.startsWith('/profile'))       return 'perfil';
   if (pathname.startsWith('/notifications')) return 'notificaciones';
-  if ((pathname.startsWith('/game/') || pathname.startsWith('/field/')) && backPath === '/profile') return 'perfil';
   if (pathname.startsWith('/fields'))        return 'campos';
-  if (pathname.startsWith('/field/') && backPath === '/fields') return 'campos';
-  return 'partidos';
+  if (pathname.startsWith('/games'))         return 'partidos';
+  // All other sub-screens (/settings, /game/:id, /checkout, …): preserve last root context
+  return sessionStorage.getItem(SESSION_KEY) || 'partidos';
 }
 
 function getNotifBadge() {
@@ -38,10 +52,16 @@ function getUpcomingBadge() {
 }
 
 export default function Sidebar() {
-  const navigate  = useNavigate();
-  const { pathname, state } = useLocation();
-  const activeTab = tabFromPath(pathname, state?.backPath);
-  const isDetailScreen = pathname.startsWith('/game/') || pathname.startsWith('/field/');
+  const navigate     = useNavigate();
+  const { pathname } = useLocation();
+
+  const isRootScreen = Boolean(ROOT_ROUTES[pathname]);
+  const activeTab    = tabFromPath(pathname);
+
+  // Keep sessionStorage in sync with the current root screen.
+  useEffect(() => {
+    if (isRootScreen) sessionStorage.setItem(SESSION_KEY, ROOT_ROUTES[pathname]);
+  }, [pathname, isRootScreen]);
 
   const badges = { notificaciones: getNotifBadge(), perfil: getUpcomingBadge() };
 
@@ -68,10 +88,12 @@ export default function Sidebar() {
               onClick={() => {
                 haptic();
                 if (isActive) {
-                  if (isDetailScreen) {
-                    navigate(-1);
-                  } else {
+                  if (isRootScreen) {
+                    // Already on the root screen of this tab → scroll to top
                     window.dispatchEvent(new CustomEvent('tab-scroll-top', { detail: t.id }));
+                  } else {
+                    // On a sub-screen of this tab → return to its root
+                    navigate(t.route);
                   }
                 } else {
                   navigate(t.route);

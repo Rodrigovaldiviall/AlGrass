@@ -7,6 +7,7 @@ import { shareOrCopy } from '../utils/share';
 import { addPlayers as addPlayersToRoster, createRoster } from '../services/gameService';
 import { supabase } from '../lib/supabase';
 import { createReservation, createGamePlayer, createInvitedReservation, validatePromoCode, searchUsers, getWalletBalance } from '../services/reservationService';
+import ConfirmedOverlay from '../components/ConfirmedOverlay';
 
 // ── Player database & history ──────────────────────────────────────────────
 
@@ -231,7 +232,7 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
     : dirty ? 'Actualizar selección' : 'Agregar jugadores';
 
   return (
-    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
+    <div className="add-players-screen" style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
       <TopBar title="Agregar jugadores" onCancel={onCancel} rightNode={
         gameId ? (
           <button
@@ -658,6 +659,7 @@ export default function ConfirmReservation() {
   const [promoError, setPromoError]     = useState('');
   const [promoLoading, setPromoLoading] = useState(false);
   const [freeConfirming, setFreeConfirming] = useState(false);
+  const [showConfirmed, setShowConfirmed] = useState(false);
   const [creditLoading, setCreditLoading]   = useState(false);
 
   const [confirmedPlayerIds, setConfirmedPlayerIds] = useState(new Set());
@@ -748,7 +750,7 @@ export default function ConfirmReservation() {
         }
       }
       setFreeConfirming(false);
-      navigate(-1);
+      setShowConfirmed(true);
       return;
     }
     if (addGuestsMode) {
@@ -779,7 +781,8 @@ export default function ConfirmReservation() {
           guests.forEach(guest => createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice }));
         });
       }
-      navigate('/profile');
+      setFreeConfirming(false);
+      setShowConfirmed(true);
       return;
     }
     if (guests.length > 0) {
@@ -835,17 +838,19 @@ export default function ConfirmReservation() {
 
   if (subView === 'addplayers') {
     return (
-      <AddPlayersScreen
-        alreadySelected={guests}
-        onCancel={() => setSubView('confirm')}
-        onConfirm={selected => { setGuests(selected); setSubView('confirm'); }}
-        paidPlayers={paidPlayers}
-        maxGuests={guestSlots ?? 99}
-        spotsCount={(addGuestsMode || invitedMode) ? (maxNewGuests < 99 ? maxNewGuests : undefined) : rawSpots}
-        isInscribed={addGuestsMode || invitedMode}
-        gameId={game?.id}
-        rosterPlayerIds={rosterPlayerIds}
-      />
+      <div className="screen-shell" style={{ position: 'relative', overflow: 'hidden', background: '#fff' }}>
+        <AddPlayersScreen
+          alreadySelected={guests}
+          onCancel={() => setSubView('confirm')}
+          onConfirm={selected => { setGuests(selected); setSubView('confirm'); }}
+          paidPlayers={paidPlayers}
+          maxGuests={guestSlots ?? 99}
+          spotsCount={(addGuestsMode || invitedMode) ? (maxNewGuests < 99 ? maxNewGuests : undefined) : rawSpots}
+          isInscribed={addGuestsMode || invitedMode}
+          gameId={game?.id}
+          rosterPlayerIds={rosterPlayerIds}
+        />
+      </div>
     );
   }
 
@@ -1088,6 +1093,13 @@ export default function ConfirmReservation() {
             No cierres esta pantalla.
           </div>
         </div>
+      )}
+
+      {showConfirmed && (
+        <ConfirmedOverlay
+          game={{ field: game?.field, date: game?.date, amount: addGuestsMode ? total : null }}
+          onOK={() => { setShowConfirmed(false); if (addGuestsMode) navigate('/profile'); else navigate(-1); }}
+        />
       )}
     </div>
   );

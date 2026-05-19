@@ -9,10 +9,11 @@ import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
 import { useStaff } from '../context/StaffContext';
 import { supabase } from '../lib/supabase';
-import { abbreviateName, ensureUserCode } from '../utils/format';
+import { abbreviateName, ensureUserCode, formatDateLabel } from '../utils/format';
 import { GAMES } from '../data/games';
 import { deriveGameState, isGamePast, isGameStarted, gameStartDate } from '../utils/deriveGameState';
 import { GameMetaLine } from '../components/GameMetaLine';
+import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import { saveRating } from '../services/ratingService';
 
 const USER = {
@@ -109,18 +110,10 @@ const STORAGE_KEY  = 'pichanga_reservations';
 const WAITLIST_KEY_P = 'pichanga_waitlist';
 const CREDIT_KEY   = 'pichanga_credit';
 
-const _WL_DN = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-const _WL_MN = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-function fmtDateKey(dateKey) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey || '');
-  if (!m) return '';
-  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  return `${_WL_DN[d.getDay()]} ${d.getDate()} ${_WL_MN[d.getMonth()]} ${d.getFullYear()}`;
-}
 function waitlistGameToRow(gameId) {
   const g = GAMES.find(gm => gm.id === gameId);
   if (!g) return null;
-  return { id: g.id, dateKey: g.dateKey, time24: g.time24 ?? null, date: fmtDateKey(g.dateKey), time: g.time, ampm: g.ampm, field: g.field, format: g.format || '7v7', status: 'waitlist', type: 'game', price: g.price != null ? `S/. ${Number(g.price).toFixed(2)}` : null, openSpots: g.openSpots ?? 0 };
+  return { id: g.id, dateKey: g.dateKey, time24: g.time24 ?? null, date: formatDateLabel(g.dateKey), time: g.time, ampm: g.ampm, field: g.field, format: g.format || '7v7', status: 'waitlist', type: 'game', price: g.price != null ? `S/. ${Number(g.price).toFixed(2)}` : null, openSpots: g.openSpots ?? 0 };
 }
 const RATINGS_KEY  = 'pichanga_ratings';
 const SHOWN_KEY    = 'pichanga_shown_confirmations';
@@ -223,7 +216,7 @@ function deriveCanceledWithGuestsGames() {
         id: gameId,
         dateKey: g.dateKey,
         time24: g.time24 ?? null,
-        date: fmtDateKey(g.dateKey),
+        date: formatDateLabel(g.dateKey),
         time: g.time,
         ampm: g.ampm,
         field: g.field,
@@ -268,7 +261,7 @@ function sbReservationToRow(r) {
     dateKey:     g?.date_key    ?? null,
     time24:      g?.time        ?? null,
     durationMin: g?.duration_min ?? g?.fields?.duration_min ?? null,
-    date:        fmtDateKey(g?.date_key),
+    date:        formatDateLabel(g?.date_key),
     time,
     ampm,
     field:      g?.fields?.venues?.name  || '',
@@ -305,7 +298,7 @@ function sbHostedGameToRow(g) {
     dateKey:     g.date_key    ?? null,
     time24:      g.time        ?? null,
     durationMin: g.duration_min ?? field?.duration_min ?? null,
-    date:        fmtDateKey(g.date_key),
+    date:        formatDateLabel(g.date_key),
     time,
     ampm,
     field:       venue?.name || '',
@@ -517,10 +510,10 @@ function StatItem({ value, label }) {
 
 // ── ProfileCard ────────────────────────────────────────────────────────────
 
-function ProfileCard({ user, gamesPlayedCount, onEdit }) {
+function ProfileCard({ user, gamesPlayedCount, onEdit, isProfileComplete = false, isHostOrStaff = false, hasActivity = false }) {
   const displayName = user.name || '';
   const posDisplay  = Array.isArray(user.positions) && user.positions.length > 0
-    ? user.positions.join(' | ')
+    ? user.positions.join(' · ')
     : (user.position || null);
   const age = calcAge(user.birthDay, user.birthMonth, user.birthYear);
 
@@ -544,18 +537,31 @@ function ProfileCard({ user, gamesPlayedCount, onEdit }) {
         </button>
       )}
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
-        {/* Left col */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 96 }}>
-          <div style={{ position: 'relative', marginBottom: 8 }}>
+        {/* Left col — 2/5 */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: '0 0 40%' }}>
+          <div style={{ position: 'relative', marginBottom: 8, width: 84, height: 84, borderRadius: '50%', boxShadow: isHostOrStaff ? `0 0 0 2.5px #fff, 0 0 0 5px ${ORANGE}` : undefined }}>
             <Avatar name={user.name} hue={user.avatarHue} size={84} photoUrl={user.photoDataUrl} />
-            <div style={{
-              position: 'absolute', bottom: 2, right: 2,
-              width: 22, height: 22, borderRadius: '50%',
-              background: RED, border: '2px solid #fff',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <CheckIcon />
-            </div>
+            {isProfileComplete ? (
+              <div style={{
+                position: 'absolute', bottom: 2, right: 2,
+                width: 22, height: 22, borderRadius: '50%',
+                background: ORANGE, border: '2px solid #fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <svg width="11" height="11" viewBox="0 0 12 12" fill="#fff">
+                  <path d="M6 1l1.3 3.3H11l-2.8 2 1.1 3.3L6 7.7l-3.3 1.6 1.1-3.3L1 4.3h3.7z"/>
+                </svg>
+              </div>
+            ) : hasActivity ? (
+              <div style={{
+                position: 'absolute', bottom: 2, right: 2,
+                width: 22, height: 22, borderRadius: '50%',
+                background: GREEN, border: '2px solid #fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <CheckIcon />
+              </div>
+            ) : null}
           </div>
           <div style={{
             fontSize: 16, fontWeight: 800, color: TEXT, letterSpacing: -0.3,
@@ -572,8 +578,8 @@ function ProfileCard({ user, gamesPlayedCount, onEdit }) {
           </div>
         </div>
 
-        {/* Right col */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 4 }}>
+        {/* Right col — 3/5 */}
+        <div style={{ flex: '0 0 60%', display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 4 }}>
           <StatItem value={gamesPlayedCount} label="Partidos jugados" />
           <div style={{ height: 1, background: HAIR }} />
           <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
@@ -953,7 +959,7 @@ function translateAuthError(msg) {
   if (wait) return 'Inténtalo nuevamente en unos minutos.';
   if (/rate.?limit|too many|429/i.test(msg)) return 'Demasiados intentos. Espera unos minutos antes de continuar.';
   if (/invalid.?email/i.test(msg)) return 'El email ingresado no es válido.';
-  if (/already.?registered|already.?used/i.test(msg)) return 'Este email ya está en uso por otra cuenta.';
+  if (/already.{0,20}registered|already.{0,10}used/i.test(msg)) return 'Ya existe una cuenta registrada con este correo.';
   if (/email.?change.*pending/i.test(msg)) return 'Ya hay un cambio de email pendiente de confirmación.';
   return msg;
 }
@@ -1286,14 +1292,14 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
           </div>
         )}
 
-        {!isSocial && !emailLocked && (
+        {!isSocial && !emailLocked && !confirmField && (
           <div
             onClick={() => requestLock('email')}
             style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.3)' }}
           />
         )}
 
-        {!isSocial && !pwLocked && (
+        {!isSocial && !pwLocked && !confirmField && (
           <div
             onClick={() => requestLock('password')}
             style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.3)' }}
@@ -1603,61 +1609,6 @@ function SectionHeader({ title, count }) {
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '20px 16px 10px' }}>
       <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, letterSpacing: -0.3 }}>{title}</div>
       {count != null && <div style={{ fontSize: 13, color: SUB, fontWeight: 500 }}>{count}</div>}
-    </div>
-  );
-}
-
-// ── ConfirmedOverlay ───────────────────────────────────────────────────────
-
-function ConfirmedOverlay({ game, onOK }) {
-  const [open, setOpen] = useState(false);
-  const fmt = n => `S/. ${Number(n || 0).toFixed(2)}`;
-
-  useEffect(() => { const t = setTimeout(() => setOpen(true), 30); return () => clearTimeout(t); }, []);
-
-  function handleOK() { setOpen(false); setTimeout(onOK, 240); }
-
-  return (
-    <div className="sheet-overlay" style={{
-      position: 'fixed', inset: 0, zIndex: 100,
-      background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)',
-      transition: 'background .22s ease',
-      display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
-    }}>
-      <div className="sheet-panel" style={{
-        background: '#fff',
-        borderTopLeftRadius: 24, borderTopRightRadius: 24,
-        padding: '28px 24px calc(32px + env(safe-area-inset-bottom))',
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
-        boxShadow: '0 -8px 32px rgba(0,0,0,0.12)',
-        transform: open ? 'translateY(0)' : 'translateY(100%)',
-        transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)',
-      }}>
-        <div style={{ width: 72, height: 72, borderRadius: '50%', background: '#E8F7EE', border: '2px solid #BFE6CC', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <svg width="32" height="32" viewBox="0 0 36 36" fill="none">
-            <path d="M8 18l7 7 13-13" stroke="#2BA15A" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </div>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 22, fontWeight: 800, color: TEXT, letterSpacing: -0.4 }}>¡Reserva confirmada!</div>
-          {game?.field && (
-            <div style={{ fontSize: 15, color: SUB, marginTop: 6 }}>
-              {game.field}{game.date ? ` · ${game.date}` : ''}
-            </div>
-          )}
-          {game?.amount != null && (
-            <div style={{ fontSize: 15, color: SUB, marginTop: 2 }}>{fmt(game.amount)}</div>
-          )}
-        </div>
-        <button onClick={handleOK} style={{
-          height: 54, width: '100%', borderRadius: 18, background: ORANGE, color: '#1B1B1F',
-          border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 16, fontWeight: 700,
-          boxShadow: '0 6px 18px rgba(245,165,36,0.40)',
-          WebkitTapHighlightColor: 'transparent', outline: 'none',
-        }}>
-          OK
-        </button>
-      </div>
     </div>
   );
 }
@@ -2034,7 +1985,7 @@ export default function Profile() {
           dateKey:          g?.date_key    ?? null,
           time24:           g?.time        ?? null,
           durationMin:      g?.duration_min ?? g?.fields?.duration_min ?? null,
-          date:             fmtDateKey(g?.date_key),
+          date:             formatDateLabel(g?.date_key),
           time,
           ampm,
           field:      g?.fields?.venues?.name || '',
@@ -2113,6 +2064,10 @@ export default function Profile() {
   const upcoming      = sortByDt(temporalGames.filter(g => !isPast(g) && !(g.status === 'waitlist' && isStarted(g))), false);
   const past          = sortByDt(temporalGames.filter(g =>  isPast(g) && g.status !== 'waitlist'), true);
   const pastGameCount = past.length;
+  // hasActivity: any confirmed inscription regardless of past/upcoming
+  const hasActivity = extraGames.length > 0
+    || myPlayerRows.some(r => r.user_id === user?.id && r.status === 'confirmed')
+    || isGameHost;
   const visiblePast     = pastExpanded     ? past     : past.slice(0, 4);
   const visibleUpcoming = upcomingExpanded ? upcoming : upcoming.slice(0, 10);
 
@@ -2232,6 +2187,7 @@ export default function Profile() {
     city:        profileData.city        ?? null,
     phone:       profileData.phone       ?? null,
     nationality: profileData.nationality ?? null,
+    occupation:  profileData.occupation  ?? null,
     photoDataUrl: profileData.photoDataUrl ?? null,
   };
 
@@ -2239,12 +2195,8 @@ export default function Profile() {
   const hasBirthDate = !!(cardUser.birthYear && cardUser.birthMonth && cardUser.birthDay);
 
   const isOrganizerProfile = isVenueStaff || isVenueManager;
-  // Organizer completeness: photo + position + birth date + phone + nationality
-  const isOrganizerProfileComplete = !!cardUser.photoDataUrl && hasPosition && hasBirthDate && !!cardUser.phone && !!cardUser.nationality;
-  // Player completeness: photo + position + birth date + phone
-  const isProfileComplete = isOrganizerProfile
-    ? isOrganizerProfileComplete
-    : !!cardUser.photoDataUrl && hasPosition && hasBirthDate && !!cardUser.phone && !!cardUser.nationality;
+  // Complete profile: position + birth date + phone + nationality + occupation
+  const isProfileComplete = hasPosition && hasBirthDate && !!cardUser.phone && !!cardUser.nationality && !!cardUser.occupation;
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden', position: 'relative' }}>
@@ -2283,7 +2235,7 @@ export default function Profile() {
           <div style={{ minHeight: 'calc(100% + 1px)', display: 'flex', flexDirection: 'column' }}>
           <div style={{ height: 'calc(env(safe-area-inset-top) + 58px)' }} />
 
-          <ProfileCard user={cardUser} gamesPlayedCount={pastGameCount} onEdit={() => setEditOpen(true)} />
+          <ProfileCard user={cardUser} gamesPlayedCount={pastGameCount} onEdit={() => setEditOpen(true)} isProfileComplete={isProfileComplete} isHostOrStaff={isVenueStaff || isVenueManager || isGameHost} hasActivity={hasActivity} />
 
 {!isProfileComplete && (
             <div style={{ padding: '16px 16px 0', textAlign: 'center' }}>
@@ -2329,7 +2281,7 @@ export default function Profile() {
                 return Object.entries(byDate).map(([date, games]) => (
                   <div key={date || '_'}>
                     {date && date !== 'Próximo partido' && (
-                      <div style={{ padding: '4px 16px 8px', fontSize: 13.5, fontWeight: 600, color: TEXT }}>{date}</div>
+                      <div style={{ padding: '4px 16px 8px', fontSize: 13.5, fontWeight: 500, color: SUB }}>{date}</div>
                     )}
                     {games.map(g => <GameRow key={g.id} game={g} onPress={() => openGameDetail(g)} userId={user?.id} />)}
                   </div>
@@ -2360,7 +2312,7 @@ export default function Profile() {
                 return Object.entries(byDate).map(([date, games]) => (
                   <div key={date || '_'}>
                     {date && date !== 'Próximo partido' && (
-                      <div style={{ padding: '4px 16px 8px', fontSize: 13.5, fontWeight: 600, color: SUB }}>{date}</div>
+                      <div style={{ padding: '4px 16px 8px', fontSize: 13.5, fontWeight: 500, color: SUB }}>{date}</div>
                     )}
                     {games.map(g => <GameRow key={g.id} game={g} onPress={() => openGameDetail(g)} muted userId={user?.id} />)}
                   </div>

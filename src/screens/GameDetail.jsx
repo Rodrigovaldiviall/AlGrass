@@ -143,7 +143,7 @@ function Header({ field, openSpots, onBack, onShare, infoMode, showShare }) {
 // ── Hero placeholder
 function HeroImage() {
   return (
-    <div style={{
+    <div className="game-hero-image" style={{
       width: '100%', aspectRatio: '16/6.3', background: SOFT,
       backgroundImage: 'repeating-linear-gradient(135deg, #E8E8EC 0 14px, #F2F2F4 14px 28px)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -513,9 +513,10 @@ function deterministicCode(fullName) {
   return '@' + first.slice(0, 6) + last.slice(0, 4);
 }
 
-function PlayerModal({ player, onClose }) {
-  const [open, setOpen]       = useState(false);
-  const [profile, setProfile] = useState(null);
+function PlayerModal({ player, onClose, isHost = false }) {
+  const [open, setOpen]           = useState(false);
+  const [profile, setProfile]     = useState(null);
+  const [isVerified, setVerified] = useState(false);
 
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
 
@@ -523,10 +524,25 @@ function PlayerModal({ player, onClose }) {
     if (!player.user_id || !supabase) return;
     supabase
       .from('users')
-      .select('full_name, user_code, avatar_hue, sex, birth_date, preferred_position, city')
+      .select('full_name, user_code, avatar_hue, sex, birth_date, preferred_position, city, phone, nationality, occupation')
       .eq('id', player.user_id)
       .maybeSingle()
       .then(({ data }) => { if (data) setProfile(data); });
+    supabase
+      .from('game_players')
+      .select('id')
+      .eq('user_id', player.user_id)
+      .eq('status', 'confirmed')
+      .limit(1)
+      .then(({ data }) => { if (data?.length) setVerified(true); });
+    // Fallback: users who reserved as titular (reservations row) may not have a game_players row
+    supabase
+      .from('reservations')
+      .select('id')
+      .eq('user_id', player.user_id)
+      .eq('status', 'spend')
+      .limit(1)
+      .then(({ data }) => { if (data?.length) setVerified(true); });
   }, [player.user_id]);
 
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
@@ -552,6 +568,9 @@ function PlayerModal({ player, onClose }) {
     : (player.position || null);
   const city = profile?.city ?? null;
 
+  const hasPos        = profile ? (Array.isArray(profile.preferred_position) ? profile.preferred_position.length > 0 : !!profile.preferred_position) : !!player.position;
+  const isProfileComplete = !!(profile && hasPos && profile.birth_date && profile.phone && profile.nationality && profile.occupation);
+
   const stat = (v, l) => (
     <div>
       <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: -0.3, lineHeight: 1, color: v != null ? TEXT : '#C7C7CC' }}>
@@ -573,6 +592,7 @@ function PlayerModal({ player, onClose }) {
         padding: '0 24px',
       }}>
       <div
+        className="player-card-inner"
         onClick={e => e.stopPropagation()}
         style={{
           background: '#fff', borderRadius: 24, padding: '20px 20px 24px',
@@ -598,14 +618,40 @@ function PlayerModal({ player, onClose }) {
         </button>
 
         <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 84 }}>
-            <div style={{
-              width: 68, height: 68, borderRadius: '50%',
-              background: `hsl(${hue} 35% 92%)`, color: `hsl(${hue} 45% 35%)`,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 20, fontWeight: 700, marginBottom: 8, flexShrink: 0,
-            }}>{initials}</div>
-            <div style={{ fontSize: 14, fontWeight: 800, color: TEXT, textAlign: 'center', lineHeight: 1.2, letterSpacing: -0.2 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 96, flexShrink: 0 }}>
+            <div style={{ position: 'relative', marginBottom: 8 }}>
+              <div style={{
+                width: 68, height: 68, borderRadius: '50%',
+                background: `hsl(${hue} 35% 92%)`, color: `hsl(${hue} 45% 35%)`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 20, fontWeight: 700, flexShrink: 0,
+                boxShadow: isHost ? `0 0 0 2.5px #fff, 0 0 0 5px ${ORANGE}` : undefined,
+              }}>{initials}</div>
+              {isProfileComplete ? (
+                <div style={{
+                  position: 'absolute', bottom: 1, right: 1,
+                  width: 20, height: 20, borderRadius: '50%',
+                  background: ORANGE, border: '2px solid #fff',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <svg width="10" height="10" viewBox="0 0 12 12" fill="#fff">
+                    <path d="M6 1l1.3 3.3H11l-2.8 2 1.1 3.3L6 7.7l-3.3 1.6 1.1-3.3L1 4.3h3.7z"/>
+                  </svg>
+                </div>
+              ) : isVerified ? (
+                <div style={{
+                  position: 'absolute', bottom: 1, right: 1,
+                  width: 20, height: 20, borderRadius: '50%',
+                  background: GREEN, border: '2px solid #fff',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <svg width="10" height="10" viewBox="0 0 14 14" fill="none">
+                    <path d="M3 7l3 3 5-5" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+              ) : null}
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: TEXT, textAlign: 'center', lineHeight: 1.25, letterSpacing: -0.2, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', width: '100%' }}>
               {name}
             </div>
             <div style={{ fontSize: 12, color: BLUE, fontWeight: 600, marginTop: 3 }}>{code}</div>
@@ -1362,6 +1408,12 @@ export default function GameDetail() {
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 16px', borderRadius: 999, background: ORANGE, fontSize: 13, fontWeight: 700, color: '#1B1B1F', letterSpacing: -0.1 }}>
                   <span>Organizador</span>
                   <span style={{ fontWeight: 600, opacity: 0.75 }}>· {confirmed}/{g.totalSpots}</span>
+                  {guestsInRoster.length > 0 && (
+                    <>
+                      <span style={{ opacity: 0.6 }}>·</span>
+                      <span style={{ fontWeight: 600 }}>{guestsInRoster.length} {guestsInRoster.length === 1 ? 'invitado activo' : 'invitados activos'}</span>
+                    </>
+                  )}
                 </span>
               ) : g.paidBy ? (
                 <button onClick={() => setSelectedPlayer({ name: g.paidBy, user_id: payerUserId })} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 14px', borderRadius: 999, background: '#F0FFF4', border: 'none', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
@@ -1426,7 +1478,7 @@ export default function GameDetail() {
           <Section title="Organizador">
             {g.hostUserId ? (
               <button
-                onClick={() => setSelectedPlayer({ name: hostProfile?.full_name || '', user_id: g.hostUserId })}
+                onClick={() => setSelectedPlayer({ name: hostProfile?.full_name || '', user_id: g.hostUserId, isHost: true })}
                 style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 12, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                 <Avatar name={hostProfile?.full_name || ''} size={44} />
                 <div style={{ fontSize: 'var(--gd-body, 14px)', color: TEXT, lineHeight: 1.4 }}>
@@ -1453,7 +1505,8 @@ export default function GameDetail() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {liveRoster.map((p) => {
-                const showAtt = attendanceOpen || isPastGame;
+                const showAtt      = attendanceOpen || isPastGame;
+                const isRosterHost = p.user_id === g.hostUserId;
                 return (
                   <div key={p.user_id}
                     onClick={() => setSelectedPlayer(p)}
@@ -1462,9 +1515,11 @@ export default function GameDetail() {
                       padding: '10px 12px', border: `1px solid ${HAIR}`, borderRadius: 14, background: '#fff',
                       cursor: 'pointer',
                     }}>
-                    <Avatar name={p.name} size={36} />
+                    <div style={{ borderRadius: '50%', flexShrink: 0, boxShadow: isRosterHost ? `0 0 0 2px #fff, 0 0 0 3.5px ${ORANGE}` : undefined }}>
+                      <Avatar name={p.name} size={36} />
+                    </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 'var(--gd-player, 14.5px)', fontWeight: 600, color: TEXT, lineHeight: 1.2 }}>
+                      <div style={{ fontSize: 'var(--gd-player, 14.5px)', fontWeight: 600, color: TEXT, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {p.name || ''}
                       </div>
                       {(p.age != null || p.position) && (
@@ -1568,7 +1623,7 @@ export default function GameDetail() {
           </>
         )}
         <TabBar />
-      {selectedPlayer && <PlayerModal player={selectedPlayer} onClose={() => setSelectedPlayer(null)} />}
+      {selectedPlayer && <PlayerModal player={selectedPlayer} isHost={selectedPlayer.isHost ?? false} onClose={() => setSelectedPlayer(null)} />}
       {modifyOpen && (
         <ModifySheet
           canAddGuests={liveOpenSpots > 0}

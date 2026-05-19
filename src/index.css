@@ -105,24 +105,23 @@ input:-webkit-autofill:hover {
   .sidebar svg { width: 36px; height: 36px; }
 
   /* margin-left matches zoomed sidebar visual width (340 * 0.72 ≈ 245px) */
+  /* outer canvas slightly darker than content panel (#F8F8FA), sidebar stays #fff */
   .app-main {
     display: flex;
     justify-content: center;
     margin-left: 245px;
     height: 100dvh;
     overflow: hidden;
-    background-color: #F2F2F4;
-    background-image:
-      repeating-linear-gradient(-45deg, transparent 0, transparent 18px, rgba(0, 123, 255, 0.038) 18px, rgba(0, 123, 255, 0.038) 19.5px),
-      repeating-linear-gradient( 45deg, transparent 0, transparent 18px, rgba(0, 123, 255, 0.038) 18px, rgba(0, 123, 255, 0.038) 19.5px);
+    background: #ECEDF0;
   }
 
-  /* zoom: 0.72 scales content ~30%; height: 139dvh fills the viewport */
+  /* zoom: 0.88 → +10% from 0.80; 114dvh × 0.88 ≈ 100dvh */
   .screen-shell {
-    height: 139dvh;
+    height: 114dvh;
     width: 100%;
-    max-width: 840px;
-    zoom: 0.72;
+    max-width: 1026px;
+    zoom: 0.88;
+    background: #F8F8FA;
     --gm-time:    20px;
     --gm-ampm:    16px;
     --gm-title:   21px;
@@ -134,6 +133,21 @@ input:-webkit-autofill:hover {
     --gd-st:      21px;
     --gd-body:    18px;
     --gd-player:  19px;
+  }
+
+  /* Hero image: shorter on desktop (−20% height vs mobile 16/6.3) */
+  .game-hero-image { aspect-ratio: 16/5 !important; }
+
+  /* AddPlayers sub-screen: bounded to screen-shell on desktop instead of full-viewport */
+  .add-players-screen {
+    position: absolute !important;
+    inset: 0 !important;
+  }
+
+  /* Player profile card: wider + more padding on desktop */
+  .player-card-inner {
+    max-width: 420px !important;
+    padding: 26px 26px 30px !important;
   }
 
   /* !important overrides the inline style={{ display:'flex' }} in TabBar */
