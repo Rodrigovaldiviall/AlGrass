@@ -18,8 +18,9 @@ const AuthScreen   = lazy(() => import('./screens/Auth'));
 const AuthGate     = lazy(() => import('./screens/Auth').then(m => ({ default: m.AuthGate })));
 const Profile      = lazy(() => import('./screens/Profile'));
 const Settings     = lazy(() => import('./screens/Settings'));
-const Fields       = lazy(() => import('./screens/Fields'));
-const FieldDetail  = lazy(() => import('./screens/FieldDetail'));
+const Fields        = lazy(() => import('./screens/Fields'));
+const FieldDetail   = lazy(() => import('./screens/FieldDetail'));
+const RentalDetail  = lazy(() => import('./screens/RentalDetail'));
 const Notifications = lazy(() => import('./screens/Notifications'));
 
 const WELCOME_KEY = 'pichanga_welcome_seen';
@@ -67,6 +68,7 @@ export default function App() {
               <Route path="/settings" element={<Settings />} />
               <Route path="/fields" element={<Fields />} />
               <Route path="/field/:id" element={<FieldDetail />} />
+              <Route path="/rental/:id" element={<RentalDetail />} />
               <Route path="/notifications" element={<Notifications />} />
               <Route path="/organizer" element={<Placeholder title="Organizador" />} />
               <Route path="/admin" element={<Placeholder title="Admin" />} />

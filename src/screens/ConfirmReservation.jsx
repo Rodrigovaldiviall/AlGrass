@@ -665,7 +665,7 @@ export default function ConfirmReservation() {
   const [confirmedPlayerIds, setConfirmedPlayerIds] = useState(new Set());
   useEffect(() => {
     const gid = game?.id;
-    if (!supabase || !gid) return;
+    if (!supabase || !gid || game?.type === 'rental') return;
     supabase.from('game_players').select('user_id').eq('game_id', gid).eq('status', 'confirmed')
       .then(({ data }) => { setConfirmedPlayerIds(new Set((data || []).map(r => r.user_id))); });
   }, [game?.id]);
@@ -744,7 +744,7 @@ export default function ConfirmReservation() {
         const { data: resData, error } = await createInvitedReservation({ gameId, playersCount: guests.length, unitPrice });
         if (!error && resData) {
           const reservationId = resData.id;
-          await Promise.all(guests.map(guest =>
+          if (game?.type === 'match' || !game?.type) await Promise.all(guests.map(guest =>
             createGamePlayer({ gameId, userId: guest.id, payerId: authUser?.id, reservationId, amount: 0, reservationType: 'invited', invitedByUserId: authUser?.id })
           ));
         }
@@ -778,7 +778,7 @@ export default function ConfirmReservation() {
         }).then(({ data: resData, error, skipped }) => {
           if (skipped || error) return;
           const reservationId = resData?.id ?? null;
-          guests.forEach(guest => createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice }));
+          if (game?.type === 'match' || !game?.type) guests.forEach(guest => createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice }));
         });
       }
       setFreeConfirming(false);
@@ -811,8 +811,10 @@ export default function ConfirmReservation() {
     }).then(({ data: resData, error, skipped }) => {
       if (skipped || error) { if (error) console.warn('[checkout] reservation failed:', error); return; }
       const reservationId = resData?.id ?? null;
-      createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet });
-      guests.forEach(guest => createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice }));
+      if (game?.type === 'match' || !game?.type) {
+        createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet });
+        guests.forEach(guest => createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice }));
+      }
     });
     navigate('/profile', { state: { confirmedGame: {
       id:           game?.id,
@@ -827,6 +829,7 @@ export default function ConfirmReservation() {
       amount:       total,
       price:        game?.price,
       source:       game?.source,
+      gameType:     game?.type ?? null,
       unitPrice:    unitPrice,
       promoDiscount: promoApplied?.discount ?? 0,
       creditApplied: creditApplied,

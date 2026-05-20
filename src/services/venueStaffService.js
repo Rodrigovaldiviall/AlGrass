@@ -26,7 +26,7 @@ export async function fetchMyVenueStaff(userId) {
 export async function fetchHostedGames(userId) {
   // Query 1: games where user is explicit host
   const [explicitRes, fieldsRes] = await Promise.all([
-    supabase.from('games').select('id').eq('host_user_id', userId).eq('status', 'active'),
+    supabase.from('games').select('id').eq('host_user_id', userId).eq('type', 'match').eq('status', 'active'),
     supabase.from('fields').select('id').eq('default_host_user_id', userId),
   ]);
 
@@ -41,6 +41,7 @@ export async function fetchHostedGames(userId) {
       .select('id')
       .in('field_id', fieldIds)
       .is('host_user_id', null)
+      .eq('type', 'match')
       .eq('status', 'active');
     defaultHosted = data ?? [];
   }

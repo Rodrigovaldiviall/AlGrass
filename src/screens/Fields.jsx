@@ -3,11 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR } from '../constants';
 import I from '../icons';
 import { DATE_WINDOW, TODAY_KEY, TOMORROW_KEY, ymd } from '../data/games';
-import { FIELDS } from '../data/fields';
 import TabBar from '../components/TabBar';
 import fieldImg from '../assets/cancha.jpg';
 import { supabase } from '../lib/supabase';
 import { getVenueCoverUrl } from '../utils/venue';
+import { getRentalGames } from '../services/gameService';
 
 const DOW_ES   = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const MONTH_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -473,21 +473,10 @@ export default function Fields() {
     } catch { return new Set(); }
   }, []);
 
-  const [venueCoverMap, setVenueCoverMap] = useState({});
+  const [rentalGames, setRentalGames] = useState([]);
+  const [loading, setLoading]         = useState(true);
   useEffect(() => {
-    if (!supabase) return;
-    supabase.from('venues').select('name, cover_image_path, cover_updated_at')
-      .then(({ data }) => {
-        if (!data) return;
-        const m = {};
-        data.forEach(v => {
-          if (v.cover_image_path) m[v.name] = {
-            path:    v.cover_image_path,
-            version: v.cover_updated_at ? new Date(v.cover_updated_at).getTime() : null,
-          };
-        });
-        setVenueCoverMap(m);
-      });
+    getRentalGames().then(data => { setRentalGames(data); setLoading(false); });
   }, []);
 
   const chipActive = {
@@ -504,7 +493,7 @@ export default function Fields() {
     setFlt(f => ({ ...f, [id]: !f[id] }));
   }
 
-  const filteredFields = useMemo(() => FIELDS.filter(f => {
+  const filteredFields = useMemo(() => rentalGames.filter(f => {
     if (f.city && f.city !== userCity) return false;
     if (flt.cubierta        && !f.covered)  return false;
     if (flt.estacionamiento && !f.parking)  return false;
@@ -525,7 +514,7 @@ export default function Fields() {
       if (!ok) return false;
     }
     return true;
-  }), [flt, userCity]);
+  }), [flt, userCity, rentalGames]);
 
   const grouped = useMemo(() => {
     const map = new Map();
@@ -537,7 +526,7 @@ export default function Fields() {
   }, [filteredFields]);
 
   const eventDates  = useMemo(() => new Set(grouped.map(([k]) => k)), [grouped]);
-  const maxEventKey = useMemo(() => FIELDS.reduce((max, f) => f.dateKey > max ? f.dateKey : max, ''), []);
+  const maxEventKey = useMemo(() => rentalGames.reduce((max, f) => f.dateKey > max ? f.dateKey : max, ''), [rentalGames]);
 
   // Auto-advance selected date when filters remove events from the current day
   useEffect(() => {
@@ -656,7 +645,11 @@ export default function Fields() {
         />
         <div ref={listRef} onScroll={onListScroll} className="no-sb"
           style={{ flex: 1, overflowY: 'auto', paddingBottom: 8, overscrollBehavior: 'contain' }}>
-          {grouped.length === 0 ? (
+          {loading ? (
+            <div style={{ padding: '40px 24px', textAlign: 'center', color: SUB, fontSize: 14 }}>
+              Cargando canchas...
+            </div>
+          ) : grouped.length === 0 ? (
             <div style={{ padding: '40px 24px', textAlign: 'center', color: SUB, fontSize: 14 }}>
               No hay campos con esos filtros.
             </div>
@@ -668,9 +661,9 @@ export default function Fields() {
                 {fields.map((f, i) => (
                   <FieldRow key={f.id} f={f} last={i === fields.length - 1 && isLast}
                     userBooked={bookedFieldIds.has(f.id)}
-                    coverPath={venueCoverMap[f.field]?.path ?? null}
-                    coverVersion={venueCoverMap[f.field]?.version ?? null}
-                    onPress={() => navigate(`/field/${f.id}`, { state: { field: { ...f, venueCoverPath: venueCoverMap[f.field]?.path ?? null, venueCoverVersion: venueCoverMap[f.field]?.version ?? null } } })} />
+                    coverPath={f.venueCoverPath ?? null}
+                    coverVersion={f.venueCoverVersion ?? null}
+                    onPress={() => navigate(`/rental/${f.id}`, { state: { field: f } })} />
                 ))}
                 {isLast && dateKey === maxEventKey && (
                   <div style={{ padding: '28px 16px 20px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>

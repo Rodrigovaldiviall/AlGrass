@@ -273,7 +273,7 @@ function sbReservationToRow(r) {
     parking:    g?.fields?.venues?.venue_amenities?.parking ?? false,
     hostUserId: g?.host_user_id ?? null,
     status: 'reserved',
-    type:   r.source === 'campo' ? 'campo' : 'game',
+    type:   r.games?.type ?? (r.source === 'campo' ? 'campo' : 'match'),
     price:  r.total_amount != null ? `S/. ${Number(r.total_amount).toFixed(2)}` : null,
     paymentBreakdown: r.unit_price != null ? {
       unitPrice:     r.unit_price,
@@ -338,7 +338,7 @@ function confirmedGameToRow(cg) {
     field: cg.field || 'Cancha',
     format: cg.format || '7v7',
     status: 'reserved',
-    type: cg.source === 'campo' ? 'campo' : 'game',
+    type: cg.gameType ?? (cg.source === 'campo' ? 'campo' : 'match'),
     price: cg.amount != null ? `S/. ${Number(cg.amount).toFixed(2)}` : (cg.price || null),
     paymentBreakdown: cg.unitPrice != null ? {
       unitPrice:    cg.unitPrice,
@@ -1969,7 +1969,7 @@ export default function Profile() {
         .from('reservations')
         .select(`
           game_id, source, unit_price, promo_discount, credit_applied, total_amount,
-          games:game_id ( date_key, time, format, total_spots, duration_min, host_user_id, game_amenities:amenities, fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
+          games:game_id ( type, date_key, time, format, total_spots, duration_min, host_user_id, game_amenities:amenities, fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
         `)
         .eq('user_id', uid)
         .eq('status', 'spend')
@@ -2014,6 +2014,7 @@ export default function Profile() {
           fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) )
         `)
         .eq('host_user_id', uid)
+        .eq('type', 'match')
         .in('status', ['published', 'active'])
         .then(async ({ data, error }) => {
           if (error) { console.warn('[Profile] hosted games:', error.message); }
@@ -2104,7 +2105,7 @@ export default function Profile() {
   const allGames = (() => {
     const raw = [
       ...extraGames.map(g => {
-        if (g.status === 'reserved' && g.type !== 'campo' && myPlayerRowsReady) {
+        if (g.status === 'reserved' && g.type === 'match' && myPlayerRowsReady) {
           const state = profileGameStateMap.get(g.id);
           if (state && !state.isVisible) return null;
           if (state?.relationship === 'canceled-with-guests') {
@@ -2113,7 +2114,7 @@ export default function Profile() {
           if (state?.relationship === 'guest') return null; // guestGames handles this
         }
         let row = g.paymentBreakdown ? { ...g, price: computeLivePrice(g) } : g;
-        if (row.status === 'reserved' && row.type !== 'campo' && row.id) {
+        if (row.status === 'reserved' && row.type === 'match' && row.id) {
           const state = profileGameStateMap.get(row.id);
           row = { ...row, activeGuestCount: state?.activeGuestCount ?? 0 };
         }
@@ -2150,7 +2151,7 @@ export default function Profile() {
   const visibleUpcoming = upcomingExpanded ? upcoming : upcoming.slice(0, 10);
 
   const gameToRate = (dataReady && user)
-    ? past.find(g => !ratings[g.id] && !skippedRatings[g.id]) ?? null
+    ? past.find(g => g.type === 'match' && !ratings[g.id] && !skippedRatings[g.id]) ?? null
     : null;
 
   async function handleSave(updated) {

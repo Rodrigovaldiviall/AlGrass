@@ -24,6 +24,7 @@ const GAME_SELECT = `
   date_key,
   time,
   price_per_person,
+  price_total,
   current_players,
   total_spots,
   format,
@@ -109,6 +110,27 @@ export async function getGames() {
 
   if (error) { console.error('getGames:', error); return []; }
   return data.map(mapGame);
+}
+
+function mapRentalGame(g) {
+  const base          = mapGame(g);
+  const priceTotalNum = g.price_total ?? 0;
+  return {
+    ...base,
+    price:         priceTotalNum > 0 ? `S/.${priceTotalNum.toFixed(2)}` : null,
+    priceTotalNum,
+    reserved:      g.status === 'active',
+  };
+}
+
+export async function getRentalGames() {
+  const { data, error } = await supabase
+    .from('games')
+    .select(GAME_SELECT)
+    .eq('type', 'rental')
+    .in('status', ['published', 'active']);
+  if (error) { console.error('getRentalGames:', error); return []; }
+  return data.map(mapRentalGame);
 }
 
 function readRosters() {
