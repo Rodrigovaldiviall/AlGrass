@@ -152,4 +152,7 @@ input:-webkit-autofill:hover {
 
   /* !important overrides the inline style={{ display:'flex' }} in TabBar */
   .tab-bar { display: none !important; }
+
+  /* Game status pills: same width regardless of label */
+  .game-status-pill { width: 96px !important; min-width: 96px !important; }
 }

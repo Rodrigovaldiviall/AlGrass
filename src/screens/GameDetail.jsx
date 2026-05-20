@@ -13,6 +13,8 @@ import RatingBlock from '../components/RatingBlock';
 import { useAuth } from '../context/AuthContext';
 import { cancelGamePlayer, cancelGuestPlayers, cancelInvitedPlayers } from '../services/reservationService';
 import { supabase } from '../lib/supabase';
+import { getAvatarUrl } from '../utils/avatar';
+import { getVenueCoverUrl } from '../utils/venue';
 import { deriveGameState, requiredPlayers, gameStartDate, gameEndDate, isGamePast, isGameStarted, deriveAttendance } from '../utils/deriveGameState';
 
 const WAITLIST_KEY   = 'pichanga_waitlist';
@@ -140,8 +142,16 @@ function Header({ field, openSpots, onBack, onShare, infoMode, showShare }) {
   );
 }
 
-// ── Hero placeholder
-function HeroImage() {
+// ── Hero image
+function HeroImage({ coverPath, coverVersion }) {
+  const src = coverPath ? getVenueCoverUrl(supabase, coverPath, coverVersion) : null;
+  if (src) {
+    return (
+      <div className="game-hero-image" style={{ width: '100%', aspectRatio: '16/6.3', overflow: 'hidden', flexShrink: 0 }}>
+        <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+      </div>
+    );
+  }
   return (
     <div className="game-hero-image" style={{
       width: '100%', aspectRatio: '16/6.3', background: SOFT,
@@ -357,13 +367,21 @@ function PaymentDetailSheet({ price, breakdown, paidBy, userName, titularCancele
 }
 
 // ── Avatar
-function Avatar({ name, size = 36 }) {
+function Avatar({ name, size = 36, hue = null, avatarPath = null, avatarVersion = null }) {
+  const src = avatarPath ? getAvatarUrl(supabase, avatarPath, avatarVersion) : null;
   const initials = (name || '').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
-  const hue = [...(name || '·')].reduce((a, c) => a + c.charCodeAt(0), 0) % 360;
+  const derivedHue = hue ?? ([...(name || '·')].reduce((a, c) => a + c.charCodeAt(0), 0) % 360);
+  if (src) {
+    return (
+      <div style={{ width: size, height: size, borderRadius: '50%', overflow: 'hidden', flexShrink: 0 }}>
+        <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+      </div>
+    );
+  }
   return (
     <div style={{
       width: size, height: size, borderRadius: '50%',
-      background: `hsl(${hue} 35% 92%)`, color: `hsl(${hue} 45% 35%)`,
+      background: `hsl(${derivedHue} 35% 92%)`, color: `hsl(${derivedHue} 45% 35%)`,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       fontSize: size >= 44 ? 14 : 12, fontWeight: 700, flexShrink: 0,
     }}>{initials || '·'}</div>
@@ -524,7 +542,7 @@ function PlayerModal({ player, onClose, isHost = false }) {
     if (!player.user_id || !supabase) return;
     supabase
       .from('users')
-      .select('full_name, user_code, avatar_hue, sex, birth_date, preferred_position, city, phone, nationality, occupation')
+      .select('full_name, user_code, avatar_hue, avatar_path, avatar_updated_at, sex, birth_date, preferred_position, city, phone, nationality, occupation')
       .eq('id', player.user_id)
       .maybeSingle()
       .then(({ data }) => { if (data) setProfile(data); });
@@ -620,13 +638,22 @@ function PlayerModal({ player, onClose, isHost = false }) {
         <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 96, flexShrink: 0 }}>
             <div style={{ position: 'relative', marginBottom: 8 }}>
-              <div style={{
-                width: 68, height: 68, borderRadius: '50%',
-                background: `hsl(${hue} 35% 92%)`, color: `hsl(${hue} 45% 35%)`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 20, fontWeight: 700, flexShrink: 0,
-                boxShadow: isHost ? `0 0 0 2.5px #fff, 0 0 0 5px ${ORANGE}` : undefined,
-              }}>{initials}</div>
+              {profile?.avatar_path ? (
+                <div style={{
+                  width: 68, height: 68, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
+                  boxShadow: isHost ? `0 0 0 2.5px #fff, 0 0 0 5px ${ORANGE}` : undefined,
+                }}>
+                  <img src={getAvatarUrl(supabase, profile.avatar_path, profile.avatar_updated_at ? new Date(profile.avatar_updated_at).getTime() : null)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                </div>
+              ) : (
+                <div style={{
+                  width: 68, height: 68, borderRadius: '50%',
+                  background: `hsl(${hue} 35% 92%)`, color: `hsl(${hue} 45% 35%)`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 20, fontWeight: 700, flexShrink: 0,
+                  boxShadow: isHost ? `0 0 0 2.5px #fff, 0 0 0 5px ${ORANGE}` : undefined,
+                }}>{initials}</div>
+              )}
               {isProfileComplete ? (
                 <div style={{
                   position: 'absolute', bottom: 1, right: 1,
@@ -1146,11 +1173,13 @@ export default function GameDetail() {
           ? p.preferred_position.join(' · ')
           : (p.preferred_position || null);
         return {
-          user_id:      p.user_id,
-          name:         p.full_name || p.user_code || 'Jugador',
-          position:     pos,
-          age:          ageFromDate(p.birth_date),
-          hue:          p.avatar_hue ?? null,
+          user_id:       p.user_id,
+          name:          p.full_name || p.user_code || 'Jugador',
+          position:      pos,
+          age:           ageFromDate(p.birth_date),
+          hue:           p.avatar_hue ?? null,
+          avatarPath:    p.avatar_path ?? null,
+          avatarVersion: p.avatar_updated_at ? new Date(p.avatar_updated_at).getTime() : null,
           checked_in_at: p.checked_in_at ?? null,
         };
       });
@@ -1208,7 +1237,7 @@ export default function GameDetail() {
     if (!g.hostUserId || !supabase) return;
     supabase
       .from('users')
-      .select('full_name, user_code, avatar_hue')
+      .select('full_name, user_code, avatar_hue, avatar_path, avatar_updated_at')
       .eq('id', g.hostUserId)
       .maybeSingle()
       .then(({ data }) => { if (data) setHostProfile(data); });
@@ -1218,7 +1247,7 @@ export default function GameDetail() {
     if (!supabase || !gameId) return;
     supabase
       .from('game_players')
-      .select('user_id, payer_id, status, joined_at, checked_in_at, reservation_type, invited_by_user_id, users:user_id(full_name, user_code, avatar_hue, preferred_position, birth_date)')
+      .select('user_id, payer_id, status, joined_at, checked_in_at, reservation_type, invited_by_user_id, users:user_id(full_name, user_code, avatar_hue, avatar_path, avatar_updated_at, preferred_position, birth_date)')
       .eq('game_id', gameId)
       .then(({ data, error }) => {
         if (error) { console.error('[GameDetail] game_players fetch error:', error); return; }
@@ -1227,6 +1256,8 @@ export default function GameDetail() {
           full_name:          p.users?.full_name          ?? null,
           user_code:          p.users?.user_code          ?? null,
           avatar_hue:         p.users?.avatar_hue         ?? null,
+          avatar_path:        p.users?.avatar_path        ?? null,
+          avatar_updated_at:  p.users?.avatar_updated_at  ?? null,
           preferred_position: p.users?.preferred_position ?? null,
           birth_date:         p.users?.birth_date         ?? null,
           reservation_type:   p.reservation_type          ?? null,
@@ -1391,7 +1422,7 @@ export default function GameDetail() {
             shareOrCopy({ url: `${window.location.origin}/game/${gameId}`, title: g.field, text: `${g.date} · ${g.time} ${g.ampm}`, onCopied: () => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); } });
           }} />
         <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', background: '#fff' }}>
-          <HeroImage />
+          <HeroImage coverPath={g?.venueCoverPath} coverVersion={g?.venueCoverVersion} />
 
           {/* Status badge below photo */}
           {(isBooked || infoMode || isCanceledWithGuests) && (
@@ -1480,7 +1511,7 @@ export default function GameDetail() {
               <button
                 onClick={() => setSelectedPlayer({ name: hostProfile?.full_name || '', user_id: g.hostUserId, isHost: true })}
                 style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 12, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-                <Avatar name={hostProfile?.full_name || ''} size={44} />
+                <Avatar name={hostProfile?.full_name || ''} size={44} hue={hostProfile?.avatar_hue ?? null} avatarPath={hostProfile?.avatar_path ?? null} avatarVersion={hostProfile?.avatar_updated_at ? new Date(hostProfile.avatar_updated_at).getTime() : null} />
                 <div style={{ fontSize: 'var(--gd-body, 14px)', color: TEXT, lineHeight: 1.4 }}>
                   Este juego está organizado por{' '}
                   <span style={{ fontWeight: 700 }}>{hostProfile?.full_name || '…'}</span>
@@ -1516,7 +1547,7 @@ export default function GameDetail() {
                       cursor: 'pointer',
                     }}>
                     <div style={{ borderRadius: '50%', flexShrink: 0, boxShadow: isRosterHost ? `0 0 0 2px #fff, 0 0 0 3.5px ${ORANGE}` : undefined }}>
-                      <Avatar name={p.name} size={36} />
+                      <Avatar name={p.name} size={36} hue={p.hue} avatarPath={p.avatarPath} avatarVersion={p.avatarVersion} />
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 'var(--gd-player, 14.5px)', fontWeight: 600, color: TEXT, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

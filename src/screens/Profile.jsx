@@ -15,6 +15,7 @@ import { deriveGameState, isGamePast, isGameStarted, gameStartDate } from '../ut
 import { GameMetaLine } from '../components/GameMetaLine';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import { saveRating } from '../services/ratingService';
+import { uploadAvatar, getAvatarUrl } from '../utils/avatar';
 
 const USER = {
   name: 'Rodrigo',
@@ -473,11 +474,12 @@ function SupportMenu({ onClose }) {
 
 // ── Avatar ─────────────────────────────────────────────────────────────────
 
-function Avatar({ name, hue = 210, size = 80, photoUrl = null }) {
-  if (photoUrl) {
+function Avatar({ name, hue = 210, size = 80, photoUrl = null, avatarPath = null, avatarVersion = null }) {
+  const src = (avatarPath ? getAvatarUrl(supabase, avatarPath, avatarVersion) : null) || photoUrl;
+  if (src) {
     return (
       <div style={{ width: size, height: size, borderRadius: '50%', overflow: 'hidden', flexShrink: 0 }}>
-        <img src={photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
       </div>
     );
   }
@@ -540,7 +542,7 @@ function ProfileCard({ user, gamesPlayedCount, onEdit, isProfileComplete = false
         {/* Left col — 2/5 */}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: '0 0 40%' }}>
           <div style={{ position: 'relative', marginBottom: 8, width: 84, height: 84, borderRadius: '50%', boxShadow: isHostOrStaff ? `0 0 0 2.5px #fff, 0 0 0 5px ${ORANGE}` : undefined }}>
-            <Avatar name={user.name} hue={user.avatarHue} size={84} photoUrl={user.photoDataUrl} />
+            <Avatar name={user.name} hue={user.avatarHue} size={84} photoUrl={user.photoDataUrl} avatarPath={user.avatarPath} avatarVersion={user.avatarVersion} />
             {isProfileComplete ? (
               <div style={{
                 position: 'absolute', bottom: 2, right: 2,
@@ -961,12 +963,17 @@ function translateAuthError(msg) {
   if (/invalid.?email/i.test(msg)) return 'El email ingresado no es válido.';
   if (/already.{0,20}registered|already.{0,10}used/i.test(msg)) return 'Ya existe una cuenta registrada con este correo.';
   if (/email.?change.*pending/i.test(msg)) return 'Ya hay un cambio de email pendiente de confirmación.';
+  if (/new password should be different|same.*password|password.*same/i.test(msg)) return 'La nueva contraseña debe ser diferente a la actual.';
+  if (/invalid.*login.*credential|invalid.*password|wrong.*password|invalid.*cred/i.test(msg)) return 'Contraseña actual incorrecta.';
+  if (/password.*at least|password.*character|too.*short/i.test(msg)) return 'La contraseña debe tener al menos 6 caracteres.';
+  if (/weak.?password/i.test(msg)) return 'La contraseña es demasiado débil.';
+  if (/session.*missing|session.*expired|not.*authenticated/i.test(msg)) return 'La sesión ha expirado. Vuelve a iniciar sesión.';
   return msg;
 }
 
 // ── EditProfileModal ───────────────────────────────────────────────────────
 
-function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, userProvider = 'email' }) {
+function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, userProvider = 'email', userId = null }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
 
@@ -976,7 +983,10 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
   const [password,  setPassword]  = useState(profileData.password || '');
   const [pwCurrent, setPwCurrent] = useState('');
   const [pwConfirm, setPwConfirm] = useState('');
-  const [pwError,   setPwError]   = useState('');
+  const [pwError,       setPwError]       = useState('');
+  const [pwChangeError,  setPwChangeError]  = useState('');
+  const [pwChangeSaving, setPwChangeSaving] = useState(false);
+  const [pwConfirmMode,  setPwConfirmMode]  = useState('save'); // 'save' | 'discard' | 'error'
   const [pwLocked,  setPwLocked]  = useState(true);
   const [showPw, setShowPw] = useState(false);
   const [gender,    setGender]    = useState(profileData.gender || 'Hombre');
@@ -996,6 +1006,9 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
   const [city,        setCity]        = useState(profileData.city || 'Arequipa');
   const [occupation,  setOccupation]  = useState(profileData.occupation || '');
   const [photoDataUrl, setPhotoDataUrl] = useState(profileData.photoDataUrl || null);
+  const [avatarPath,    setAvatarPath]    = useState(profileData.avatarPath    || null);
+  const [avatarVersion, setAvatarVersion] = useState(profileData.avatarVersion || null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
   const fileRef      = useRef(null);
   const scrollRef    = useRef(null);
   const [activeField,  setActiveField]  = useState(null); // null | 'email' | 'password'
@@ -1030,7 +1043,7 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
 
   function doLockField(field) {
     if (field === 'email') setEmailLocked(true);
-    else { setPwLocked(true); setPwCurrent(''); setPwConfirm(''); setPwError(''); setShowPw(false); }
+    else { setPwLocked(true); setPwCurrent(''); setPwConfirm(''); setPwError(''); setPwChangeError(''); setPwConfirmMode('save'); setShowPw(false); }
     setActiveField(null);
     setConfirmField(null);
   }
@@ -1042,10 +1055,12 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
       else         doLockField('email');
     } else {
       if (pwCurrent === '' && password === '') { setPassword(pwSnapshot.current); doLockField('password'); return; }
-      const stored = getStoredPassword(userEmail);
-      if (stored !== null && pwCurrent !== stored) { setPwError('Contraseña actual incorrecta'); return; }
-      if (password.length < 6) { setPwError('Mínimo 6 caracteres'); return; }
       setPwError('');
+      let validErr = '';
+      if (password.length < 6)       validErr = 'La nueva contraseña debe contener al menos 6 caracteres';
+      else if (pwCurrent === password) validErr = 'La nueva contraseña debe ser diferente a la actual';
+      setPwChangeError(validErr);
+      setPwConfirmMode(validErr ? 'discard' : 'save');
       setConfirmField('password');
     }
   }
@@ -1054,6 +1069,13 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
     if (field === 'email') setEmailVal(emailSnapshot.current);
     else { setPassword(pwSnapshot.current); setPwCurrent(''); }
     doLockField(field);
+  }
+
+  function retryPw() {
+    setPwChangeError('');
+    setPwChangeSaving(false);
+    setConfirmField(null);
+    // pwLocked stays false — user returns to form to fix and retry
   }
 
   async function applyChange() {
@@ -1067,16 +1089,42 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
         else setEmailChangeError(error.message);
       }
     } else {
-      doLockField(confirmField);
+      if (!supabase) { doLockField(confirmField); return; }
+      setPwChangeSaving(true);
+      // Verify current password first
+      const { error: signInErr } = await supabase.auth.signInWithPassword({ email: userEmail, password: pwCurrent });
+      if (signInErr) {
+        setPwChangeSaving(false);
+        setPwChangeError('Contraseña actual incorrecta.');
+        setPwConfirmMode('error');
+        return;
+      }
+      // Apply new password
+      const { error: updateErr } = await supabase.auth.updateUser({ password });
+      setPwChangeSaving(false);
+      if (updateErr) {
+        setPwChangeError(translateAuthError(updateErr.message));
+        setPwConfirmMode('error');
+      } else {
+        doLockField(confirmField);
+      }
     }
   }
 
   function handlePhoto(e) {
     const file = e.target.files?.[0];
     if (!file) return;
+    // Show local preview immediately
     const reader = new FileReader();
     reader.onload = ev => setPhotoDataUrl(ev.target.result);
     reader.readAsDataURL(file);
+    // Upload to Storage in parallel
+    if (userId) {
+      setAvatarUploading(true);
+      uploadAvatar(supabase, userId, file)
+        .then(path => { const ts = Date.now(); setAvatarPath(path); setAvatarVersion(ts); setAvatarUploading(false); })
+        .catch(err => { console.warn('[Avatar] upload:', err.message); setAvatarUploading(false); });
+    }
   }
 
   function handleFullName(v) {
@@ -1154,6 +1202,8 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
       city:       city.trim() || 'Arequipa',
       occupation: occupation.trim(),
       photoDataUrl,
+      avatarPath,
+      avatarVersion,
     });
     setOpen(false);
     setTimeout(onClose, 220);
@@ -1227,7 +1277,7 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
           </button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingRight: 32 }}>
             <div style={{ position: 'relative', flexShrink: 0 }}>
-              <Avatar name={previewName} hue={USER.avatarHue} size={56} photoUrl={photoDataUrl} />
+              <Avatar name={previewName} hue={USER.avatarHue} size={56} photoUrl={photoDataUrl} avatarPath={photoDataUrl ? null : avatarPath} avatarVersion={avatarVersion} />
               <button onClick={() => fileRef.current?.click()} style={{
                 position: 'absolute', bottom: 0, right: 0,
                 width: 22, height: 22, borderRadius: '50%',
@@ -1479,29 +1529,55 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
               background: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20,
               padding: '20px 18px 20px', zIndex: 8,
             }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4, lineHeight: 1.35 }}>
-                {confirmField === 'email' ? '¿Estás seguro que quieres cambiar tu email?' : '¿Estás seguro que quieres conservar el cambio?'}
-              </div>
+              {/* Header — mode-aware */}
+              {(confirmField === 'email' || pwConfirmMode === 'save') && (
+                <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4, lineHeight: 1.35 }}>
+                  {confirmField === 'email' ? '¿Estás seguro que quieres cambiar tu email?' : '¿Estás seguro que quieres guardar el cambio?'}
+                </div>
+              )}
+              {confirmField === 'password' && pwConfirmMode === 'discard' && (
+                <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4, lineHeight: 1.35 }}>
+                  ¿Deseas descartar los cambios?
+                </div>
+              )}
+              {/* Error banner */}
+              {pwChangeError && confirmField === 'password' && (
+                <div style={{ margin: '6px 0 2px', padding: '8px 12px', borderRadius: 10, background: '#FFF0F0', border: '1px solid #FFCDD2', fontSize: 13, color: '#B71C1C', lineHeight: 1.4 }}>
+                  {pwChangeError}
+                </div>
+              )}
               <div style={{ marginBottom: 10 }} />
               <div style={{ display: 'flex', gap: 8 }}>
-                <button onClick={() => cancelChange(confirmField)} style={{
+                <button onClick={() => cancelChange(confirmField)} disabled={pwChangeSaving} style={{
                   flex: 1, height: 46, borderRadius: 14,
                   border: `1px solid ${HAIR}`, background: SOFT,
                   color: TEXT, fontSize: 14, fontWeight: 600,
-                  fontFamily: 'inherit', cursor: 'pointer',
+                  fontFamily: 'inherit', cursor: pwChangeSaving ? 'default' : 'pointer', opacity: pwChangeSaving ? 0.5 : 1,
                   WebkitTapHighlightColor: 'transparent', outline: 'none',
                 }}>
                   Cancelar
                 </button>
-                <button onClick={applyChange} style={{
-                  flex: 1, height: 46, borderRadius: 14,
-                  border: 'none', background: BLUE,
-                  color: '#fff', fontSize: 14, fontWeight: 700,
-                  fontFamily: 'inherit', cursor: 'pointer',
-                  WebkitTapHighlightColor: 'transparent', outline: 'none',
-                }}>
-                  Confirmar
-                </button>
+                {(confirmField === 'email' || pwConfirmMode === 'save') ? (
+                  <button onClick={applyChange} disabled={pwChangeSaving} style={{
+                    flex: 1, height: 46, borderRadius: 14,
+                    border: 'none', background: BLUE,
+                    color: '#fff', fontSize: 14, fontWeight: 700,
+                    fontFamily: 'inherit', cursor: pwChangeSaving ? 'default' : 'pointer', opacity: pwChangeSaving ? 0.7 : 1,
+                    WebkitTapHighlightColor: 'transparent', outline: 'none',
+                  }}>
+                    {pwChangeSaving ? 'Verificando…' : 'Confirmar'}
+                  </button>
+                ) : (
+                  <button onClick={retryPw} style={{
+                    flex: 1, height: 46, borderRadius: 14,
+                    border: 'none', background: BLUE,
+                    color: '#fff', fontSize: 14, fontWeight: 700,
+                    fontFamily: 'inherit', cursor: 'pointer',
+                    WebkitTapHighlightColor: 'transparent', outline: 'none',
+                  }}>
+                    Reintentar
+                  </button>
+                )}
               </div>
             </div>
           </>
@@ -1548,7 +1624,7 @@ function GameRow({ game, onPress, muted = false, userId = null }) {
         const PM = 76;
         const pillBase = { height: 26, minWidth: PM, padding: '0 10px', borderRadius: 999, fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' };
         if (isHost) return (
-          <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', minWidth: PM, padding: '5px 8px', borderRadius: 999, background: ORANGE, flexShrink: 0 }}>
+          <div className="game-status-pill" style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', minWidth: PM, padding: '5px 8px', borderRadius: 999, background: ORANGE, flexShrink: 0 }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: '#1B1B1F', lineHeight: 1.2 }}>Organiza</span>
             {game.totalSpots > 0 && game.openSpots != null && (
               <span style={{ fontSize: 10.5, fontWeight: 600, color: '#1B1B1F', opacity: 0.75, lineHeight: 1.2 }}>{game.totalSpots - game.openSpots}/{game.totalSpots}</span>
@@ -1558,18 +1634,18 @@ function GameRow({ game, onPress, muted = false, userId = null }) {
         if (game.status === 'waitlist') return (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
             {(game.openSpots ?? 0) <= 0
-              ? <div style={{ ...pillBase, border: `1.2px solid ${RED}`, color: RED, fontWeight: 500 }}>Completo</div>
-              : <div style={{ ...pillBase, background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN }}>{game.openSpots} {game.openSpots === 1 ? 'cupo' : 'cupos'}</div>
+              ? <div className="game-status-pill" style={{ ...pillBase, border: `1.2px solid ${RED}`, color: RED, fontWeight: 500 }}>Completo</div>
+              : <div className="game-status-pill" style={{ ...pillBase, background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN }}>{game.openSpots} {game.openSpots === 1 ? 'cupo' : 'cupos'}</div>
             }
             <div style={{ fontSize: 11, fontWeight: 700, color: BLUE, letterSpacing: 0.2, alignSelf: 'flex-end', marginRight: 10 }}>En lista</div>
           </div>
         );
         if (muted) return (
-          <div style={{ ...pillBase, background: 'transparent', color: SUB, fontWeight: 600, border: 'none' }}>Finalizado</div>
+          <div className="game-status-pill" style={{ ...pillBase, background: 'transparent', color: SUB, fontWeight: 600, border: 'none' }}>Finalizado</div>
         );
         if (game.status === 'canceled-with-guests' || game.status === 'guest-canceled-with-sub-guests') return (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-            <div style={{ ...pillBase, height: 22, fontSize: 11, fontWeight: 700, background: '#FFF0F0', border: `1.2px solid ${RED}40`, color: RED }}>Cancelado</div>
+            <div className="game-status-pill" style={{ ...pillBase, height: 22, fontSize: 11, fontWeight: 700, background: '#FFF0F0', border: `1.2px solid ${RED}40`, color: RED }}>Cancelado</div>
             <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
               {game.activeGuestCount} {game.activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}
             </div>
@@ -1577,7 +1653,7 @@ function GameRow({ game, onPress, muted = false, userId = null }) {
         );
         if (game.status === 'guest') return (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-            <div style={{ ...pillBase, background: '#EDF5FF', border: `1.2px solid ${BLUE}40`, color: BLUE }}>Invitado</div>
+            <div className="game-status-pill" style={{ ...pillBase, background: '#EDF5FF', border: `1.2px solid ${BLUE}40`, color: BLUE }}>Invitado</div>
             <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
               {game.activeGuestCount > 0
                 ? `${game.activeGuestCount} ${game.activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}`
@@ -1587,7 +1663,7 @@ function GameRow({ game, onPress, muted = false, userId = null }) {
         );
         if (game.status === 'reserved') return (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-            <div style={{ ...pillBase, background: BLUE, color: '#fff' }}>
+            <div className="game-status-pill" style={{ ...pillBase, background: BLUE, color: '#fff' }}>
               {game.type === 'campo' ? 'Reservado' : 'Inscrito'}
             </div>
             {game.type !== 'campo' && game.activeGuestCount > 0 && (
@@ -1845,7 +1921,7 @@ export default function Profile() {
 
       supabase
         .from('users')
-        .select('full_name, email, role, organizer_status, birth_date, sex, preferred_position, phone, nationality, occupation, user_code')
+        .select('full_name, email, role, organizer_status, birth_date, sex, preferred_position, phone, nationality, occupation, user_code, avatar_path, avatar_updated_at')
         .eq('id', uid)
         .single()
         .then(async ({ data, error }) => {
@@ -1865,6 +1941,8 @@ export default function Profile() {
               if (data.phone)              { patch.phone = data.phone; }
               if (data.nationality)        { patch.nationality = data.nationality; }
               if (data.occupation)         { patch.occupation = data.occupation; }
+              if (data.avatar_path)        { patch.avatarPath = data.avatar_path; }
+              if (data.avatar_updated_at)  { patch.avatarVersion = new Date(data.avatar_updated_at).getTime(); }
               if (userCode)                { patch.userCode = userCode; }
               return { ...prev, ...patch };
             });
@@ -2090,6 +2168,8 @@ export default function Profile() {
         phone:              updated.phone             || null,
         nationality:        updated.nationality       || null,
         occupation:         updated.occupation        || null,
+        ...(updated.avatarPath    != null ? { avatar_path: updated.avatarPath } : {}),
+        ...(updated.avatarVersion != null ? { avatar_updated_at: new Date(updated.avatarVersion).toISOString() } : {}),
       };
       if (updated.birthYear && updated.birthMonth && updated.birthDay) {
         patch.birth_date = `${updated.birthYear}-${String(updated.birthMonth).padStart(2, '0')}-${String(updated.birthDay).padStart(2, '0')}`;
@@ -2097,7 +2177,7 @@ export default function Profile() {
       const { error } = await supabase.from('users').update(patch).eq('id', session.user.id);
       if (error) console.warn('[Profile] update users:', error.message);
       else {
-        setSbProfile(prev => ({ ...prev, full_name: patch.full_name }));
+        setSbProfile(prev => ({ ...prev, full_name: patch.full_name, ...(patch.avatar_path != null ? { avatar_path: patch.avatar_path, avatar_updated_at: patch.avatar_updated_at ?? prev.avatar_updated_at } : {}) }));
         if (patch.full_name && user) login({ ...user, name: patch.full_name });
       }
 
@@ -2188,7 +2268,9 @@ export default function Profile() {
     phone:       profileData.phone       ?? null,
     nationality: profileData.nationality ?? null,
     occupation:  profileData.occupation  ?? null,
-    photoDataUrl: profileData.photoDataUrl ?? null,
+    photoDataUrl:  profileData.photoDataUrl  ?? null,
+    avatarPath:    profileData.avatarPath    ?? null,
+    avatarVersion: profileData.avatarVersion ?? null,
   };
 
   const hasPosition  = (cardUser.positions?.length > 0) || !!cardUser.position;
@@ -2377,6 +2459,7 @@ export default function Profile() {
           userName={user?.name || USER.name}
           userEmail={user?.email || ''}
           userProvider={user?.provider || 'email'}
+          userId={user?.id ?? null}
           onSave={handleSave}
           onClose={() => setEditOpen(false)}
         />

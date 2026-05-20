@@ -6,6 +6,8 @@ import { DATE_WINDOW, TODAY_KEY, TOMORROW_KEY, ymd } from '../data/games';
 import { FIELDS } from '../data/fields';
 import TabBar from '../components/TabBar';
 import fieldImg from '../assets/cancha.jpg';
+import { supabase } from '../lib/supabase';
+import { getVenueCoverUrl } from '../utils/venue';
 
 const DOW_ES   = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const MONTH_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -352,12 +354,13 @@ function DateStrip({ dates, selectedKey, onSelect, scrollerRef, cellRefs, eventD
 }
 
 // ── Field row
-function FieldThumbnail({ price, reserved, userBooked }) {
+function FieldThumbnail({ price, reserved, userBooked, coverPath, coverVersion }) {
+  const src     = (coverPath ? getVenueCoverUrl(supabase, coverPath, coverVersion) : null) || fieldImg;
   const label   = reserved ? 'NO DISP.' : userBooked ? 'RESERVADO' : null;
   const overlay = reserved ? 'rgba(0,0,0,0.54)' : userBooked ? 'rgba(22,101,52,0.68)' : 'linear-gradient(160deg, rgba(0,0,0,0.08) 0%, rgba(0,0,0,0.66) 100%)';
   return (
     <div style={{ position: 'relative', width: 76, height: 56, borderRadius: 10, overflow: 'hidden', flexShrink: 0, opacity: reserved ? 0.55 : 1 }}>
-      <img src={fieldImg} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+      <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
       <div style={{
         position: 'absolute', inset: 0, background: overlay,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -375,7 +378,7 @@ function FieldThumbnail({ price, reserved, userBooked }) {
   );
 }
 
-function FieldRow({ f, last, onPress, userBooked }) {
+function FieldRow({ f, last, onPress, userBooked, coverPath, coverVersion }) {
   const [pressed, setPressed] = useState(false);
   const interactive = !f.reserved;
   return (
@@ -418,7 +421,7 @@ function FieldRow({ f, last, onPress, userBooked }) {
           </div>
         )}
       </div>
-      <FieldThumbnail price={f.price} reserved={f.reserved} userBooked={userBooked} />
+      <FieldThumbnail price={f.price} reserved={f.reserved} userBooked={userBooked} coverPath={coverPath} coverVersion={coverVersion} />
       <div style={{ width: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', pointerEvents: 'none' }}>
         {interactive && I.chev()}
       </div>
@@ -468,6 +471,23 @@ export default function Fields() {
       const res = JSON.parse(localStorage.getItem('pichanga_reservations')) || [];
       return new Set(res.filter(r => r.type === 'campo').map(r => r.id));
     } catch { return new Set(); }
+  }, []);
+
+  const [venueCoverMap, setVenueCoverMap] = useState({});
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from('venues').select('name, cover_image_path, cover_updated_at')
+      .then(({ data }) => {
+        if (!data) return;
+        const m = {};
+        data.forEach(v => {
+          if (v.cover_image_path) m[v.name] = {
+            path:    v.cover_image_path,
+            version: v.cover_updated_at ? new Date(v.cover_updated_at).getTime() : null,
+          };
+        });
+        setVenueCoverMap(m);
+      });
   }, []);
 
   const chipActive = {
@@ -648,7 +668,9 @@ export default function Fields() {
                 {fields.map((f, i) => (
                   <FieldRow key={f.id} f={f} last={i === fields.length - 1 && isLast}
                     userBooked={bookedFieldIds.has(f.id)}
-                    onPress={() => navigate(`/field/${f.id}`, { state: { field: f } })} />
+                    coverPath={venueCoverMap[f.field]?.path ?? null}
+                    coverVersion={venueCoverMap[f.field]?.version ?? null}
+                    onPress={() => navigate(`/field/${f.id}`, { state: { field: { ...f, venueCoverPath: venueCoverMap[f.field]?.path ?? null, venueCoverVersion: venueCoverMap[f.field]?.version ?? null } } })} />
                 ))}
                 {isLast && dateKey === maxEventKey && (
                   <div style={{ padding: '28px 16px 20px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>

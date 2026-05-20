@@ -41,6 +41,8 @@ const GAME_SELECT = `
       name,
       city,
       address,
+      cover_image_path,
+      cover_updated_at,
       venue_amenities:amenities
     )
   )
@@ -78,6 +80,8 @@ function mapGame(g) {
     covered:   field?.field_amenities?.covered    ?? false,
     parking:   venue?.venue_amenities?.parking    ?? false,
     showers:   venue?.venue_amenities?.showers    ?? false,
+    venueCoverPath:      venue?.cover_image_path        ?? null,
+    venueCoverVersion:   venue?.cover_updated_at ? new Date(venue.cover_updated_at).getTime() : null,
     // games.host_user_id is the sole runtime SoT — field default is for creation only
     hostUserId:          g.host_user_id                ?? null,
     fieldDefaultHostId:  field?.default_host_user_id   ?? null,

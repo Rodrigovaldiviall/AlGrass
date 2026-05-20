@@ -9,6 +9,8 @@ import { FIELDS } from '../data/fields';
 import { GAME_DEFAULTS } from '../data/games';
 import TabBar from '../components/TabBar';
 import RatingBlock from '../components/RatingBlock';
+import { supabase } from '../lib/supabase';
+import { getVenueCoverUrl } from '../utils/venue';
 
 const _DOW = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const _MON = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -58,6 +60,8 @@ function buildField(sel) {
     currency:         'S/.',
     format:           sel.format || '7v7',
     image:            sel.image ?? null,
+    venueCoverPath:    sel.venueCoverPath    ?? null,
+    venueCoverVersion: sel.venueCoverVersion ?? null,
     source:           'campo',
     organizer:        GAME_DEFAULTS.organizer,
     paymentBreakdown: sel.paymentBreakdown ?? null,
@@ -90,7 +94,15 @@ function Header({ field, onBack, onShare }) {
 }
 
 // ── Hero image
-function HeroImage() {
+function HeroImage({ coverPath, coverVersion }) {
+  const src = coverPath ? getVenueCoverUrl(supabase, coverPath, coverVersion) : null;
+  if (src) {
+    return (
+      <div style={{ width: '100%', aspectRatio: '16/6.3', overflow: 'hidden', flexShrink: 0 }}>
+        <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+      </div>
+    );
+  }
   return (
     <div style={{
       width: '100%', aspectRatio: '16/6.3', background: SOFT,
@@ -391,7 +403,7 @@ export default function FieldDetail() {
       <Header field={g.field} onBack={() => navigate(backPath)}
         onShare={() => navigator.share?.({ title: g.field, text: g.address, url: window.location.href }).catch(() => {})} />
       <div className="no-sb" style={{ flex: 1, overflowY: 'auto', background: '#fff' }}>
-        <HeroImage />
+        <HeroImage coverPath={g.venueCoverPath} coverVersion={g.venueCoverVersion} />
 
         {isBooked && (
           <div style={{ padding: '7px 16px 0', display: 'flex', justifyContent: 'center' }}>

@@ -405,7 +405,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
   if (isHost) {
     const confirmed = totalSpots - openSpots;
     return (
-      <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', minWidth: PILL_MIN, padding: '4px 8px', borderRadius: 999, background: ORANGE, flexShrink: 0 }}>
+      <div className="game-status-pill" style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', minWidth: PILL_MIN, padding: '4px 8px', borderRadius: 999, background: ORANGE, flexShrink: 0 }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: '#1B1B1F', lineHeight: 1.2 }}>Organiza</span>
         {totalSpots > 0 && (
           <span style={{ fontSize: 10, fontWeight: 600, color: '#1B1B1F', opacity: 0.75, lineHeight: 1.2 }}>{confirmed}/{totalSpots}</span>
@@ -416,7 +416,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
   if (canceledCount != null) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-        <div style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, background: '#FFF0F0', border: `1.2px solid ${RED}40`, color: RED, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="game-status-pill" style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, background: '#FFF0F0', border: `1.2px solid ${RED}40`, color: RED, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
           Cancelado
         </div>
         <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
@@ -428,7 +428,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
   if (guestInfo) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-        <div style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, background: '#EDF5FF', border: `1.2px solid ${BLUE}40`, color: BLUE, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="game-status-pill" style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, background: '#EDF5FF', border: `1.2px solid ${BLUE}40`, color: BLUE, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
           Invitado
         </div>
         <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
@@ -443,7 +443,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
     if (activeGuestCount > 0) {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-          <div style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, background: BLUE, color: '#fff', fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>Inscrito</div>
+          <div className="game-status-pill" style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, background: BLUE, color: '#fff', fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>Inscrito</div>
           <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
             {activeGuestCount} {activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}
           </div>
@@ -451,7 +451,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
       );
     }
     return (
-      <div style={{
+      <div className="game-status-pill" style={{
         height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999,
         background: BLUE, color: '#fff',
         fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600,
@@ -461,9 +461,9 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
   }
   if (inWaitlist) {
     const capPill = openSpots <= 0 ? (
-      <div style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, border: `1.2px solid ${RED}`, color: RED, fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>Completo</div>
+      <div className="game-status-pill" style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, border: `1.2px solid ${RED}`, color: RED, fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>Completo</div>
     ) : (
-      <div style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN, fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{openSpots} {openSpots === 1 ? 'cupo' : 'cupos'}</div>
+      <div className="game-status-pill" style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN, fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{openSpots} {openSpots === 1 ? 'cupo' : 'cupos'}</div>
     );
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
@@ -474,7 +474,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
   }
   if (openSpots <= 0) {
     return (
-      <div style={{
+      <div className="game-status-pill" style={{
         height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999,
         border: `1.2px solid ${RED}`, color: RED,
         fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 500,
@@ -483,7 +483,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
     );
   }
   return (
-    <div style={{
+    <div className="game-status-pill" style={{
       height: 22, minWidth: 64, padding: '0 8px', borderRadius: 999,
       background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN,
       fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600,

@@ -29,7 +29,11 @@
       "Bash(Get-ChildItem -Path \"c:\\\\Claude Code\\\\AlGrass\\\\src\\\\services\\\\\" -ErrorAction SilentlyContinue | Select-Object Name)",
       "Bash(Get-ChildItem -Path \"c:\\\\Claude Code\\\\AlGrass\\\\src\\\\services\\\\\" | Select-Object -ExpandProperty Name)",
       "Bash(npx tsc *)",
-      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('@supabase/supabase-js:', p.dependencies['@supabase/supabase-js']\\)\")"
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('@supabase/supabase-js:', p.dependencies['@supabase/supabase-js']\\)\")",
+      "Bash(node -e \"require\\('browser-image-compression'\\); console.log\\('ok'\\)\")"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\rodri\\.claude\\projects\\c--Claude-Code-AlGrass\\memory"
     ]
   }
 }
