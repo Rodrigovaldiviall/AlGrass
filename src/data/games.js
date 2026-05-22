@@ -8,7 +8,7 @@ export const TOMORROW_KEY = ymd(new Date(TODAY.getFullYear(), TODAY.getMonth(), 
 
 export const DATE_WINDOW = (() => {
   const out = [];
-  for (let i = -2; i < 30; i++) {
+  for (let i = 0; i < 30; i++) {
     const d = new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate() + i);
     out.push(d);
   }

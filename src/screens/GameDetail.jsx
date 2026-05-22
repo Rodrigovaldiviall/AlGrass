@@ -105,6 +105,7 @@ function buildGame(sel) {
     durationMin:       sel.durationMin       ?? null,
     hostUserId:        sel.hostUserId        ?? null,
     effectiveHostUserId: sel.effectiveHostUserId ?? null,
+    type:              sel.type              ?? null,
   };
 }
 
@@ -873,9 +874,11 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
   const guestRefund = isGuest
     ? (guestSubBreakdown?.unitPrice || breakdown?.unitPrice || parsedPrice)
     : (breakdown?.unitPrice || parsedPrice);
+  const isSimple = !isGuest && !titularAlreadyCanceled && guestList.length === 0;
+  const effectiveTitularChecked = isSimple || titularChecked;
   const totalRefund = isGuest
     ? checkedGuests.size * guestRefund
-    : (titularChecked ? titularRefund : 0) + checkedGuests.size * guestRefund;
+    : (effectiveTitularChecked ? titularRefund : 0) + checkedGuests.size * guestRefund;
   const canConfirm = isGuest ? (selfChecked || checkedGuests.size > 0) : totalRefund > 0;
   const fmt = n => `S/. ${Number(n).toFixed(2)}`;
 
@@ -917,7 +920,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
         }
       } else {
         if (checkedGuests.size > 0) removePlayers(gameId, [...checkedGuests]);
-        if (titularChecked) {
+        if (effectiveTitularChecked) {
           const remaining = getActivePlayers(gameId);
           if (remaining.length > 0) {
             const titularCode = (() => { try { return (JSON.parse(localStorage.getItem('pichanga_profile') || '{}').userCode || '').trim().toUpperCase(); } catch { return ''; } })();
@@ -943,7 +946,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
         }
       }
       setStep('done');
-      setTimeout(() => onDone({ titularCanceled: !isGuest && titularChecked }), 1600);
+      setTimeout(() => onDone({ titularCanceled: !isGuest && effectiveTitularChecked }), 1600);
     }, 1800);
   }
 
@@ -1026,6 +1029,13 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                     <span style={{ fontSize: 14.5, fontWeight: 600, color: SUB }}>{userName} (Titular)</span>
                   </div>
                   <span style={{ fontSize: 11, fontWeight: 700, color: DANGER }}>Cancelado</span>
+                </div>
+              ) : isSimple ? (
+                <div style={{ width: '100%', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: `1px solid ${HAIR}` }}>
+                  <div style={{ flex: 1 }}>
+                    <span style={{ fontSize: 14.5, fontWeight: 600, color: BLUE }}>{userName} (Tú)</span>
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(titularRefund)}</div>
                 </div>
               ) : (
                 <button onClick={() => setTitularChecked(v => !v)} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, borderBottom: `1px solid ${HAIR}`, fontFamily: 'inherit', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
@@ -1358,6 +1368,7 @@ export default function GameDetail() {
           priceNumber:  addGuestPrice,
           currency:     'S/.',
           source:       'pichanga',
+          type:         g.type,
           invitedMode:  true,
           maxNewGuests: liveOpenSpots,
           hostUserId:   user?.id,
@@ -1380,8 +1391,10 @@ export default function GameDetail() {
           priceNumber:   addGuestPrice,
           currency:      'S/.',
           source:        'pichanga',
+          type:          g.type,
           addGuestsMode: true,
           maxNewGuests:  liveOpenSpots,
+          hostUserId:    g.hostUserId,
         },
         user: { name: user?.name || 'Usuario', email: user?.email || '' },
       }});
@@ -1490,7 +1503,7 @@ export default function GameDetail() {
             />
           </div>
 
-          <div style={{ padding: '8px 16px 18px', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ padding: '8px 16px 18px', display: 'flex', flexWrap: 'nowrap', gap: 8, overflowX: 'auto' }}>
             {g.chips.map((c, i) => <Chip key={i} kind={c.kind} label={c.label} />)}
           </div>
 
@@ -1643,10 +1656,12 @@ export default function GameDetail() {
                   priceNumber: g.priceNumber,
                   currency:    g.currency,
                   source:      'pichanga',
+                  type:        g.type,
                   openSpots:   liveOpenSpots,
                   wasInWaitlist: inWaitlist,
                   backPath:    id ? `/game/${id}` : '/games',
                   gameDetailBackPath: backPath,
+                  hostUserId:  g.hostUserId,
                 };
                 navigate('/checkout', { state: { game: checkoutGame } });
               }}

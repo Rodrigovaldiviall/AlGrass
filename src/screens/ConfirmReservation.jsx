@@ -6,6 +6,8 @@ import I from '../icons';
 import { shareOrCopy } from '../utils/share';
 import { addPlayers as addPlayersToRoster, createRoster } from '../services/gameService';
 import { supabase } from '../lib/supabase';
+import aprobarComprasYape from '../assets/Aprobar compras yape.webp';
+import codigoYape from '../assets/Código yape.webp';
 import { createReservation, createGamePlayer, createInvitedReservation, validatePromoCode, searchUsers, getWalletBalance } from '../services/reservationService';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
 
@@ -153,7 +155,7 @@ function PlayerRow({ p, checked, onToggle }) {
 
 // ── AddPlayers sub-screen ──────────────────────────────────────────────────
 
-function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, maxGuests = 99, spotsCount, isInscribed = false, gameId, rosterPlayerIds = new Set() }) {
+function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, maxGuests = 99, spotsCount, isInscribed = false, gameId, rosterPlayerIds = new Set(), hostUserId = null }) {
   const favorites  = getFavorites(paidPlayers);
   const hasAnyData = paidPlayers.length > 0;
 
@@ -190,6 +192,11 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
   const sortedRefSet = new Set(sortedRef);
 
   function toggle(id) {
+    if (hostUserId && id === hostUserId) {
+      setDupMsg('El organizador no puede ser agregado como jugador.');
+      setTimeout(() => setDupMsg(''), 2500);
+      return;
+    }
     if (rosterPlayerIds.has(id)) {
       setDupMsg('Este jugador ya está inscrito');
       setTimeout(() => setDupMsg(''), 2500);
@@ -340,9 +347,18 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
 
 // ── PaymentSheet modal ──
 
-function MethodRow({ active, onSelect, accentColor, icon, label, children }) {
+function MethodRow({ active, onSelect, accentColor, icon, label, children, reverseExpand = false }) {
+  const contentBlock = active && children ? (
+    <div style={{
+      padding: '4px 14px 14px',
+      ...(reverseExpand ? { borderBottom: `1px solid ${HAIR}` } : { borderTop: `1px solid ${HAIR}` }),
+    }}>
+      {children}
+    </div>
+  ) : null;
   return (
     <div style={{ marginBottom: 10, borderRadius: 14, border: `1.5px solid ${active ? accentColor : HAIR}` }}>
+      {reverseExpand && contentBlock}
       <button
         onClick={onSelect}
         style={{ width: '100%', height: 52, padding: '0 14px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, WebkitTapHighlightColor: 'transparent', outline: 'none', fontFamily: 'inherit' }}>
@@ -352,11 +368,7 @@ function MethodRow({ active, onSelect, accentColor, icon, label, children }) {
           {active && <div style={{ width: 8, height: 8, borderRadius: '50%', background: accentColor }} />}
         </div>
       </button>
-      {active && children && (
-        <div style={{ padding: '4px 14px 14px', borderTop: `1px solid ${HAIR}` }}>
-          {children}
-        </div>
-      )}
+      {!reverseExpand && contentBlock}
     </div>
   );
 }
@@ -502,14 +514,15 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
             icon={<span style={{ background: YAPE, color: '#fff', borderRadius: 6, padding: '2px 8px', fontSize: 13, fontWeight: 800, letterSpacing: -0.5 }}>yape</span>}
             label="Paga con Yape"
           >
-            <div style={{ marginTop: 8, display: 'flex', gap: 10, marginBottom: 12 }}>
-              <div style={{ flex: 1, padding: 12, borderRadius: 12, background: `${YAPE}18`, border: `1px solid ${YAPE}40`, textAlign: 'center' }}>
-                <div style={{ fontSize: 11, color: YAPE, fontWeight: 700, marginBottom: 4 }}>1. Abre Yape</div>
-                <div style={{ fontSize: 11, color: SUB, lineHeight: 1.4 }}>Toca "Aprobar compras" en tu app Yape</div>
+            <div style={{ marginTop: 8, fontSize: 12, color: SUB, marginBottom: 8 }}>Ingresa a tu Yape, selecciona "Aprobar compras", copia el "Código de aprobación" y pégalo aquí.</div>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+              <div style={{ flex: 1, padding: 4, borderRadius: 12, background: `${YAPE}18`, border: `1px solid ${YAPE}40`, textAlign: 'center', position: 'relative' }}>
+                <img src={aprobarComprasYape} alt="Aprobar compras Yape" style={{ width: '100%', height: 'auto', display: 'block', borderRadius: 9 }} />
+                <span style={{ position: 'absolute', bottom: '18%', left: '84%', transform: 'translateX(-50%)', fontSize: 18, animation: 'yape-tap 2s ease-in-out infinite', pointerEvents: 'none', userSelect: 'none' }}>👆</span>
               </div>
-              <div style={{ flex: 1, padding: 12, borderRadius: 12, background: `${YAPE}18`, border: `1px solid ${YAPE}40`, textAlign: 'center' }}>
-                <div style={{ fontSize: 11, color: YAPE, fontWeight: 700, marginBottom: 4 }}>2. Ingresa el código</div>
-                <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, fontFamily: 'ui-monospace, monospace', letterSpacing: 2 }}>––––––</div>
+              <div style={{ flex: 1, padding: 4, borderRadius: 12, background: `${YAPE}18`, border: `1px solid ${YAPE}40`, textAlign: 'center', position: 'relative' }}>
+                <img src={codigoYape} alt="Código Yape" style={{ width: '100%', height: 'auto', display: 'block', borderRadius: 9 }} />
+                <span style={{ position: 'absolute', bottom: '10%', left: '43%', transform: 'translateX(-50%)', fontSize: 18, animation: 'yape-tap 2s ease-in-out 0.4s infinite', pointerEvents: 'none', userSelect: 'none' }}>👆</span>
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', borderRadius: 12, border: `1.5px solid ${HAIR}`, background: '#fff', overflow: 'hidden', marginBottom: 10 }}>
@@ -538,6 +551,7 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
             accentColor={ORANGE}
             icon={cardIcon}
             label="Paga con Tarjeta"
+            reverseExpand
           >
             <div style={{ marginTop: 8 }}>
               <input
@@ -672,6 +686,7 @@ export default function ConfirmReservation() {
   const rosterPlayerIds = confirmedPlayerIds;
 
   const isCampo       = game?.source === 'campo';
+  const isRental      = game?.type === 'rental';
   const addGuestsMode = game?.addGuestsMode ?? false;
   const invitedMode   = game?.invitedMode   ?? false;
   const maxNewGuests  = game?.maxNewGuests  ?? 99;
@@ -708,8 +723,9 @@ export default function ConfirmReservation() {
   async function applyCode() {
     if (!promoInput.trim() || promoLoading) return;
     setPromoLoading(true);
-    const result = await validatePromoCode(promoInput, unitPrice);
+    const result = await validatePromoCode(promoInput, unitPrice, game?.type ?? null);
     setPromoLoading(false);
+    if (result.error === 'wrong_type') { setPromoApplied(null); setPromoError('Este código no aplica para este tipo de reserva.'); return; }
     if (result.error) { setPromoApplied(null); setPromoError('Código no válido'); return; }
     setPromoApplied({ kind: 'percent', value: result.value, discount: result.discount, code: result.code });
     setPromoError('');
@@ -744,9 +760,9 @@ export default function ConfirmReservation() {
         const { data: resData, error } = await createInvitedReservation({ gameId, playersCount: guests.length, unitPrice });
         if (!error && resData) {
           const reservationId = resData.id;
-          if (game?.type === 'match' || !game?.type) await Promise.all(guests.map(guest =>
-            createGamePlayer({ gameId, userId: guest.id, payerId: authUser?.id, reservationId, amount: 0, reservationType: 'invited', invitedByUserId: authUser?.id })
-          ));
+          if (game?.type === 'match' || !game?.type) await Promise.all(
+            guests.map(guest => createGamePlayer({ gameId, userId: guest.id, payerId: authUser?.id, reservationId, amount: 0, reservationType: 'invited', invitedByUserId: authUser?.id, hostUserId: game?.hostUserId ?? null }))
+          );
         }
       }
       setFreeConfirming(false);
@@ -778,14 +794,15 @@ export default function ConfirmReservation() {
         }).then(({ data: resData, error, skipped }) => {
           if (skipped || error) return;
           const reservationId = resData?.id ?? null;
-          if (game?.type === 'match' || !game?.type) guests.forEach(guest => createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice }));
+          if (game?.type === 'match' || !game?.type) guests
+            .forEach(guest => createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice, hostUserId: game?.hostUserId ?? null }));
         });
       }
       setFreeConfirming(false);
       setShowConfirmed(true);
       return;
     }
-    if (guests.length > 0) {
+    if (!isRental && guests.length > 0) {
       const _gid = game?.id;
       if (_gid) {
         const _payerProfile = (() => { try { return JSON.parse(localStorage.getItem('pichanga_profile') || '{}'); } catch { return {}; } })();
@@ -803,17 +820,18 @@ export default function ConfirmReservation() {
       promoDiscount:   promoApplied?.discount ?? 0,
       totalAmount:     total,
       subtotalAmount:  subtotal,
-      playersCount:    1 + guests.length,
-      guestTotal:      guestsTotal,
+      playersCount:    isRental ? 1 : 1 + guests.length,
+      guestTotal:      isRental ? 0 : guestsTotal,
       paymentMethod,
       creditApplied,
       source:          game?.source ?? 'match',
     }).then(({ data: resData, error, skipped }) => {
       if (skipped || error) { if (error) console.warn('[checkout] reservation failed:', error); return; }
       const reservationId = resData?.id ?? null;
+      const _hostId = game?.hostUserId ?? null;
       if (game?.type === 'match' || !game?.type) {
-        createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet });
-        guests.forEach(guest => createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice }));
+        createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet, hostUserId: _hostId });
+        guests.forEach(guest => createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice, hostUserId: _hostId }));
       }
     });
     navigate('/profile', { state: { confirmedGame: {
@@ -852,6 +870,7 @@ export default function ConfirmReservation() {
           isInscribed={addGuestsMode || invitedMode}
           gameId={game?.id}
           rosterPlayerIds={rosterPlayerIds}
+          hostUserId={game?.hostUserId ?? null}
         />
       </div>
     );
@@ -860,10 +879,10 @@ export default function ConfirmReservation() {
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden', position: 'relative' }}>
       <TopBar
-        title={invitedMode ? 'Agregar jugadores' : addGuestsMode ? 'Agregar invitados' : 'Confirmación de reserva'}
+        title={invitedMode ? 'Agregar jugadores' : addGuestsMode ? 'Agregar invitados' : isRental ? 'Reservar campo' : 'Confirmación de reserva'}
         onCancel={() => {
           if (addGuestsMode || invitedMode) { navigate(-1); return; }
-          const dest = game?.backPath ?? (game?.source === 'campo' ? '/fields' : '/games');
+          const dest = game?.backPath ?? (isRental || game?.source === 'campo' ? '/fields' : '/games');
           if (game?.gameDetailBackPath && dest.startsWith('/game/')) {
             navigate(dest, { state: { backPath: game.gameDetailBackPath } });
           } else {
@@ -894,7 +913,7 @@ export default function ConfirmReservation() {
           </>
         )}
 
-        {!isCampo && !addGuestsMode && !invitedMode && (
+        {!isCampo && !isRental && !addGuestsMode && !invitedMode && (
           <div style={{ padding: '24px 16px 0' }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, letterSpacing: -0.1 }}>
               Reservando {seats} {seats === 1 ? 'lugar' : 'lugares'} para
@@ -902,7 +921,7 @@ export default function ConfirmReservation() {
           </div>
         )}
 
-        {!isCampo && !addGuestsMode && !invitedMode && (
+        {!isCampo && !isRental && !addGuestsMode && !invitedMode && (
           <div style={{ padding: '12px 16px 0' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0' }}>
               <UserAvatar size={44} />
@@ -915,7 +934,7 @@ export default function ConfirmReservation() {
           </div>
         )}
 
-        {!isCampo && guests.length > 0 && (
+        {!isCampo && !isRental && guests.length > 0 && (
           <div style={{ padding: '8px 16px 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {guests.map(g => (
               <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0' }}>
@@ -935,7 +954,7 @@ export default function ConfirmReservation() {
           </div>
         )}
 
-        {!isCampo && (
+        {!isCampo && !isRental && (
           <div style={{ padding: '18px 16px 8px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
             {(() => {
               const noSlots = displaySpots === 0;
@@ -1030,7 +1049,7 @@ export default function ConfirmReservation() {
           )}
           {!invitedMode && !addGuestsMode && (promoApplied || guests.length > 0 || creditApplied > 0) && (
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
-              <span>Titular</span>
+              <span>{isRental ? 'Campo' : 'Titular'}</span>
               <span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{unitStr}</span>
             </div>
           )}

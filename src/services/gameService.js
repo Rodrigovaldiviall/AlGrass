@@ -119,7 +119,7 @@ function mapRentalGame(g) {
     ...base,
     price:         priceTotalNum > 0 ? `S/.${priceTotalNum.toFixed(2)}` : null,
     priceTotalNum,
-    reserved:      g.status === 'active',
+    reserved:      g.status === 'reserved',
   };
 }
 
@@ -128,7 +128,7 @@ export async function getRentalGames() {
     .from('games')
     .select(GAME_SELECT)
     .eq('type', 'rental')
-    .in('status', ['published', 'active']);
+    .in('status', ['published', 'reserved']);
   if (error) { console.error('getRentalGames:', error); return []; }
   return data.map(mapRentalGame);
 }

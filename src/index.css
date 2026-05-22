@@ -59,6 +59,9 @@ input:-webkit-autofill:hover {
 @keyframes lp-fadein   { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes lp-slideup  { from { transform: translateY(100%); }             to { transform: translateY(0); } }
 @keyframes pulse       { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+@keyframes yape-tap    { 0%, 100% { transform: scale(1)   translateY(0);    opacity: 0.85; }
+                         40%      { transform: scale(0.82) translateY(2px);  opacity: 1;    }
+                         60%      { transform: scale(1.05) translateY(-1px); opacity: 0.9;  } }
 
 /* Desktop: sheet overlays are bounded to .screen-shell (the exact content panel) */
 @media (min-width: 1024px) {

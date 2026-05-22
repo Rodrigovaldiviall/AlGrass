@@ -311,7 +311,7 @@ function sbHostedGameToRow(g) {
     parking:     venue?.venue_amenities?.parking ?? false,
     hostUserId:  g.host_user_id ?? null,
     status:      'reserved',
-    type:        'game',
+    type:        g.type ?? 'game',
     price:       null,
     activeGuestCount: 0,
   };
@@ -1591,8 +1591,9 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
 
 function GameRow({ game, onPress, muted = false, userId = null }) {
   const [pressed, setPressed] = useState(false);
-  const isCampo = game.type === 'campo';
-  const isHost = !!userId && !!game.hostUserId && game.hostUserId === userId;
+  const isCampo  = game.type === 'campo';
+  const isRental = game.type === 'rental';
+  const isHost   = !!userId && !!game.hostUserId && game.hostUserId === userId;
   return (
     <div
       onClick={onPress}
@@ -1617,7 +1618,9 @@ function GameRow({ game, onPress, muted = false, userId = null }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, color: SUB, fontSize: 12.5 }}>
           {isCampo
             ? <span style={{ fontWeight: 500 }}>Cancha completa</span>
-            : <GameMetaLine format={game.format} totalSpots={game.totalSpots} womenOnly={game.womenOnly} parking={game.parking} covered={game.covered} />}
+            : isRental
+            ? <GameMetaLine format={game.format} durationMin={game.durationMin} parking={game.parking} covered={game.covered} womenOnly={false} />
+            : <GameMetaLine format={game.format} durationMin={game.durationMin} totalSpots={game.totalSpots} womenOnly={game.womenOnly} parking={game.parking} covered={game.covered} />}
         </div>
       </div>
       {(() => {
@@ -1626,9 +1629,12 @@ function GameRow({ game, onPress, muted = false, userId = null }) {
         if (isHost) return (
           <div className="game-status-pill" style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', minWidth: PM, padding: '5px 8px', borderRadius: 999, background: ORANGE, flexShrink: 0 }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: '#1B1B1F', lineHeight: 1.2 }}>Organiza</span>
-            {game.totalSpots > 0 && game.openSpots != null && (
-              <span style={{ fontSize: 10.5, fontWeight: 600, color: '#1B1B1F', opacity: 0.75, lineHeight: 1.2 }}>{game.totalSpots - game.openSpots}/{game.totalSpots}</span>
-            )}
+            {isRental
+              ? <span style={{ fontSize: 10.5, fontWeight: 600, color: '#1B1B1F', opacity: 0.75, lineHeight: 1.2 }}>Cancha</span>
+              : game.totalSpots > 0 && game.openSpots != null && (
+                  <span style={{ fontSize: 10.5, fontWeight: 600, color: '#1B1B1F', opacity: 0.75, lineHeight: 1.2 }}>{game.totalSpots - game.openSpots}/{game.totalSpots}</span>
+                )
+            }
           </div>
         );
         if (game.status === 'waitlist') return (
@@ -1664,9 +1670,9 @@ function GameRow({ game, onPress, muted = false, userId = null }) {
         if (game.status === 'reserved') return (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
             <div className="game-status-pill" style={{ ...pillBase, background: BLUE, color: '#fff' }}>
-              {game.type === 'campo' ? 'Reservado' : 'Inscrito'}
+              {(isCampo || isRental) ? 'Reservado' : 'Inscrito'}
             </div>
-            {game.type !== 'campo' && game.activeGuestCount > 0 && (
+            {!isCampo && !isRental && game.activeGuestCount > 0 && (
               <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
                 {game.activeGuestCount} {game.activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}
               </div>
@@ -1974,13 +1980,19 @@ export default function Profile() {
         .eq('user_id', uid)
         .eq('status', 'spend')
         .then(({ data, error }) => {
-          if (error) { console.warn('[Profile] reservations:', error.message); }
-          else if (data) {
-            const rows = data.map(sbReservationToRow);
-            setExtraGames(rows);
-            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(rows)); } catch {}
-          }
-          setSbGamesReady(true);
+          if (error) { console.warn('[Profile] reservations:', error.message); setSbGamesReady(true); return; }
+          if (!data?.length) { setExtraGames([]); setSbGamesReady(true); return; }
+          // Exclude spend records that already have a corresponding refund (canceled rentals).
+          supabase.from('reservations').select('game_id')
+            .eq('user_id', uid).eq('status', 'refund')
+            .in('game_id', data.map(r => r.game_id))
+            .then(({ data: refunds }) => {
+              const refundedSet = new Set((refunds || []).map(r => r.game_id));
+              const activeRows = data.filter(r => !refundedSet.has(r.game_id)).map(sbReservationToRow);
+              setExtraGames(activeRows);
+              try { localStorage.setItem(STORAGE_KEY, JSON.stringify(activeRows)); } catch {}
+              setSbGamesReady(true);
+            });
         });
 
       // todos mis rows como jugador o como payer — fuente única de verdad
@@ -2009,13 +2021,13 @@ export default function Profile() {
       supabase
         .from('games')
         .select(`
-          id, date_key, time, format, total_spots, current_players, duration_min, status, host_user_id,
+          id, date_key, time, format, total_spots, current_players, duration_min, status, host_user_id, type,
           game_amenities:amenities,
           fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) )
         `)
         .eq('host_user_id', uid)
-        .eq('type', 'match')
-        .in('status', ['published', 'active'])
+        .in('type', ['match', 'rental'])
+        .in('status', ['published', 'reserved'])
         .then(async ({ data, error }) => {
           if (error) { console.warn('[Profile] hosted games:', error.message); }
           else if (data?.length) {
@@ -2232,7 +2244,9 @@ export default function Profile() {
     const navId      = g.gameId ?? g.id;
     const baseState  = { infoMode: isGuest || (!isWaitlist && !isCanceledWithGuests && !isGuestCanceledWithSub), isPast: past, rating: ratings[navId] ?? null, backPath: '/profile' };
     sessionStorage.setItem('pf_back', '1');
-    if (g.type === 'campo') {
+    if (g.type === 'rental') {
+      navigate(`/rental/${navId}`, { state: { field: { id: navId, dateKey: g.dateKey ?? null, time24: g.time24 ?? null, field: g.field, date: g.date, time: g.time, ampm: g.ampm, format: g.format || '7v7' } } });
+    } else if (g.type === 'campo') {
       navigate(`/field/${navId}`, { state: { ...baseState, field: { id: navId, dateKey: g.dateKey ?? null, time24: g.time24 ?? null, field: g.field, date: g.date, time: g.time, ampm: g.ampm, format: g.format || '7v7', price: g.price || '', address: '', paymentBreakdown: g.paymentBreakdown ?? null, paidBy: isGuest ? (g.paidBy ?? null) : null, paidByCode: isGuest ? (g.paidByCode ?? null) : null } } });
     } else {
       // Only pass reservation-specific extras — GameDetail fetches canonical game data via getGameById

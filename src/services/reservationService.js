@@ -67,16 +67,19 @@ export async function getWalletBalance() {
 
 // ── promo codes ───────────────────────────────────────────────────────────────
 
-export async function validatePromoCode(code, unitPrice) {
+export async function validatePromoCode(code, unitPrice, gameType = null) {
   if (!supabase || !code?.trim()) return { error: 'invalid' };
   const { data, error } = await supabase
     .from('promo_codes')
-    .select('discount_percent, expires_at')
+    .select('discount_percent, expires_at, promo_games_type')
     .eq('code', code.trim().toUpperCase())
     .eq('active', true)
     .maybeSingle();
   if (error || !data) return { error: 'invalid' };
   if (isExpiredPeru(data.expires_at)) return { error: 'invalid' };
+  if (data.promo_games_type && data.promo_games_type !== 'all' && data.promo_games_type !== gameType) {
+    return { error: 'wrong_type' };
+  }
   const discount = Math.min(unitPrice * (data.discount_percent / 100), unitPrice);
   return { discount, value: data.discount_percent, code: code.trim().toUpperCase() };
 }
@@ -87,17 +90,18 @@ export async function searchUsers(query, { limit = 20, excludeIds = [] } = {}) {
   if (!supabase || !query?.trim()) return [];
   const session = await getSession();
   const currentId = session?.user?.id;
-  const q    = query.trim();
-  const qDb  = deaccent(q);
+  const q      = query.trim();
+  const qDb    = deaccent(q).toLowerCase();
   const allExclude = currentId ? [...excludeIds, currentId] : excludeIds;
   let req = supabase
     .from('users')
     .select('id, full_name, user_code, avatar_hue, preferred_position, birth_date')
-    .or(`full_name.ilike.%${qDb}%,user_code.ilike.%${qDb}%`)
+    .or(`full_name_search.ilike.%${qDb}%,user_code.ilike.%${qDb}%`)
     .limit(limit);
   if (allExclude.length) req = req.not('id', 'in', `(${allExclude.join(',')})`);
   const { data, error } = await req;
-  if (error) { console.error('[searchUsers]', error); return []; }
+  console.debug('[searchUsers] query:', qDb, '| error:', error, '| rows:', data?.length ?? 'null');
+  if (error) { console.error('[searchUsers] FULL ERROR:', error); return []; }
   const players = (data || []).map(u => {
     let age = null;
     if (u.birth_date) {
@@ -115,7 +119,7 @@ export async function searchUsers(query, { limit = 20, excludeIds = [] } = {}) {
       age,
     };
   });
-  return rankPlayers(players, q);
+  return rankPlayers(players, qDb);
 }
 
 // ── reserve ───────────────────────────────────────────────────────────────────
@@ -150,17 +154,28 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoDis
     })
     .select('id')
     .single();
-  if (error) console.error('[createReservation]', error);
+  if (error) { console.error('[createReservation]', error); return { data, error }; }
+
+  if (source === 'rental' && gameId) {
+    const { error: gameErr } = await supabase
+      .from('games').update({ status: 'reserved' }).eq('id', gameId);
+    if (gameErr) console.error('[createReservation] game status update failed:', gameErr);
+  }
+
   return { data, error };
 }
 
 // Activates (or reactivates) a game_players slot via upsert on (game_id, user_id, payer_id).
-export async function createGamePlayer({ gameId, userId = null, payerId = null, reservationId = null, amount = 0, reservationType = 'normal', invitedByUserId = null }) {
+export async function createGamePlayer({ gameId, userId = null, payerId = null, reservationId = null, amount = 0, reservationType = 'normal', invitedByUserId = null, hostUserId = null }) {
   if (!supabase) return { skipped: true };
   const session = await getSession();
   if (!session?.user?.id) return { skipped: true };
   const resolvedUserId  = userId  || session.user.id;
   const resolvedPayerId = payerId || session.user.id;
+  if (hostUserId && resolvedUserId === hostUserId) {
+    console.warn('[createGamePlayer] blocked: organizer cannot be added as player');
+    return { blocked: true };
+  }
   const { data, error } = await supabase
     .from('game_players')
     .upsert({
@@ -308,6 +323,99 @@ export async function cancelGuestPlayers(gameId, guestUserIds) {
   }
 
   return { data: rows };
+}
+
+// Returns the set of game_ids from the given list that the current user has
+// actively booked (spend exists, no corresponding refund).
+export async function getMyBookedGameIds(gameIds) {
+  if (!supabase || !gameIds?.length) return new Set();
+  const session = await getSession();
+  if (!session?.user?.id) return new Set();
+  const userId = session.user.id;
+
+  const { data: spends } = await supabase
+    .from('reservations')
+    .select('game_id')
+    .eq('user_id', userId)
+    .eq('status', 'spend')
+    .in('game_id', gameIds);
+
+  if (!spends?.length) return new Set();
+
+  const spendIds = spends.map(r => r.game_id);
+
+  const { data: refunds } = await supabase
+    .from('reservations')
+    .select('game_id')
+    .eq('user_id', userId)
+    .eq('status', 'refund')
+    .in('game_id', spendIds);
+
+  const refundedSet = new Set((refunds || []).map(r => r.game_id));
+  return new Set(spendIds.filter(id => !refundedSet.has(id)));
+}
+
+// Cancels a rental reservation — no game_players involved.
+// Refund comes from the original spend reservation's subtotal_amount.
+// Idempotent: bails if a refund record already exists for this game+user.
+export async function cancelRental(gameId) {
+  if (!supabase) return { skipped: true };
+  const session = await getSession();
+  if (!session?.user?.id) return { skipped: true };
+  const userId = session.user.id;
+
+  // Idempotency: if refund already exists, the cancel already ran — skip.
+  const { data: existingRefund } = await supabase
+    .from('reservations')
+    .select('id')
+    .eq('game_id', gameId)
+    .eq('user_id', userId)
+    .eq('status', 'refund')
+    .limit(1);
+
+  if (existingRefund?.length) {
+    console.warn('[cancelRental] refund already exists — skipping');
+    return { skipped: true };
+  }
+
+  const { data: rows, error: findErr } = await supabase
+    .from('reservations')
+    .select('id, subtotal_amount, total_amount')
+    .eq('game_id', gameId)
+    .eq('user_id', userId)
+    .eq('status', 'spend')
+    .order('reserved_at', { ascending: false })
+    .limit(1);
+
+  if (findErr || !rows?.length) {
+    console.warn('[cancelRental] no spend reservation found');
+    return { skipped: true };
+  }
+  const row = rows[0];
+  const refundAmount = row.subtotal_amount ?? row.total_amount ?? 0;
+
+  const { error: ledgerErr } = await supabase.from('reservations').insert({
+    game_id:         gameId,
+    user_id:         userId,
+    canceled_by:     userId,
+    status:          'refund',
+    subtotal_amount: refundAmount,
+    unit_price:      refundAmount,
+    players_count:   1,
+    guest_total:     0,
+    source:          'rental',
+    canceled_at:     new Date().toISOString(),
+  });
+  if (ledgerErr) { console.error('[cancelRental] ledger insert failed:', ledgerErr); return { error: ledgerErr }; }
+
+  if (refundAmount > 0) {
+    await applyRefund(userId, refundAmount);
+  }
+
+  const { error: gameErr } = await supabase.from('games').update({ status: 'published' }).eq('id', gameId);
+  if (gameErr) console.error('[cancelRental] game status update failed:', gameErr);
+
+  return { refundAmount };
 }
 
 // Cancels invited player slots — no wallet movement (net cost was 0).

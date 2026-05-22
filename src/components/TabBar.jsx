@@ -34,7 +34,7 @@ function tabFromPath(pathname, backPath) {
   if (pathname.startsWith('/profile')) return 'perfil';
   if (pathname.startsWith('/notifications')) return 'notificaciones';
   if ((pathname.startsWith('/game/') || pathname.startsWith('/field/')) && backPath === '/profile') return 'perfil';
-  if (pathname.startsWith('/fields') || pathname.startsWith('/field/')) return 'campos';
+  if (pathname.startsWith('/fields') || pathname.startsWith('/field/') || pathname.startsWith('/rental/')) return 'campos';
   return 'partidos';
 }
 
@@ -80,7 +80,7 @@ export default function TabBar({ activeTab: activeProp }) {
   const navigate = useNavigate();
   const { pathname, state } = useLocation();
   const activeTab = activeProp ?? tabFromPath(pathname, state?.backPath);
-  const isDetailScreen = pathname.startsWith('/game/') || pathname.startsWith('/field/');
+  const isDetailScreen = pathname.startsWith('/game/') || pathname.startsWith('/field/') || pathname.startsWith('/rental/');
 
   const badges = { notificaciones: getNotifBadge(), perfil: getUpcomingBadge() };
 

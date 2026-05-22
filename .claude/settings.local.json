@@ -30,7 +30,11 @@
       "Bash(Get-ChildItem -Path \"c:\\\\Claude Code\\\\AlGrass\\\\src\\\\services\\\\\" | Select-Object -ExpandProperty Name)",
       "Bash(npx tsc *)",
       "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('@supabase/supabase-js:', p.dependencies['@supabase/supabase-js']\\)\")",
-      "Bash(node -e \"require\\('browser-image-compression'\\); console.log\\('ok'\\)\")"
+      "Bash(node -e \"require\\('browser-image-compression'\\); console.log\\('ok'\\)\")",
+      "Bash(xargs grep -l \"img\\\\|cover\\\\|objectFit\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\Claude Code\\\\AlGrass\\\\supabase\\\\\" -Recurse -Include \"*.sql\", \"*.js\" -ErrorAction SilentlyContinue)",
+      "Bash(gzip -c dist/assets/index-5-yTEPNj.js)",
+      "Bash(gzip -c dist/assets/games-CrVXFMc7.js)"
     ],
     "additionalDirectories": [
       "c:\\Users\\rodri\\.claude\\projects\\c--Claude-Code-AlGrass\\memory"

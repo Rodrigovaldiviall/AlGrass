@@ -1,13 +1,17 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BLUE, TEXT, SUB, HAIR } from '../constants';
+import { BLUE, TEXT, SUB, HAIR, ORANGE } from '../constants';
+import { useAuth } from '../context/AuthContext';
 import I from '../icons';
 import { DATE_WINDOW, TODAY_KEY, TOMORROW_KEY, ymd } from '../data/games';
 import TabBar from '../components/TabBar';
-import fieldImg from '../assets/cancha.jpg';
+import fieldPriceBg from '../assets/field price.webp';
+import fieldNoAvailable from '../assets/Field no available.webp';
 import { supabase } from '../lib/supabase';
 import { getVenueCoverUrl } from '../utils/venue';
 import { getRentalGames } from '../services/gameService';
+import { getMyBookedGameIds } from '../services/reservationService';
+import { GameMetaLine } from '../components/GameMetaLine';
 
 const DOW_ES   = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const MONTH_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -28,6 +32,7 @@ function headerLabel(d) {
 // ── Filter state ───────────────────────────────────────────────────────────
 
 const EMPTY_FLT = {
+  organiza: false,
   cubierta: false, estacionamiento: false, duchas: false, noDisp: true,
   formatos: [], dias: [], horarios: [],
 };
@@ -292,7 +297,7 @@ const CHIP_DEFS = [
   { id: 'noDisp',          label: 'Ocultar No disp.',  icon: c => LockIcon(c)     },
 ];
 
-function FilterRow({ chipActive, onToggleChip, onOpenPanel, panelHasExtra }) {
+function FilterRow({ chipActive, onToggleChip, onOpenPanel, panelHasExtra, hasHostedInFeed }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px 8px', background: '#fff' }}>
       <FilterButton onClick={onOpenPanel} hasActive={panelHasExtra} />
@@ -301,10 +306,16 @@ function FilterRow({ chipActive, onToggleChip, onOpenPanel, panelHasExtra }) {
         flex: 1, minWidth: 0, display: 'flex', gap: 8, overflowX: 'auto',
         scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch',
       }}>
+        {hasHostedInFeed && (
+          <Chip key="organiza" label="Organiza"
+            icon={c => <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><circle cx="5" cy="4" r="2.5" stroke={c} strokeWidth="1.4"/><path d="M1 12c0-2.2 1.8-4 4-4" stroke={c} strokeWidth="1.4" strokeLinecap="round"/><circle cx="10" cy="8.5" r="2.5" stroke={c} strokeWidth="1.4"/><path d="M7 13c0-1.7 1.3-3 3-3s3 1.3 3 3" stroke={c} strokeWidth="1.4" strokeLinecap="round"/></svg>}
+            active={!!chipActive.organiza} onClick={() => onToggleChip('organiza')}
+            last={CHIP_DEFS.length === 0} />
+        )}
         {CHIP_DEFS.map((c, i) => (
           <Chip key={c.id} label={c.label} icon={c.icon}
             active={!!chipActive[c.id]} onClick={() => onToggleChip(c.id)}
-            last={i === CHIP_DEFS.length - 1} labelStyle={c.labelStyle} />
+            last={!hasHostedInFeed && i === CHIP_DEFS.length - 1} labelStyle={c.labelStyle} />
         ))}
       </div>
     </div>
@@ -317,7 +328,7 @@ function DateCell({ top, bottom, active, isToday, onClick, refEl, disabled }) {
   const bottomColor = disabled ? '#D1D1D6' : (active ? '#fff' : TEXT);
   return (
     <button ref={refEl} onClick={disabled ? undefined : onClick} style={{
-      flex: '0 0 auto', width: 56, height: 64, borderRadius: 12,
+      flex: '0 0 auto', width: 50, height: 58, borderRadius: 11,
       background: active ? BLUE : '#fff',
       border: active ? `1px solid ${BLUE}` : `1px solid ${HAIR}`,
       display: 'flex', flexDirection: 'column',
@@ -326,8 +337,8 @@ function DateCell({ top, bottom, active, isToday, onClick, refEl, disabled }) {
       outline: 'none', WebkitTapHighlightColor: 'transparent',
       fontFamily: 'inherit', transition: 'background .15s, border-color .15s',
     }}>
-      <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1, textTransform: 'uppercase', letterSpacing: 0.3, color: topColor }}>{top}</div>
-      <div style={{ fontSize: 20, fontWeight: 700, lineHeight: 1.1, marginTop: 4, color: bottomColor }}>{bottom}</div>
+      <div style={{ fontSize: 10.5, fontWeight: 600, lineHeight: 1, textTransform: 'uppercase', letterSpacing: 0.3, color: topColor }}>{top}</div>
+      <div style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.1, marginTop: 3, color: bottomColor }}>{bottom}</div>
     </button>
   );
 }
@@ -354,77 +365,75 @@ function DateStrip({ dates, selectedKey, onSelect, scrollerRef, cellRefs, eventD
 }
 
 // ── Field row
-function FieldThumbnail({ price, reserved, userBooked, coverPath, coverVersion }) {
-  const src     = (coverPath ? getVenueCoverUrl(supabase, coverPath, coverVersion) : null) || fieldImg;
-  const label   = reserved ? 'NO DISP.' : userBooked ? 'RESERVADO' : null;
-  const overlay = reserved ? 'rgba(0,0,0,0.54)' : userBooked ? 'rgba(22,101,52,0.68)' : 'linear-gradient(160deg, rgba(0,0,0,0.08) 0%, rgba(0,0,0,0.66) 100%)';
+function FieldThumbnail({ price, reserved, userBooked, isHost, coverPath, coverVersion }) {
+  const src         = coverPath ? getVenueCoverUrl(supabase, coverPath, coverVersion) : null;
+  const unavailable = reserved && !userBooked && !isHost;
+  const bgStyle     = (asset) => ({ position: 'absolute', inset: 0, backgroundImage: `url(${asset})`, backgroundSize: '120%', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', display: 'flex', alignItems: 'center', justifyContent: 'center' });
   return (
-    <div style={{ position: 'relative', width: 76, height: 56, borderRadius: 10, overflow: 'hidden', flexShrink: 0, opacity: reserved ? 0.55 : 1 }}>
-      <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-      <div style={{
-        position: 'absolute', inset: 0, background: overlay,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <span style={{
-          color: '#fff', fontWeight: 800, fontFamily: 'inherit',
-          fontSize:      label ? 9.5 : 15,
-          letterSpacing: label ? 0.4 : -0.2,
-          textShadow: '0 1px 4px rgba(0,0,0,0.55)',
-        }}>
-          {label ?? price}
-        </span>
-      </div>
+    <div style={{ position: 'relative', width: 88, height: 56, borderRadius: 10, overflow: 'hidden', flexShrink: 0 }}>
+      {!unavailable && src && <div style={{ position: 'absolute', inset: 0, backgroundImage: `url(${src})`, backgroundSize: 'cover', backgroundPosition: 'center' }} />}
+
+      {isHost ? (
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: ORANGE, color: '#1B1B1F', fontFamily: 'inherit', padding: '4px 10px', borderRadius: 999, display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, lineHeight: 1.2 }}>Organiza</span>
+            <span style={{ fontSize: 10, fontWeight: 600, lineHeight: 1.2, opacity: 0.75 }}>Cancha</span>
+          </div>
+        </div>
+      ) : userBooked ? (
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: BLUE, color: '#fff', fontFamily: 'inherit', padding: '4px 10px', borderRadius: 999, display: 'inline-flex', alignItems: 'center' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, lineHeight: 1.2 }}>Reservado</span>
+          </div>
+        </div>
+      ) : unavailable ? (
+        <div style={bgStyle(fieldNoAvailable)}>
+          <span style={{ color: '#fff', fontWeight: 700, fontFamily: 'inherit', fontSize: 10, letterSpacing: 0.1, textShadow: '0 1px 4px rgba(0,0,0,0.8)', marginTop: -6 }}>No disponible</span>
+        </div>
+      ) : (
+        <div style={bgStyle(fieldPriceBg)}>
+          <span style={{ color: '#fff', fontWeight: 800, fontFamily: 'inherit', fontSize: 15, letterSpacing: -0.2, textShadow: '0 1px 6px rgba(0,0,0,0.65)', lineHeight: 1, display: 'block', marginTop: -6 }}>{price}</span>
+        </div>
+      )}
     </div>
   );
 }
 
-function FieldRow({ f, last, onPress, userBooked, coverPath, coverVersion }) {
+function FieldRow({ f, last, onPress, userBooked, isHost, coverPath, coverVersion }) {
   const [pressed, setPressed] = useState(false);
-  const interactive = !f.reserved;
   return (
     <div
-      role={interactive ? 'button' : undefined}
-      tabIndex={interactive ? 0 : undefined}
-      onClick={interactive ? onPress : undefined}
-      onPointerDown={() => interactive && setPressed(true)}
+      role="button"
+      tabIndex={0}
+      onClick={onPress}
+      onPointerDown={() => setPressed(true)}
       onPointerUp={() => setPressed(false)}
       onPointerLeave={() => setPressed(false)}
       onPointerCancel={() => setPressed(false)}
       style={{
         display: 'flex', alignItems: 'center',
-        padding: '14px 16px',
+        padding: '14px 16px 14px 10px',
         borderBottom: last ? 'none' : `1px solid ${HAIR}`,
-        gap: 12,
-        cursor: interactive ? 'pointer' : 'default',
+        gap: 0,
+        cursor: 'pointer',
         background: pressed ? '#F5F7FA' : '#fff',
         transform: pressed ? 'scale(0.985)' : 'scale(1)',
         boxShadow: pressed ? '0 2px 10px rgba(0,123,255,0.08)' : '0 0 0 rgba(0,0,0,0)',
         transition: 'transform .12s ease, background .15s ease, box-shadow .15s ease',
         WebkitTapHighlightColor: 'transparent', outline: 'none', userSelect: 'none',
       }}>
-      <div style={{ width: 52, flexShrink: 0 }}>
+      <div style={{ width: 52, flexShrink: 0, textAlign: 'center', borderRight: `1px solid ${HAIR}`, marginRight: 6 }}>
         <div style={{ fontSize: 15, fontWeight: 600, color: TEXT, lineHeight: 1.1 }}>{f.time}</div>
-        <div style={{ fontSize: 12, fontWeight: 500, color: SUB,  lineHeight: 1.1, marginTop: 2 }}>{f.ampm}</div>
+        <div style={{ fontSize: 12, fontWeight: 500, color: SUB, lineHeight: 1.1, marginTop: 2 }}>{f.ampm}</div>
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
         <div style={{ fontSize: 16, fontWeight: 600, color: TEXT, lineHeight: 1.2, letterSpacing: -0.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.field}</div>
-        {f.reserved ? (
-          <div style={{ marginTop: 4, fontSize: 12.5, color: SUB, fontWeight: 500 }}>No disponible</div>
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4, color: SUB, fontSize: 12.5, overflow: 'hidden' }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-              {I.twoPeople(SUB)}<span>{f.format}</span>
-            </span>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-              {I.pin(SUB)}<span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.address}</span>
-            </span>
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, color: SUB, fontSize: 11, overflow: 'hidden' }}>
+          <GameMetaLine format={f.format} durationMin={f.durationMin} parking={f.parking} covered={f.covered} womenOnly={false} />
+        </div>
       </div>
-      <FieldThumbnail price={f.price} reserved={f.reserved} userBooked={userBooked} coverPath={coverPath} coverVersion={coverVersion} />
-      <div style={{ width: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', pointerEvents: 'none' }}>
-        {interactive && I.chev()}
-      </div>
+      <FieldThumbnail price={isHost ? null : f.price} reserved={f.reserved} userBooked={userBooked} isHost={isHost} coverPath={coverPath} coverVersion={coverVersion} />
+      <div style={{ pointerEvents: 'none', marginLeft: 6 }}>{I.chev()}</div>
     </div>
   );
 }
@@ -440,8 +449,11 @@ function DateHeader({ dateKey, refEl }) {
 }
 
 // ── Screen
+let _rentalCache = [];
+
 export default function Fields() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [flt, setFlt]               = useState(() => {
     try { return JSON.parse(sessionStorage.getItem('fl'))?.flt ?? EMPTY_FLT; } catch { return EMPTY_FLT; }
   });
@@ -466,20 +478,27 @@ export default function Fields() {
   const stripCellRefs      = useRef({});
   const programmaticScroll = useRef(false);
 
-  const bookedFieldIds = useMemo(() => {
-    try {
-      const res = JSON.parse(localStorage.getItem('pichanga_reservations')) || [];
-      return new Set(res.filter(r => r.type === 'campo').map(r => r.id));
-    } catch { return new Set(); }
-  }, []);
-
-  const [rentalGames, setRentalGames] = useState([]);
-  const [loading, setLoading]         = useState(true);
+  const [myBookedIds, setMyBookedIds]   = useState(new Set());
+  const [rentalGames, setRentalGames]   = useState(() => _rentalCache);
+  const [loading, setLoading]           = useState(_rentalCache.length === 0);
   useEffect(() => {
-    getRentalGames().then(data => { setRentalGames(data); setLoading(false); });
-  }, []);
+    getRentalGames().then(data => {
+      _rentalCache = data;
+      setRentalGames(data);
+      setLoading(false);
+      if (user?.id && data.length) {
+        getMyBookedGameIds(data.map(f => f.id)).then(setMyBookedIds);
+      }
+    });
+  }, []); // eslint-disable-line
+
+  const hasHostedInFeed = useMemo(
+    () => !!user?.id && rentalGames.some(f => f.hostUserId === user.id),
+    [rentalGames, user?.id]
+  );
 
   const chipActive = {
+    organiza:        flt.organiza,
     cubierta:        flt.cubierta,
     estacionamiento: flt.estacionamiento,
     duchas:          flt.duchas,
@@ -494,6 +513,7 @@ export default function Fields() {
   }
 
   const filteredFields = useMemo(() => rentalGames.filter(f => {
+    if (flt.organiza && f.hostUserId !== user?.id) return false;
     if (f.city && f.city !== userCity) return false;
     if (flt.cubierta        && !f.covered)  return false;
     if (flt.estacionamiento && !f.parking)  return false;
@@ -634,6 +654,7 @@ export default function Fields() {
           onToggleChip={toggleChip}
           onOpenPanel={() => setPanelOpen(true)}
           panelHasExtra={panelHasExtra}
+          hasHostedInFeed={hasHostedInFeed}
         />
         <DateStrip
           dates={DATE_WINDOW}
@@ -660,7 +681,8 @@ export default function Fields() {
                 <DateHeader dateKey={dateKey} refEl={(el) => { headerRefs.current[dateKey] = el; }} />
                 {fields.map((f, i) => (
                   <FieldRow key={f.id} f={f} last={i === fields.length - 1 && isLast}
-                    userBooked={bookedFieldIds.has(f.id)}
+                    userBooked={myBookedIds.has(f.id)}
+                    isHost={!!user?.id && !!f.hostUserId && f.hostUserId === user.id}
                     coverPath={f.venueCoverPath ?? null}
                     coverVersion={f.venueCoverVersion ?? null}
                     onPress={() => navigate(`/rental/${f.id}`, { state: { field: f } })} />
