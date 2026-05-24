@@ -461,7 +461,7 @@ export default function RentalDetail() {
         <Section title="Organizador">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <Avatar
-              name={hostProfile?.full_name || ''}
+              name={hostProfile?.full_name || game.field || ''}
               size={44}
               hue={hostProfile?.avatar_hue ?? null}
               avatarPath={hostProfile?.avatar_path ?? null}
@@ -469,7 +469,7 @@ export default function RentalDetail() {
             />
             <div style={{ fontSize: 14, color: TEXT, lineHeight: 1.4 }}>
               Esta cancha está organizada por{' '}
-              <span style={{ fontWeight: 700 }}>{hostProfile?.full_name || '…'}</span>
+              <span style={{ fontWeight: 700 }}>{hostProfile?.full_name || game.field || '…'}</span>
             </div>
           </div>
         </Section>

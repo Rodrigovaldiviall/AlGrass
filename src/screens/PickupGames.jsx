@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, RED, GREEN, ORANGE } from '../constants';
 import I from '../icons';
 import { DATE_WINDOW, TODAY_KEY, ymd } from '../data/games';
+import logo from '../assets/logo.webp';
 import { getGames } from '../services/gameService';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
@@ -271,13 +272,60 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
 
 // ── Header ─────────────────────────────────────────────────────────────────
 
-function Header() {
+function Header({ city, onCityTap }) {
   return (
     <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 14px)', paddingBottom: 14, paddingLeft: 20, paddingRight: 20 }}>
-      <div style={{ height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
         <div style={{ color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>Elije tu partido</div>
+        {city && (
+          <button onClick={onCityTap} style={{
+            position: 'absolute', right: 0, top: '72%', transform: 'translateY(-50%)',
+            display: 'flex', alignItems: 'center', gap: 4,
+            background: 'transparent', border: 'none',
+            padding: '5px 10px 5px 8px', cursor: 'pointer', outline: 'none',
+            WebkitTapHighlightColor: 'transparent',
+          }}>
+            <img src={logo} alt="" style={{ width: 28, height: 'auto', objectFit: 'contain' }} />
+            <span style={{ color: '#fff', fontSize: 13, fontWeight: 500, letterSpacing: -0.1 }}>{city}</span>
+            <svg width="9" height="6" viewBox="0 0 9 6" fill="none"><path d="M1 1l3.5 3.5L8 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </button>
+        )}
       </div>
     </div>
+  );
+}
+
+function CitySheet({ cities, current, onSelect, onClose }) {
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200 }} />
+      <div style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 201,
+        background: '#fff', borderRadius: '20px 20px 0 0',
+        padding: '20px 20px calc(env(safe-area-inset-bottom) + 24px)',
+        animation: 'lp-slideup 0.28s cubic-bezier(0.32,0.72,0,1) forwards',
+      }}>
+        <div style={{ width: 36, height: 4, borderRadius: 2, background: '#E0E0E6', margin: '0 auto 16px' }} />
+        <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 14 }}>Ciudad</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {cities.map(c => (
+            <button key={c} onClick={() => onSelect(c)} style={{
+              width: '100%', padding: '13px 16px', borderRadius: 12,
+              border: `1.5px solid ${c === current ? BLUE : '#E5E5EA'}`,
+              background: c === current ? 'rgba(0,100,255,0.06)' : '#fff',
+              fontSize: 15, fontWeight: c === current ? 600 : 500,
+              color: c === current ? BLUE : TEXT,
+              cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              WebkitTapHighlightColor: 'transparent', outline: 'none',
+            }}>
+              {c}
+              {c === current && <svg width="16" height="12" viewBox="0 0 16 12" fill="none"><path d="M1.5 6l4 4L14.5 1.5" stroke={BLUE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+            </button>
+          ))}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -431,7 +479,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
         <div className="game-status-pill" style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, background: '#EDF5FF', border: `1.2px solid ${BLUE}40`, color: BLUE, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
           Invitado
         </div>
-        <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
+        <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap', minWidth: PILL_MIN, textAlign: 'center' }}>
           {guestInfo.activeGuestCount > 0
             ? `${guestInfo.activeGuestCount} ${guestInfo.activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}`
             : guestInfo.paidBy ? `por ${abbreviateName(guestInfo.paidBy)}` : null}
@@ -550,9 +598,16 @@ function DateHeader({ dateKey, refEl }) {
 
 const _WELCOME_KEY  = 'pichanga_welcome_seen';
 const _PROFILE_KEY  = 'pichanga_profile';
-const _ONBOARD_CITIES = ['Arequipa', 'Lima', 'Cusco'];
 
 function CityOnboardSheet({ onSelect }) {
+  const [cities, setCities] = useState([]);
+  useEffect(() => {
+    supabase.from('venues').select('city').not('city', 'is', null)
+      .then(({ data }) => {
+        const sorted = [...new Set((data ?? []).map(r => r.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+        setCities(sorted);
+      });
+  }, []);
   return (
     <>
       <div className="sheet-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200 }} />
@@ -570,7 +625,7 @@ function CityOnboardSheet({ onSelect }) {
           Podrás cambiarla en cualquier momento desde Configuración.
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {_ONBOARD_CITIES.map(c => (
+          {cities.map(c => (
             <button
               key={c}
               onClick={() => onSelect(c)}
@@ -669,9 +724,27 @@ export default function PickupGames() {
     try { return JSON.parse(sessionStorage.getItem('pg'))?.flt ?? EMPTY_FLT; } catch { return EMPTY_FLT; }
   });
   const [panelOpen, setPanelOpen]   = useState(false);
-  const userCity = useState(() => {
-    try { return JSON.parse(localStorage.getItem('pichanga_profile'))?.city || 'Arequipa'; } catch { return 'Arequipa'; }
-  })[0];
+  const [userCity, setUserCity] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('pichanga_profile'))?.city || ''; } catch { return ''; }
+  });
+  const [citySheetOpen, setCitySheetOpen] = useState(false);
+  const [availableCities, setAvailableCities] = useState([]);
+  useEffect(() => {
+    supabase.from('venues').select('city').not('city', 'is', null).then(({ data }) => {
+      const cities = [...new Set((data ?? []).map(r => r.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+      setAvailableCities(cities);
+      if (!userCity && cities.length > 0) setUserCity(cities[0]);
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  function handleCityChange(c) {
+    setUserCity(c);
+    setCitySheetOpen(false);
+    try {
+      const p = JSON.parse(localStorage.getItem('pichanga_profile')) || {};
+      localStorage.setItem('pichanga_profile', JSON.stringify({ ...p, city: c }));
+    } catch {}
+    if (user?.id) supabase.from('users').update({ city: c }).eq('id', user.id);
+  }
   const [selectedKey, setSelectedKey] = useState(() => {
     try { return JSON.parse(sessionStorage.getItem('pg'))?.sel ?? TODAY_KEY; } catch { return TODAY_KEY; }
   });
@@ -755,7 +828,7 @@ export default function PickupGames() {
     const result = games.filter(g => {
       if (isGameStarted(g.dateKey, g.time24)) return false;   // now >= game_start → out of marketplace
       if (flt.organiza && g.hostUserId !== user?.id) return false;
-      if (g.city && g.city !== userCity) return false;
+      if (userCity && g.city && g.city !== userCity) return false;
       if (flt.cubierta        && !g.covered)   return false;
       if (flt.estacionamiento && !g.parking)   return false;
       if (flt.duchas          && !g.showers)   return false;
@@ -790,6 +863,8 @@ export default function PickupGames() {
     }
     const toMins = t24 => { const [h, m] = (t24 ?? '00:00').split(':').map(Number); return h * 60 + m; };
     for (const games of map.values()) games.sort((a, b) => toMins(a.time24) - toMins(b.time24));
+    // Always keep today visible even when all its games are past
+    if (!map.has(TODAY_KEY)) map.set(TODAY_KEY, []);
     return [...map.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1);
   }, [filteredGames]);
 
@@ -896,7 +971,7 @@ export default function PickupGames() {
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
-      <Header />
+      <Header city={userCity} onCityTap={() => setCitySheetOpen(true)} />
       <FilterRow
         chipActive={chipActive}
         onToggleChip={toggleChip}
@@ -916,7 +991,7 @@ export default function PickupGames() {
         style={{ flex: 1, overflowY: 'auto', paddingBottom: 8, scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', background: '#fff' }}>
         {loading && games.length === 0 ? (
           <SkeletonRows />
-        ) : grouped.length === 0 ? (
+        ) : filteredGames.length === 0 ? (
           <div style={{ padding: '40px 24px', textAlign: 'center', color: SUB, fontSize: 14 }}>
             No hay partidos con esos filtros.
           </div>
@@ -925,7 +1000,11 @@ export default function PickupGames() {
           return (
             <div key={dateKey} style={isLast ? { minHeight: 'calc(100% - 4px)' } : null}>
               <DateHeader dateKey={dateKey} refEl={(el) => { headerRefs.current[dateKey] = el; }} />
-              {games.map((g, i) => {
+              {dateKey === TODAY_KEY && games.length === 0 ? (
+                <div style={{ padding: '12px 20px', color: SUB, fontSize: 14 }}>
+                  No hay más partidos disponibles para hoy.
+                </div>
+              ) : games.map((g, i) => {
                 const st = gameStateMap.get(g.id);
                 const isHost = !!user?.id && g.hostUserId === user.id;
                 return (
@@ -949,7 +1028,7 @@ export default function PickupGames() {
                   }}
                 />
               ); })}
-              {isLast && dateKey === maxEventKey && (
+              {isLast && dateKey === maxEventKey && games.length > 0 && (
                 <div style={{
                   padding: '28px 16px 20px', textAlign: 'center',
                   display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14,
@@ -997,8 +1076,17 @@ export default function PickupGames() {
           } catch {}
           localStorage.setItem(_WELCOME_KEY, '1');
           setShowCitySheet(false);
+          setUserCity(city);
           navigate('/games', { replace: true });
         }} />
+      )}
+      {citySheetOpen && (
+        <CitySheet
+          cities={availableCities}
+          current={userCity}
+          onSelect={handleCityChange}
+          onClose={() => setCitySheetOpen(false)}
+        />
       )}
     </div>
   );

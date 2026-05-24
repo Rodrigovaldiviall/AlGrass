@@ -10,26 +10,7 @@ import aprobarComprasYape from '../assets/Aprobar compras yape.webp';
 import codigoYape from '../assets/Código yape.webp';
 import { createReservation, createGamePlayer, createInvitedReservation, validatePromoCode, searchUsers, getWalletBalance } from '../services/reservationService';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
-
-// ── Player database & history ──────────────────────────────────────────────
-
-const ALL_PLAYERS = [
-  { id: 'p1',  name: 'Pedro Silva',      hue: 12,  code: '@pedrosilva'   },
-  { id: 'p2',  name: 'María Quispe',     hue: 280, code: '@mariaquispe'  },
-  { id: 'p3',  name: 'Diego Morales',    hue: 200, code: '@diegomorales' },
-  { id: 'p4',  name: 'Luis Ramos',       hue: 140, code: '@luisramos'    },
-  { id: 'p5',  name: 'Camila Rojas',     hue: 330, code: '@camilarojas'  },
-  { id: 'p6',  name: 'Jorge Bustamante', hue: 40,  code: '@jorgebusta'   },
-  { id: 'p7',  name: 'Andrea Núñez',     hue: 175, code: '@andreanunez'  },
-  { id: 'p8',  name: 'Renato Díaz',      hue: 260, code: '@renatodiaz'   },
-  { id: 'p9',  name: 'Sofía Mendoza',    hue: 350, code: '@sofiamendoza' },
-  { id: 'p10', name: 'Carlos Vera',      hue: 22,  code: '@carlosvera'   },
-  { id: 'p11', name: 'Gabriela Ortiz',   hue: 305, code: '@gabortiz'     },
-  { id: 'p12', name: 'Sebastián Lara',   hue: 190, code: '@sebalara'     },
-  { id: 'p13', name: 'Valeria Castro',   hue: 355, code: '@valeriacastro'},
-  { id: 'p14', name: 'Andrés Flores',    hue: 155, code: '@andresflores' },
-  { id: 'p15', name: 'Natalia Paredes',  hue: 240, code: '@nataliapar'   },
-];
+import { getAvatarUrl } from '../utils/avatar';
 
 const ROSTER_KEY = 'pichanga_game_rosters';
 
@@ -46,8 +27,16 @@ function getFavorites(paidPlayers) {
 
 // ── Shared primitives ──
 
-function Avatar({ name, hue = 210, size = 44 }) {
+function Avatar({ name, hue = 210, size = 44, avatarPath = null, avatarVersion = null }) {
+  const imgSrc = avatarPath ? getAvatarUrl(supabase, avatarPath, avatarVersion) : null;
   const initials = (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(s => s[0].toUpperCase()).join('');
+  if (imgSrc) {
+    return (
+      <div style={{ width: size, height: size, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.06)' }}>
+        <img src={imgSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      </div>
+    );
+  }
   return (
     <div style={{
       width: size, height: size, borderRadius: '50%',
@@ -131,7 +120,7 @@ function PlayerRow({ p, checked, onToggle }) {
     <button
       onClick={onToggle}
       style={{ width: '100%', textAlign: 'left', padding: '10px 16px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-      <Avatar name={p.name} hue={p.hue} size={42} />
+      <Avatar name={p.name} hue={p.hue} size={42} avatarPath={p.avatarPath ?? null} avatarVersion={p.avatarVersion ?? null} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 15, fontWeight: 600, color: TEXT, letterSpacing: -0.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
         <div style={{ fontSize: 12, color: SUB, marginTop: 1 }}>{p.code}</div>
@@ -186,8 +175,8 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const sortedRef = useMemo(
-    () => ALL_PLAYERS.filter(p => selectedIds.has(p.id)).sort(sortByName).map(p => p.id),
-    [q]
+    () => Object.values(sbPlayerMap).filter(p => selectedIds.has(p.id)).sort(sortByName).map(p => p.id),
+    [q] // eslint-disable-line react-hooks/exhaustive-deps
   );
   const sortedRefSet = new Set(sortedRef);
 
@@ -213,7 +202,7 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
     });
   }
 
-  const allKnownPlayers = { ...Object.fromEntries(ALL_PLAYERS.map(p => [p.id, p])), ...sbPlayerMap };
+  const allKnownPlayers = { ...sbPlayerMap };
 
   const topList = q
     ? [
@@ -657,10 +646,48 @@ export default function ConfirmReservation() {
   // Canonical display name: DB-fetched name from AuthContext takes precedence over navigation state
   const canonicalName = authUser?.name || user.name;
 
+  const [selfAvatar, setSelfAvatar] = useState({ path: null, version: null, hue: null });
+  useEffect(() => {
+    if (!authUser?.id || !supabase) return;
+    supabase.from('users').select('avatar_path, avatar_updated_at, avatar_hue')
+      .eq('id', authUser.id).maybeSingle()
+      .then(({ data }) => {
+        if (data) setSelfAvatar({ path: data.avatar_path ?? null, version: data.avatar_updated_at ? new Date(data.avatar_updated_at).getTime() : null, hue: data.avatar_hue ?? null });
+      });
+  }, [authUser?.id]); // eslint-disable-line
+
   const [guests, setGuests]         = useState([]);
   const [subView, setSubView]       = useState('confirm');
   const [payOpen, setPayOpen]       = useState(false);
   const [paidPlayers, setPaidPlayers] = useState([]);
+  useEffect(() => {
+    if (!authUser?.id || !supabase) return;
+    supabase
+      .from('game_players')
+      .select('user_id, users:user_id(id, full_name, user_code, avatar_hue, avatar_path, avatar_updated_at)')
+      .eq('payer_id', authUser.id)
+      .neq('user_id', authUser.id)
+      .then(({ data }) => {
+        if (!data?.length) return;
+        const seen = new Set();
+        const result = [];
+        for (const row of data) {
+          const u = row.users;
+          if (!u || seen.has(u.id)) continue;
+          seen.add(u.id);
+          result.push({
+            id:            u.id,
+            name:          u.full_name || '',
+            code:          u.user_code ? `@${u.user_code}` : '',
+            hue:           u.avatar_hue ?? ([...(u.full_name || '·')].reduce((a, c) => a + c.charCodeAt(0), 0) % 360),
+            avatarPath:    u.avatar_path    ?? null,
+            avatarVersion: u.avatar_updated_at ? new Date(u.avatar_updated_at).getTime() : null,
+          });
+        }
+        setPaidPlayers(result);
+      });
+  }, [authUser?.id]); // eslint-disable-line
+
   const reservationTs               = useRef(Date.now());
 
   useEffect(() => {
@@ -763,6 +790,30 @@ export default function ConfirmReservation() {
           if (game?.type === 'match' || !game?.type) await Promise.all(
             guests.map(guest => createGamePlayer({ gameId, userId: guest.id, payerId: authUser?.id, reservationId, amount: 0, reservationType: 'invited', invitedByUserId: authUser?.id, hostUserId: game?.hostUserId ?? null }))
           );
+          supabase?.from('notifications').insert({
+            recipient_user_id: authUser?.id,
+            source_type: 'venue', delivery_type: 'automatic', category: 'reservation',
+            template_key: 'reservation_confirmed_with_guests',
+            game_id: gameId, venue_id: game?.venueId ?? null,
+            sent_at: new Date().toISOString(),
+          }).then(({ error }) => {
+            if (error) console.error('[notif] reservation_confirmed_with_guests (invited) failed:', error);
+            else console.log('[notif] reservation_confirmed_with_guests (invited) inserted for', authUser?.id);
+          });
+          guests.filter(g => g.id).forEach(guest => {
+            console.log('[notif] invited_by_player (invited) payload:', { recipient_user_id: guest.id, created_by: authUser?.id, game_id: gameId });
+            supabase?.from('notifications').insert({
+              recipient_user_id: guest.id,
+              source_type: 'venue', delivery_type: 'automatic', category: 'invitation',
+              template_key: 'invited_by_player',
+              game_id: gameId, venue_id: game?.venueId ?? null,
+              created_by: authUser?.id,
+              sent_at: new Date().toISOString(),
+            }).then(({ error }) => {
+              if (error) console.error('[notif] invited_by_player (invited) failed for', guest.id, error);
+              else console.log('[notif] invited_by_player (invited) inserted for', guest.id);
+            });
+          });
         }
       }
       setFreeConfirming(false);
@@ -796,6 +847,30 @@ export default function ConfirmReservation() {
           const reservationId = resData?.id ?? null;
           if (game?.type === 'match' || !game?.type) guests
             .forEach(guest => createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice, hostUserId: game?.hostUserId ?? null }));
+          supabase?.from('notifications').insert({
+            recipient_user_id: authUser?.id,
+            source_type: 'venue', delivery_type: 'automatic', category: 'reservation',
+            template_key: 'reservation_confirmed_with_guests',
+            game_id: gameId, venue_id: game?.venueId ?? null,
+            sent_at: new Date().toISOString(),
+          }).then(({ error }) => {
+            if (error) console.error('[notif] reservation_confirmed_with_guests (addGuests) failed:', error);
+            else console.log('[notif] reservation_confirmed_with_guests (addGuests) inserted for', authUser?.id);
+          });
+          guests.filter(g => g.id).forEach(guest => {
+            console.log('[notif] invited_by_player (addGuests) payload:', { recipient_user_id: guest.id, created_by: authUser?.id, game_id: gameId });
+            supabase?.from('notifications').insert({
+              recipient_user_id: guest.id,
+              source_type: 'venue', delivery_type: 'automatic', category: 'invitation',
+              template_key: 'invited_by_player',
+              game_id: gameId, venue_id: game?.venueId ?? null,
+              created_by: authUser?.id,
+              sent_at: new Date().toISOString(),
+            }).then(({ error }) => {
+              if (error) console.error('[notif] invited_by_player (addGuests) failed for', guest.id, error);
+              else console.log('[notif] invited_by_player (addGuests) inserted for', guest.id);
+            });
+          });
         });
       }
       setFreeConfirming(false);
@@ -833,6 +908,31 @@ export default function ConfirmReservation() {
         createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet, hostUserId: _hostId });
         guests.forEach(guest => createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice, hostUserId: _hostId }));
       }
+      const _tpl = guests.length > 0 ? 'reservation_confirmed_with_guests' : 'reservation_confirmed';
+      supabase?.from('notifications').insert({
+        recipient_user_id: authUser?.id,
+        source_type: 'venue', delivery_type: 'automatic', category: 'reservation',
+        template_key: _tpl,
+        game_id: game?.id, venue_id: game?.venueId ?? null,
+        sent_at: new Date().toISOString(),
+      }).then(({ error }) => {
+        if (error) console.error('[notif]', _tpl, 'failed:', error);
+        else console.log('[notif]', _tpl, 'inserted for', authUser?.id);
+      });
+      guests.filter(g => g.id).forEach(guest => {
+        console.log('[notif] invited_by_player (main) payload:', { recipient_user_id: guest.id, created_by: authUser?.id, game_id: game?.id });
+        supabase?.from('notifications').insert({
+          recipient_user_id: guest.id,
+          source_type: 'venue', delivery_type: 'automatic', category: 'invitation',
+          template_key: 'invited_by_player',
+          game_id: game?.id, venue_id: game?.venueId ?? null,
+          created_by: authUser?.id,
+          sent_at: new Date().toISOString(),
+        }).then(({ error }) => {
+          if (error) console.error('[notif] invited_by_player (main) failed for', guest.id, error);
+          else console.log('[notif] invited_by_player (main) inserted for', guest.id);
+        });
+      });
     });
     navigate('/profile', { state: { confirmedGame: {
       id:           game?.id,
@@ -924,7 +1024,7 @@ export default function ConfirmReservation() {
         {!isCampo && !isRental && !addGuestsMode && !invitedMode && (
           <div style={{ padding: '12px 16px 0' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0' }}>
-              <UserAvatar size={44} />
+              <Avatar name={canonicalName} hue={selfAvatar.hue ?? 210} size={44} avatarPath={selfAvatar.path} avatarVersion={selfAvatar.version} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 15.5, fontWeight: 700, color: TEXT, letterSpacing: -0.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{canonicalName}</div>
                 <div style={{ fontSize: 12.5, color: SUB, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</div>
@@ -938,9 +1038,10 @@ export default function ConfirmReservation() {
           <div style={{ padding: '8px 16px 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {guests.map(g => (
               <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0' }}>
-                <Avatar name={g.name} hue={g.hue} size={44} />
+                <Avatar name={g.name} hue={g.hue} size={44} avatarPath={g.avatarPath ?? null} avatarVersion={g.avatarVersion ?? null} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 15.5, fontWeight: 700, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</div>
+                  {g.code && <div style={{ fontSize: 12, color: SUB, marginTop: 1 }}>{g.code}</div>}
                 </div>
                 <button onClick={() => setGuests(gs => gs.filter(x => x.id !== g.id))} style={{ width: 32, height: 32, padding: 0, borderRadius: '50%', background: 'transparent', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                   <svg width="20" height="20" viewBox="0 0 20 20" fill="none">

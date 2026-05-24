@@ -45,6 +45,33 @@ export function AuthProvider({ children }) {
     if (!supabase) return;
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Insert welcome notification on first registration (not on subsequent logins).
+      // Guard: created_at within 120 s of now → brand-new account.
+      if (event === 'SIGNED_IN' && session) {
+        const ageMs = Date.now() - new Date(session.user.created_at).getTime();
+        if (ageMs < 120_000) {
+          supabase.from('notifications')
+            .select('id', { count: 'exact', head: true })
+            .eq('recipient_user_id', session.user.id)
+            .eq('template_key', 'welcome_message')
+            .then(({ count, error: checkErr }) => {
+              if (checkErr) { console.error('[notif] welcome_message dedup check failed:', checkErr); return; }
+              if ((count ?? 0) > 0) { console.log('[notif] welcome_message already exists, skipping'); return; }
+              supabase.from('notifications').insert({
+                recipient_user_id: session.user.id,
+                source_type:       'algrass',
+                delivery_type:     'automatic',
+                category:          'onboarding',
+                template_key:      'welcome_message',
+                sent_at:           new Date().toISOString(),
+              }).then(({ error }) => {
+                if (error) console.error('[notif] welcome_message failed:', error);
+                else console.log('[notif] welcome_message inserted for', session.user.id);
+              });
+            });
+        }
+      }
+
       // INITIAL_SESSION fires on every page load with the persisted Supabase session —
       // handling it here ensures the React user state is always derived from the live
       // Supabase session, not from a potentially stale pichanga_user localStorage entry.

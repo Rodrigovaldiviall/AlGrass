@@ -106,7 +106,7 @@ export async function getGames() {
     .from('games')
     .select(GAME_SELECT)
     .eq('type', 'match')
-    .eq('status', 'published');
+    .in('status', ['published', 'reserved']);
 
   if (error) { console.error('getGames:', error); return []; }
   return data.map(mapGame);

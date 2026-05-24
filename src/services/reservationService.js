@@ -95,7 +95,7 @@ export async function searchUsers(query, { limit = 20, excludeIds = [] } = {}) {
   const allExclude = currentId ? [...excludeIds, currentId] : excludeIds;
   let req = supabase
     .from('users')
-    .select('id, full_name, user_code, avatar_hue, preferred_position, birth_date')
+    .select('id, full_name, user_code, avatar_hue, avatar_path, avatar_updated_at, preferred_position, birth_date')
     .or(`full_name_search.ilike.%${qDb}%,user_code.ilike.%${qDb}%`)
     .limit(limit);
   if (allExclude.length) req = req.not('id', 'in', `(${allExclude.join(',')})`);
@@ -111,15 +111,39 @@ export async function searchUsers(query, { limit = 20, excludeIds = [] } = {}) {
       if (now.getMonth() < bd.getMonth() || (now.getMonth() === bd.getMonth() && now.getDate() < bd.getDate())) age--;
     }
     return {
-      id:       u.id,
-      name:     u.full_name || '',
-      code:     u.user_code ? `@${u.user_code}` : '',
-      hue:      u.avatar_hue ?? ([...(u.full_name || '·')].reduce((a, c) => a + c.charCodeAt(0), 0) % 360),
-      position: u.preferred_position || null,
+      id:            u.id,
+      name:          u.full_name || '',
+      code:          u.user_code ? `@${u.user_code}` : '',
+      hue:           u.avatar_hue ?? ([...(u.full_name || '·')].reduce((a, c) => a + c.charCodeAt(0), 0) % 360),
+      avatarPath:    u.avatar_path    ?? null,
+      avatarVersion: u.avatar_updated_at ? new Date(u.avatar_updated_at).getTime() : null,
+      position:      u.preferred_position || null,
       age,
     };
   });
   return rankPlayers(players, qDb);
+}
+
+// ── match status helpers ──────────────────────────────────────────────────────
+
+async function setMatchReserved(gameId) {
+  await supabase.from('games')
+    .update({ status: 'reserved' })
+    .eq('id', gameId)
+    .eq('status', 'published');
+}
+
+async function setMatchPublishedIfEmpty(gameId) {
+  const { count } = await supabase.from('game_players')
+    .select('id', { count: 'exact', head: true })
+    .eq('game_id', gameId)
+    .eq('status', 'confirmed');
+  if (count === 0) {
+    await supabase.from('games')
+      .update({ status: 'published' })
+      .eq('id', gameId)
+      .eq('status', 'reserved');
+  }
 }
 
 // ── reserve ───────────────────────────────────────────────────────────────────
@@ -192,7 +216,8 @@ export async function createGamePlayer({ gameId, userId = null, payerId = null, 
     }, { onConflict: 'game_id,user_id,payer_id' })
     .select('id')
     .single();
-  if (error) console.error('[createGamePlayer]', error);
+  if (error) { console.error('[createGamePlayer]', error); return { data, error }; }
+  await setMatchReserved(gameId);
   return { data, error };
 }
 
@@ -258,6 +283,7 @@ export async function cancelGamePlayer(gameId) {
     .update({ status: 'canceled', canceled_at: new Date().toISOString() })
     .eq('id', row.id);
   if (cancelErr) { console.error('[cancelGamePlayer] update failed:', cancelErr); return { error: cancelErr }; }
+  await setMatchPublishedIfEmpty(gameId);
 
   if (row.amount > 0) {
     const { error: ledgerErr } = await supabase.from('reservations').insert({
@@ -304,6 +330,7 @@ export async function cancelGuestPlayers(gameId, guestUserIds) {
     .update({ status: 'canceled', canceled_at: new Date().toISOString() })
     .in('id', ids);
   if (cancelErr) { console.error('[cancelGuestPlayers] update failed:', cancelErr); return { error: cancelErr }; }
+  await setMatchPublishedIfEmpty(gameId);
 
   const refundTotal = rows.reduce((s, r) => s + (r.amount || 0), 0);
   if (refundTotal > 0) {
@@ -445,6 +472,7 @@ export async function cancelInvitedPlayers(gameId, invitedUserIds, unitPrice = 0
     .in('id', ids);
 
   if (error) { console.error('[cancelInvitedPlayers]', error); return { error }; }
+  await setMatchPublishedIfEmpty(gameId);
 
   const grossTotal = unitPrice * rows.length;
   const { error: ledgerErr } = await supabase.from('reservations').insert({

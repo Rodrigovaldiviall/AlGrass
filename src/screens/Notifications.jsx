@@ -6,10 +6,10 @@ import I from '../icons';
 import fieldImg from '../assets/cancha.jpg';
 import { useAuth } from '../context/AuthContext';
 import { useStaff } from '../context/StaffContext';
+import { supabase } from '../lib/supabase';
+import { renderNotification } from '../data/notificationTemplates';
 
-const STORAGE_KEY = 'pichanga_notifications_v2';
-const SEVEN_DAYS  = 7 * 24 * 60 * 60 * 1000;
-const LONG_MSG    = 100;
+const LONG_MSG = 100;
 
 const _DOW = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const _MON = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -21,35 +21,27 @@ function parseDate(dateKey) {
   return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
 }
 
-const _T = Date.now();
-const SEED = [
-  { id: 'n1', type: 'reservation', title: 'La Satalia',        gameDate: ymd(_T + 86400e3),      message: 'Tu reserva está confirmada para mañana a las 7:00 PM. Recuerda llegar 10 minutos antes con tus taloneras y ropa deportiva.',         time: '15:22', dateKey: ymd(_T),               read: false, createdAt: _T - 1800e3      },
-  { id: 'n2', type: 'app',         title: 'Algrass',        gameDate: null,                   message: 'Nuevos campos disponibles en tu zona. Reserva antes de que se agoten los cupos del fin de semana.',                                   time: '11:00', dateKey: ymd(_T),               read: false, createdAt: _T - 4 * 3600e3  },
-  { id: 'n3', type: 'reservation', title: 'Xaloc',             gameDate: ymd(_T + 2 * 86400e3),  message: 'Recordatorio: tienes un partido el sábado a las 6:30 PM en Av. Primavera 314. El pago mínimo es S/.45 por jugador. ¡Te esperamos!',  time: '08:00', dateKey: ymd(_T + 86400e3),     read: false, createdAt: _T + 86400e3     },
-  { id: 'n4', type: 'reservation', title: 'Agapito Fernández', gameDate: ymd(_T),                message: '¡Tu partido de hoy está casi lleno! Solo quedan 2 cupos. El organizador estará en la cancha a las 6:45 PM.',                          time: '09:30', dateKey: ymd(_T - 2 * 86400e3), read: true,  createdAt: _T - 2 * 86400e3 },
-];
-
-function loadNotifications() {
-  try {
-    const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (Array.isArray(s) && s.length) return s;
-  } catch {}
-  return SEED;
-}
-
-function purgeExpired(list) {
-  const cutoff = Date.now() - SEVEN_DAYS;
-  return list.filter(n => n.type === 'app' || n.createdAt >= cutoff);
-}
-
-function persist(list) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); } catch {}
+function mapRow(row) {
+  const rendered = renderNotification(row);
+  if (!rendered) return null;
+  const d = new Date(row.created_at);
+  return {
+    id:        row.id,
+    type:      rendered.imageType === 'venue_image' ? 'reservation' : 'app',
+    title:     rendered.title,
+    message:   rendered.body,
+    gameDate:  row.games?.date_key ?? null,
+    time:      `${pad2(d.getHours())}:${pad2(d.getMinutes())}`,
+    dateKey:   ymd(d.getTime()),
+    read:      row.read_at != null,
+    createdAt: d.getTime(),
+  };
 }
 
 function groupAndSort(list) {
   const map = {};
   for (const n of list) (map[n.dateKey] ??= []).push(n);
-  for (const k of Object.keys(map)) map[k].sort((a, b) => b.time.localeCompare(a.time));
+  for (const k of Object.keys(map)) map[k].sort((a, b) => b.createdAt - a.createdAt);
   return Object.entries(map).sort(([a], [b]) => b.localeCompare(a));
 }
 
@@ -250,7 +242,8 @@ export default function Notifications() {
   const { user }   = useAuth();
   const staff      = useStaff();
   const navigate   = useNavigate();
-  const [notifications, setNotifications] = useState(() => purgeExpired(loadNotifications()));
+  const [notifications, setNotifications] = useState([]);
+  const [loading, setLoading]             = useState(true);
   const [expandedIds, setExpandedIds]     = useState(() => new Set());
   const notifScrollRef = useRef(null);
 
@@ -262,28 +255,51 @@ export default function Notifications() {
     return () => window.removeEventListener('tab-scroll-top', onTabScrollTop);
   }, []);
 
+  useEffect(() => {
+    if (!user?.id) { setLoading(false); return; }
+    supabase
+      .from('notifications')
+      .select('id, template_key, custom_text, game_id, read_at, created_at, games:game_id(date_key)')
+      .eq('recipient_user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(50)
+      .then(({ data }) => {
+        setNotifications((data ?? []).map(mapRow).filter(Boolean));
+        setLoading(false);
+      });
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const groups    = useMemo(() => groupAndSort(notifications), [notifications]);
   const hasUnread = useMemo(() => notifications.some(n => !n.read), [notifications]);
 
   function handlePress(id) {
-    setExpandedIds(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-    setNotifications(prev => {
-      const next = prev.map(n => n.id === id ? { ...n, read: true } : n);
-      persist(next);
-      return next;
-    });
+    setExpandedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    console.log('[notif] handlePress updating read_at for id:', id, 'user:', user?.id);
+    supabase.from('notifications')
+      .update({ read_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('recipient_user_id', user.id)
+      .is('read_at', null)
+      .then(({ error, data, count, status, statusText }) => {
+        if (error) console.error('[notif] handlePress update failed:', error, { status, statusText });
+        else console.log('[notif] handlePress update ok:', { status, count });
+      });
   }
 
   function markAll() {
-    setNotifications(prev => {
-      const next = prev.map(n => ({ ...n, read: true }));
-      persist(next);
-      return next;
-    });
+    const unreadIds = notifications.filter(n => !n.read).map(n => n.id);
+    if (!unreadIds.length) return;
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    console.log('[notif] markAll updating', unreadIds.length, 'ids:', unreadIds, 'user:', user?.id);
+    supabase.from('notifications')
+      .update({ read_at: new Date().toISOString() })
+      .in('id', unreadIds)
+      .eq('recipient_user_id', user.id)
+      .then(({ error, data, count, status, statusText }) => {
+        if (error) console.error('[notif] markAll update failed:', error, { status, statusText });
+        else console.log('[notif] markAll update ok:', { status, count });
+      });
   }
 
   if (!user) return (
@@ -333,7 +349,11 @@ export default function Notifications() {
             </div>
           )}
 
-          {groups.length === 0 && !staff?.pendingInvites?.length ? (
+          {loading ? (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '48px 0' }}>
+              <div style={{ color: SUB, fontSize: 14 }}>Cargando…</div>
+            </div>
+          ) : groups.length === 0 && !staff?.pendingInvites?.length ? (
             <Empty />
           ) : groups.length === 0 ? null : (
             groups.map(([dateKey, items]) => (

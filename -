@@ -1,0 +1,1408 @@
+
+
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+
+CREATE SCHEMA IF NOT EXISTS "public";
+
+
+ALTER SCHEMA "public" OWNER TO "pg_database_owner";
+
+
+COMMENT ON SCHEMA "public" IS 'standard public schema';
+
+
+
+CREATE TYPE "public"."notification_category" AS ENUM (
+    'reservation',
+    'refund',
+    'reminder',
+    'invitation',
+    'operational',
+    'onboarding',
+    'marketing'
+);
+
+
+ALTER TYPE "public"."notification_category" OWNER TO "postgres";
+
+
+CREATE TYPE "public"."notification_delivery_type" AS ENUM (
+    'automatic',
+    'manual'
+);
+
+
+ALTER TYPE "public"."notification_delivery_type" OWNER TO "postgres";
+
+
+CREATE TYPE "public"."notification_source_type" AS ENUM (
+    'system',
+    'venue',
+    'algrass'
+);
+
+
+ALTER TYPE "public"."notification_source_type" OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."apply_default_host_to_game"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+begin
+  if new.host_user_id is null then
+    select default_host_user_id
+    into new.host_user_id
+    from fields
+    where id = new.field_id;
+  end if;
+
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "public"."apply_default_host_to_game"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."apply_wallet_refund"("p_user_id" "uuid", "p_amount" numeric) RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+BEGIN
+  INSERT INTO wallet_summary (user_id, total_amount, reserved_balance, credit_balance)
+  VALUES (p_user_id, 0, 0, p_amount)
+  ON CONFLICT (user_id) DO UPDATE SET
+    reserved_balance = GREATEST(0, wallet_summary.reserved_balance - p_amount),
+    credit_balance   = wallet_summary.credit_balance + p_amount;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."apply_wallet_refund"("p_user_id" "uuid", "p_amount" numeric) OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."generate_user_code"("p_full_name" "text") RETURNS "text"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  parts      text[];
+  first_part text;
+  last_part  text;
+  candidate  text;
+  attempts   int := 0;
+BEGIN
+  parts := regexp_split_to_array(trim(lower(unaccent(p_full_name))), '\s+');
+
+  first_part := substring(
+    regexp_replace(parts[1], '[^a-z]', '', 'g'),
+    1,
+    8
+  );
+
+  last_part := substring(
+    regexp_replace(
+      coalesce(array_to_string(parts[2:array_length(parts,1)], ''), ''),
+      '[^a-z]',
+      '',
+      'g'
+    ),
+    1,
+    3
+  );
+
+  LOOP
+    candidate := first_part || last_part || (floor(random() * 999 + 1))::int::text;
+
+    EXIT WHEN NOT EXISTS (
+      SELECT 1 FROM users WHERE user_code = candidate
+    );
+
+    attempts := attempts + 1;
+
+    IF attempts > 50 THEN
+      candidate := first_part || last_part ||
+                   (extract(epoch from now())::int % 9999)::text;
+      EXIT;
+    END IF;
+  END LOOP;
+
+  RETURN candidate;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."generate_user_code"("p_full_name" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."handle_new_user"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+BEGIN
+  INSERT INTO public.users (
+    id,
+    email,
+    full_name
+  )
+  VALUES (
+    NEW.id,
+    NEW.email,
+    COALESCE(
+      NEW.raw_user_meta_data->>'full_name',
+      NEW.raw_user_meta_data->>'name',
+      split_part(NEW.email, '@', 1)
+    )
+  );
+
+  INSERT INTO public.wallet_summary (
+    user_id,
+    total_amount,
+    reserved_balance,
+    credit_balance
+  )
+  VALUES (
+    NEW.id,
+    0,
+    0,
+    0
+  );
+
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."handle_new_user"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."protect_locked_game_fields"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+declare
+  confirmed_count integer;
+begin
+
+  -- solo validar OLD en updates
+  if tg_op = 'UPDATE' then
+
+    select count(*)
+    into confirmed_count
+    from game_players gp
+    where gp.game_id = new.id
+      and gp.status = 'confirmed';
+
+    if confirmed_count > 0 then
+
+      if new.total_spots is distinct from old.total_spots
+         or new.format is distinct from old.format
+         or new.price_per_person is distinct from old.price_per_person then
+
+        raise exception
+        'cannot modify format/spots/pricing after confirmed players exist';
+
+      end if;
+
+    end if;
+
+  end if;
+
+  -- calcular SOLO para matches
+  if new.type = 'match' or new.type is null then
+    new.price_total :=
+      coalesce(new.price_per_person, 0)
+      * coalesce(new.total_spots, 0);
+  end if;
+
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "public"."protect_locked_game_fields"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."required_players_from_format"("p_format" "text") RETURNS integer
+    LANGUAGE "plpgsql" IMMUTABLE
+    AS $$
+declare
+  v_players integer;
+begin
+  v_players := split_part(lower(p_format), 'v', 1)::integer;
+  return v_players * 2;
+exception
+  when others then
+    return 0;
+end;
+$$;
+
+
+ALTER FUNCTION "public"."required_players_from_format"("p_format" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."set_field_total_spots_from_format"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+declare
+  required_players integer;
+begin
+  -- autocompletar solo si:
+  -- format existe
+  -- y total_spots viene null
+  if new.format is not null
+     and new.total_spots is null then
+
+    required_players :=
+      split_part(lower(new.format), 'v', 1)::integer * 2;
+
+    new.total_spots := required_players;
+  end if;
+
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "public"."set_field_total_spots_from_format"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."set_game_duration_default"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+begin
+
+  if new.duration_min is null then
+    select duration_min
+    into new.duration_min
+    from fields
+    where id = new.field_id;
+  end if;
+
+  return new;
+
+end;
+$$;
+
+
+ALTER FUNCTION "public"."set_game_duration_default"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."set_game_format"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+begin
+  if new.format is null then
+    select format
+    into new.format
+    from fields
+    where id = new.field_id;
+  end if;
+
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "public"."set_game_format"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."set_game_total_spots"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+begin
+  if new.total_spots is null then
+    select total_spots
+    into new.total_spots
+    from fields
+    where id = new.field_id;
+  end if;
+
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "public"."set_game_total_spots"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."sync_field_total_spots_with_format"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+declare
+  required_players integer;
+begin
+  if new.format is not null then
+    required_players :=
+      split_part(lower(new.format), 'v', 1)::integer * 2;
+
+    new.total_spots := required_players;
+  end if;
+
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "public"."sync_field_total_spots_with_format"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."sync_manager_to_venue_staff"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+begin
+  if new.manager_user_id is not null then
+
+    insert into venue_staff (
+      venue_id,
+      user_id,
+      status
+    )
+    values (
+      new.id,
+      new.manager_user_id,
+      'accepted'
+    )
+
+    on conflict (venue_id, user_id)
+    do update set
+      status = 'accepted';
+
+  end if;
+
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "public"."sync_manager_to_venue_staff"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."update_game_lifecycle"() RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+BEGIN
+
+  -- Matches published → completed o expired
+  UPDATE games g
+  SET status = CASE
+    WHEN EXISTS (
+      SELECT 1
+      FROM game_players gp
+      WHERE gp.game_id = g.id
+    )
+    THEN 'completed'
+    ELSE 'expired'
+  END
+  FROM fields f
+  WHERE g.field_id = f.id
+    AND g.type = 'match'
+    AND g.status = 'published'
+    AND (
+      (
+        (g.date_key || ' ' || g.time)::timestamp
+        + COALESCE(g.duration_min, f.duration_min, 60)
+          * INTERVAL '1 minute'
+      )
+      AT TIME ZONE 'America/Lima'
+    ) < NOW();
+
+  -- Rentals published → completed o expired
+  UPDATE games g
+  SET status = CASE
+    WHEN EXISTS (
+      SELECT 1
+      FROM reservations r
+      WHERE r.game_id = g.id
+        AND r.status = 'confirmed'
+    )
+    THEN 'completed'
+    ELSE 'expired'
+  END
+  FROM fields f
+  WHERE g.field_id = f.id
+    AND g.type = 'rental'
+    AND g.status = 'published'
+    AND (
+      (
+        (g.date_key || ' ' || g.time)::timestamp
+        + COALESCE(g.duration_min, f.duration_min, 60)
+          * INTERVAL '1 minute'
+      )
+      AT TIME ZONE 'America/Lima'
+    ) < NOW();
+
+  -- Rentals reserved → completed
+  UPDATE games g
+  SET status = 'completed'
+  FROM fields f
+  WHERE g.field_id = f.id
+    AND g.status = 'reserved'
+    AND (
+      (
+        (g.date_key || ' ' || g.time)::timestamp
+        + COALESCE(g.duration_min, f.duration_min, 60)
+          * INTERVAL '1 minute'
+      )
+      AT TIME ZONE 'America/Lima'
+    ) < NOW();
+
+END;
+$$;
+
+
+ALTER FUNCTION "public"."update_game_lifecycle"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."validate_format_vs_total_spots"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+declare
+  required_players integer;
+  effective_format text;
+  effective_total_spots integer;
+begin
+  effective_format := new.format;
+  effective_total_spots := new.total_spots;
+
+  -- fallback desde fields si vienen null
+  if effective_format is null or effective_total_spots is null then
+    select
+      coalesce(effective_format, format),
+      coalesce(effective_total_spots, total_spots)
+    into
+      effective_format,
+      effective_total_spots
+    from fields
+    where id = new.field_id;
+  end if;
+
+  -- si aún falta algo, no validar
+  if effective_format is null or effective_total_spots is null then
+    return new;
+  end if;
+
+  required_players := required_players_from_format(effective_format);
+
+  if effective_total_spots < required_players then
+    raise exception 'total_spots cannot be lower than required players for format';
+  end if;
+
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "public"."validate_format_vs_total_spots"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."validate_game_total_spots"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+declare
+  confirmed_count integer;
+begin
+  select count(*)
+  into confirmed_count
+  from game_players
+  where game_id = new.id
+    and status = 'confirmed';
+
+  if new.total_spots < confirmed_count then
+    raise exception 'games.total_spots cannot be lower than confirmed players';
+  end if;
+
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "public"."validate_game_total_spots"() OWNER TO "postgres";
+
+SET default_tablespace = '';
+
+SET default_table_access_method = "heap";
+
+
+CREATE TABLE IF NOT EXISTS "public"."broadcasts" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "title" "text" NOT NULL,
+    "body" "text" NOT NULL,
+    "image_url" "text",
+    "starts_at" timestamp with time zone,
+    "expires_at" timestamp with time zone,
+    "created_by" "uuid",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."broadcasts" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."fields" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "name" "text" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "venue_id" "uuid",
+    "format" "text",
+    "amenities" "jsonb" DEFAULT '{}'::"jsonb",
+    "total_spots" integer,
+    "duration_min" integer DEFAULT 60 NOT NULL,
+    "default_host_user_id" "uuid",
+    CONSTRAINT "fields_duration_min_check" CHECK (("duration_min" > 0)),
+    CONSTRAINT "fields_format_check" CHECK ((("format" ~ '^(1[0-1]|[1-9])v(1[0-1]|[1-9])$'::"text") AND ("split_part"("format", 'v'::"text", 1) = "split_part"("format", 'v'::"text", 2)))),
+    CONSTRAINT "fields_total_spots_check" CHECK (("total_spots" > 0))
+);
+
+
+ALTER TABLE "public"."fields" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."game_players" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "game_id" "uuid" NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "reservation_id" "uuid" NOT NULL,
+    "payer_id" "uuid",
+    "status" "text" DEFAULT 'confirmed'::"text" NOT NULL,
+    "joined_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "canceled_at" timestamp with time zone,
+    "amount" numeric(10,2) NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "checked_in_at" timestamp with time zone,
+    "reservation_type" "text" DEFAULT 'normal'::"text",
+    "invited_by_user_id" "uuid",
+    CONSTRAINT "game_players_status_check" CHECK (("status" = ANY (ARRAY['confirmed'::"text", 'canceled'::"text"])))
+);
+
+
+ALTER TABLE "public"."game_players" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."games" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "field_id" "uuid" NOT NULL,
+    "date_key" "date",
+    "time" time without time zone,
+    "price_per_person" numeric,
+    "status" "text" DEFAULT 'draft'::"text" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "type" "text",
+    "price_total" numeric,
+    "current_players" integer,
+    "amenities" "jsonb" DEFAULT '{}'::"jsonb",
+    "total_spots" integer,
+    "format" "text",
+    "host_user_id" "uuid",
+    "duration_min" integer,
+    "host_checked_in_at" timestamp with time zone,
+    CONSTRAINT "duration_required_when_blocking" CHECK ((("status" <> ALL (ARRAY['draft'::"text", 'published'::"text", 'active'::"text"])) OR ("duration_min" IS NOT NULL))),
+    CONSTRAINT "games_duration_min_check" CHECK (("duration_min" > 0)),
+    CONSTRAINT "games_format_check" CHECK ((("format" ~ '^(1[0-1]|[1-9])v(1[0-1]|[1-9])$'::"text") AND ("split_part"("format", 'v'::"text", 1) = "split_part"("format", 'v'::"text", 2)))),
+    CONSTRAINT "games_status_check" CHECK (("status" = ANY (ARRAY['draft'::"text", 'published'::"text", 'reserved'::"text", 'completed'::"text", 'expired'::"text", 'canceled'::"text"]))),
+    CONSTRAINT "games_total_spots_check" CHECK (("total_spots" > 0))
+);
+
+
+ALTER TABLE "public"."games" OWNER TO "postgres";
+
+
+CREATE OR REPLACE VIEW "public"."game_live_spots" AS
+ SELECT "g"."id" AS "game_id",
+    (COALESCE("g"."total_spots", 0) - "count"("gp"."id") FILTER (WHERE ("gp"."status" = 'confirmed'::"text"))) AS "open_spots",
+    "count"("gp"."id") FILTER (WHERE ("gp"."status" = 'confirmed'::"text")) AS "occupied_spots"
+   FROM ("public"."games" "g"
+     LEFT JOIN "public"."game_players" "gp" ON (("gp"."game_id" = "g"."id")))
+  GROUP BY "g"."id", "g"."total_spots";
+
+
+ALTER VIEW "public"."game_live_spots" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."notifications" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "recipient_user_id" "uuid" NOT NULL,
+    "source_type" "public"."notification_source_type" NOT NULL,
+    "delivery_type" "public"."notification_delivery_type" NOT NULL,
+    "category" "public"."notification_category" NOT NULL,
+    "template_key" "text" NOT NULL,
+    "custom_text" "text",
+    "game_id" "uuid",
+    "venue_id" "uuid",
+    "created_by" "uuid",
+    "scheduled_for" timestamp with time zone,
+    "sent_at" timestamp with time zone,
+    "read_at" timestamp with time zone,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."notifications" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."promo_codes" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "code" "text" NOT NULL,
+    "discount_percent" numeric(5,2) NOT NULL,
+    "active" boolean DEFAULT true,
+    "expires_at" timestamp with time zone,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "promo_games_type" "text" DEFAULT 'all'::"text" NOT NULL,
+    CONSTRAINT "promo_codes_games_type_check" CHECK (("promo_games_type" = ANY (ARRAY['match'::"text", 'rental'::"text", 'all'::"text"])))
+);
+
+
+ALTER TABLE "public"."promo_codes" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."rating" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "game_id" "uuid" NOT NULL,
+    "user_id" "uuid",
+    "stars" smallint,
+    "comment" "text",
+    "rated_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."rating" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."reservations" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "game_id" "uuid" NOT NULL,
+    "user_id" "uuid",
+    "status" "text",
+    "unit_price" numeric,
+    "promo_code" "text",
+    "promo_discount" numeric,
+    "credit_applied" numeric,
+    "total_amount" numeric,
+    "reserved_at" timestamp with time zone DEFAULT "now"(),
+    "canceled_at" timestamp with time zone,
+    "payment_method" "text",
+    "source" "text",
+    "players_count" integer,
+    "guests_total" numeric,
+    "subtotal_amount" numeric(10,2),
+    "guest_total" integer DEFAULT 0 NOT NULL,
+    "canceled_by" "uuid",
+    "reservation_type" "text" DEFAULT 'normal'::"text",
+    "invited_by_user_id" "uuid",
+    CONSTRAINT "reservations_status_check" CHECK (("status" = ANY (ARRAY['spend'::"text", 'refund'::"text"])))
+);
+
+
+ALTER TABLE "public"."reservations" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."users" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "full_name" "text" NOT NULL,
+    "email" "text",
+    "role" "text" DEFAULT ''::"text",
+    "organizer_status" "text" DEFAULT ''::"text",
+    "credit_balance" numeric DEFAULT '0'::numeric,
+    "birth_date" "date",
+    "sex" "text",
+    "preferred_position" "text"[],
+    "phone" "text",
+    "nationality" "text",
+    "occupation" "text",
+    "user_code" "text",
+    "avatar_hue" smallint,
+    "city" "text",
+    "avatar_path" "text",
+    "avatar_updated_at" timestamp with time zone,
+    "full_name_search" "text",
+    CONSTRAINT "users_avatar_hue_check" CHECK ((("avatar_hue" >= 0) AND ("avatar_hue" < 360)))
+);
+
+
+ALTER TABLE "public"."users" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."venue_staff" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "venue_id" "uuid" NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "status" "text" DEFAULT 'pending'::"text" NOT NULL,
+    "invited_by" "uuid",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "accepted_at" timestamp with time zone,
+    CONSTRAINT "venue_hosts_status_check" CHECK (("status" = ANY (ARRAY['pending'::"text", 'accepted'::"text", 'rejected'::"text", 'revoked'::"text"])))
+);
+
+
+ALTER TABLE "public"."venue_staff" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."venues" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "name" "text" NOT NULL,
+    "address" "text",
+    "manager_user_id" "uuid",
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "amenities" "jsonb" DEFAULT '{}'::"jsonb",
+    "city" "text",
+    "cover_image_path" "text",
+    "cover_updated_at" timestamp with time zone
+);
+
+
+ALTER TABLE "public"."venues" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."wallet_summary" (
+    "user_id" "uuid" NOT NULL,
+    "total_amount" numeric(10,2) DEFAULT 0 NOT NULL,
+    "reserved_balance" numeric(10,2) DEFAULT 0 NOT NULL,
+    "credit_balance" numeric(10,2) DEFAULT 0 NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."wallet_summary" OWNER TO "postgres";
+
+
+ALTER TABLE ONLY "public"."broadcasts"
+    ADD CONSTRAINT "broadcasts_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."fields"
+    ADD CONSTRAINT "fields_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."game_players"
+    ADD CONSTRAINT "game_players_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."game_players"
+    ADD CONSTRAINT "game_players_unique_triplet" UNIQUE ("game_id", "user_id", "payer_id");
+
+
+
+ALTER TABLE ONLY "public"."games"
+    ADD CONSTRAINT "games_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."games"
+    ADD CONSTRAINT "no_field_time_overlap" EXCLUDE USING "gist" ("field_id" WITH =, "tsrange"(("date_key" + "time"), (("date_key" + "time") + (("duration_min")::double precision * '00:01:00'::interval)), '[)'::"text") WITH &&) WHERE (("status" = ANY (ARRAY['draft'::"text", 'published'::"text", 'active'::"text"])));
+
+
+
+ALTER TABLE ONLY "public"."notifications"
+    ADD CONSTRAINT "notifications_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."promo_codes"
+    ADD CONSTRAINT "promo_codes_code_key" UNIQUE ("code");
+
+
+
+ALTER TABLE ONLY "public"."promo_codes"
+    ADD CONSTRAINT "promo_codes_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."rating"
+    ADD CONSTRAINT "rating_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."reservations"
+    ADD CONSTRAINT "reservations_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."users"
+    ADD CONSTRAINT "users_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."users"
+    ADD CONSTRAINT "users_user_code_key" UNIQUE ("user_code");
+
+
+
+ALTER TABLE ONLY "public"."users"
+    ADD CONSTRAINT "users_user_code_unique" UNIQUE ("user_code");
+
+
+
+ALTER TABLE ONLY "public"."venue_staff"
+    ADD CONSTRAINT "venue_hosts_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."venues"
+    ADD CONSTRAINT "venues_name_city_unique" UNIQUE ("name", "city");
+
+
+
+ALTER TABLE ONLY "public"."venues"
+    ADD CONSTRAINT "venues_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."wallet_summary"
+    ADD CONSTRAINT "wallet_summary_pkey" PRIMARY KEY ("user_id");
+
+
+
+CREATE INDEX "broadcasts_dates_idx" ON "public"."broadcasts" USING "btree" ("starts_at", "expires_at");
+
+
+
+CREATE INDEX "game_players_game_id_invited_by_idx" ON "public"."game_players" USING "btree" ("game_id", "payer_id");
+
+
+
+CREATE INDEX "game_players_game_id_status_idx" ON "public"."game_players" USING "btree" ("game_id", "status");
+
+
+
+CREATE INDEX "game_players_game_status_idx" ON "public"."game_players" USING "btree" ("game_id", "status");
+
+
+
+CREATE INDEX "game_players_invited_by_idx" ON "public"."game_players" USING "btree" ("payer_id");
+
+
+
+CREATE UNIQUE INDEX "game_players_one_active_slot_idx" ON "public"."game_players" USING "btree" ("game_id", "user_id") WHERE ("status" = 'confirmed'::"text");
+
+
+
+CREATE UNIQUE INDEX "game_players_one_confirmed_per_user" ON "public"."game_players" USING "btree" ("game_id", "user_id") WHERE ("status" = 'confirmed'::"text");
+
+
+
+CREATE INDEX "game_players_reservation_idx" ON "public"."game_players" USING "btree" ("reservation_id");
+
+
+
+CREATE INDEX "game_players_user_id_idx" ON "public"."game_players" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "notifications_recipient_created_idx" ON "public"."notifications" USING "btree" ("recipient_user_id", "created_at" DESC);
+
+
+
+CREATE UNIQUE INDEX "unique_active_game_player" ON "public"."game_players" USING "btree" ("game_id", "user_id") WHERE ("status" = 'confirmed'::"text");
+
+
+
+CREATE INDEX "users_full_name_search_idx" ON "public"."users" USING "btree" ("full_name_search");
+
+
+
+CREATE INDEX "users_user_code_idx" ON "public"."users" USING "btree" ("user_code");
+
+
+
+CREATE UNIQUE INDEX "venue_hosts_unique_user_per_venue" ON "public"."venue_staff" USING "btree" ("venue_id", "user_id");
+
+
+
+CREATE OR REPLACE TRIGGER "field_total_spots_default" BEFORE INSERT OR UPDATE ON "public"."fields" FOR EACH ROW EXECUTE FUNCTION "public"."sync_field_total_spots_with_format"();
+
+
+
+CREATE OR REPLACE TRIGGER "game_duration_default" BEFORE INSERT ON "public"."games" FOR EACH ROW EXECUTE FUNCTION "public"."set_game_duration_default"();
+
+
+
+CREATE OR REPLACE TRIGGER "game_format_default" BEFORE INSERT ON "public"."games" FOR EACH ROW EXECUTE FUNCTION "public"."set_game_format"();
+
+
+
+CREATE OR REPLACE TRIGGER "game_total_spots_default" BEFORE INSERT ON "public"."games" FOR EACH ROW EXECUTE FUNCTION "public"."set_game_total_spots"();
+
+
+
+CREATE OR REPLACE TRIGGER "games_lock_sensitive_fields" BEFORE UPDATE ON "public"."games" FOR EACH ROW EXECUTE FUNCTION "public"."protect_locked_game_fields"();
+
+
+
+CREATE OR REPLACE TRIGGER "protect_locked_game_fields_trigger" BEFORE INSERT OR UPDATE ON "public"."games" FOR EACH ROW EXECUTE FUNCTION "public"."protect_locked_game_fields"();
+
+
+
+CREATE OR REPLACE TRIGGER "trg_apply_default_host_to_game" BEFORE INSERT ON "public"."games" FOR EACH ROW EXECUTE FUNCTION "public"."apply_default_host_to_game"();
+
+
+
+CREATE OR REPLACE TRIGGER "trg_sync_manager_to_venue_staff" AFTER INSERT OR UPDATE OF "manager_user_id" ON "public"."venues" FOR EACH ROW EXECUTE FUNCTION "public"."sync_manager_to_venue_staff"();
+
+
+
+CREATE OR REPLACE TRIGGER "validate_fields_format_vs_total_spots" BEFORE INSERT OR UPDATE ON "public"."fields" FOR EACH ROW EXECUTE FUNCTION "public"."validate_format_vs_total_spots"();
+
+
+
+CREATE OR REPLACE TRIGGER "validate_game_total_spots_trigger" BEFORE INSERT OR UPDATE ON "public"."games" FOR EACH ROW EXECUTE FUNCTION "public"."validate_game_total_spots"();
+
+
+
+CREATE OR REPLACE TRIGGER "validate_games_format_vs_total_spots" BEFORE INSERT OR UPDATE ON "public"."games" FOR EACH ROW EXECUTE FUNCTION "public"."validate_format_vs_total_spots"();
+
+
+
+ALTER TABLE ONLY "public"."broadcasts"
+    ADD CONSTRAINT "broadcasts_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."fields"
+    ADD CONSTRAINT "fields_default_host_user_id_fkey" FOREIGN KEY ("default_host_user_id") REFERENCES "public"."users"("id");
+
+
+
+ALTER TABLE ONLY "public"."fields"
+    ADD CONSTRAINT "fields_venue_id_fkey" FOREIGN KEY ("venue_id") REFERENCES "public"."venues"("id");
+
+
+
+ALTER TABLE ONLY "public"."game_players"
+    ADD CONSTRAINT "game_players_game_id_fkey" FOREIGN KEY ("game_id") REFERENCES "public"."games"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."game_players"
+    ADD CONSTRAINT "game_players_invited_by_fkey" FOREIGN KEY ("payer_id") REFERENCES "public"."users"("id");
+
+
+
+ALTER TABLE ONLY "public"."game_players"
+    ADD CONSTRAINT "game_players_invited_by_user_id_fkey" FOREIGN KEY ("invited_by_user_id") REFERENCES "public"."users"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."game_players"
+    ADD CONSTRAINT "game_players_reservation_id_fkey" FOREIGN KEY ("reservation_id") REFERENCES "public"."reservations"("id");
+
+
+
+ALTER TABLE ONLY "public"."game_players"
+    ADD CONSTRAINT "game_players_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id");
+
+
+
+ALTER TABLE ONLY "public"."games"
+    ADD CONSTRAINT "games_field_id_fkey" FOREIGN KEY ("field_id") REFERENCES "public"."fields"("id");
+
+
+
+ALTER TABLE ONLY "public"."games"
+    ADD CONSTRAINT "games_host_user_id_fkey" FOREIGN KEY ("host_user_id") REFERENCES "public"."users"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."notifications"
+    ADD CONSTRAINT "notifications_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."notifications"
+    ADD CONSTRAINT "notifications_game_id_fkey" FOREIGN KEY ("game_id") REFERENCES "public"."games"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."notifications"
+    ADD CONSTRAINT "notifications_recipient_user_id_fkey" FOREIGN KEY ("recipient_user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."notifications"
+    ADD CONSTRAINT "notifications_venue_id_fkey" FOREIGN KEY ("venue_id") REFERENCES "public"."venues"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."reservations"
+    ADD CONSTRAINT "reservations_canceled_by_fkey" FOREIGN KEY ("canceled_by") REFERENCES "public"."users"("id");
+
+
+
+ALTER TABLE ONLY "public"."reservations"
+    ADD CONSTRAINT "reservations_game_id_fkey" FOREIGN KEY ("game_id") REFERENCES "public"."games"("id");
+
+
+
+ALTER TABLE ONLY "public"."reservations"
+    ADD CONSTRAINT "reservations_invited_by_user_id_fkey" FOREIGN KEY ("invited_by_user_id") REFERENCES "public"."users"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."reservations"
+    ADD CONSTRAINT "reservations_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id");
+
+
+
+ALTER TABLE ONLY "public"."venue_staff"
+    ADD CONSTRAINT "venue_hosts_invited_by_fkey" FOREIGN KEY ("invited_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."venue_staff"
+    ADD CONSTRAINT "venue_hosts_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."venue_staff"
+    ADD CONSTRAINT "venue_hosts_venue_id_fkey" FOREIGN KEY ("venue_id") REFERENCES "public"."venues"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."venues"
+    ADD CONSTRAINT "venues_manager_user_id_fkey" FOREIGN KEY ("manager_user_id") REFERENCES "public"."users"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."wallet_summary"
+    ADD CONSTRAINT "wallet_summary_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
+
+
+
+CREATE POLICY "Anyone can read active promo codes" ON "public"."promo_codes" FOR SELECT USING (("active" = true));
+
+
+
+CREATE POLICY "Hosts can update attendance for their games" ON "public"."game_players" FOR UPDATE USING ((EXISTS ( SELECT 1
+   FROM "public"."games"
+  WHERE (("games"."id" = "game_players"."game_id") AND ("games"."host_user_id" = "auth"."uid"()))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."games"
+  WHERE (("games"."id" = "game_players"."game_id") AND ("games"."host_user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "Users can read their own venue staff rows" ON "public"."venue_staff" FOR SELECT TO "authenticated" USING (("auth"."uid"() = "user_id"));
+
+
+
+CREATE POLICY "Users can update own reservations" ON "public"."reservations" FOR UPDATE TO "authenticated" USING (("auth"."uid"() = "user_id"));
+
+
+
+CREATE POLICY "Users can update their own venue staff rows" ON "public"."venue_staff" FOR UPDATE TO "authenticated" USING (("auth"."uid"() = "user_id"));
+
+
+
+CREATE POLICY "authenticated users read broadcasts" ON "public"."broadcasts" FOR SELECT USING (("auth"."uid"() IS NOT NULL));
+
+
+
+ALTER TABLE "public"."broadcasts" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."game_players" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "game_players_insert_own_or_invited" ON "public"."game_players" FOR INSERT WITH CHECK (((("user_id" = "auth"."uid"()) AND ("payer_id" IS NULL)) OR (("payer_id" = "auth"."uid"()) AND ("reservation_id" IN ( SELECT "reservations"."id"
+   FROM "public"."reservations"
+  WHERE ("reservations"."user_id" = "auth"."uid"()))))));
+
+
+
+CREATE POLICY "game_players_insert_policy" ON "public"."game_players" FOR INSERT TO "authenticated" WITH CHECK (("payer_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "game_players_select_policy" ON "public"."game_players" FOR SELECT TO "authenticated" USING (true);
+
+
+
+CREATE POLICY "game_players_select_public" ON "public"."game_players" FOR SELECT USING (true);
+
+
+
+CREATE POLICY "game_players_update_own_or_invited" ON "public"."game_players" FOR UPDATE USING ((("user_id" = "auth"."uid"()) OR ("payer_id" = "auth"."uid"())));
+
+
+
+CREATE POLICY "game_players_update_policy" ON "public"."game_players" FOR UPDATE TO "authenticated" USING (("payer_id" = "auth"."uid"())) WITH CHECK (("payer_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."notifications" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."promo_codes" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."reservations" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "reservations_insert_own" ON "public"."reservations" FOR INSERT TO "authenticated" WITH CHECK ((("user_id" = "auth"."uid"()) OR (("status" = 'refund'::"text") AND ("canceled_by" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "reservations_select_own" ON "public"."reservations" FOR SELECT USING (("user_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."users" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "users can insert own reservations" ON "public"."reservations" FOR INSERT TO "authenticated" WITH CHECK (("auth"."uid"() = "user_id"));
+
+
+
+CREATE POLICY "users can read own reservations" ON "public"."reservations" FOR SELECT TO "authenticated" USING (("auth"."uid"() = "user_id"));
+
+
+
+CREATE POLICY "users read own notifications" ON "public"."notifications" FOR SELECT USING (("recipient_user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "users update own notifications" ON "public"."notifications" FOR UPDATE USING (("recipient_user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "users_select_public" ON "public"."users" FOR SELECT USING (true);
+
+
+
+CREATE POLICY "users_update_own" ON "public"."users" FOR UPDATE USING (("id" = "auth"."uid"())) WITH CHECK (("id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."venue_staff" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."wallet_summary" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "wallet_summary_insert_own" ON "public"."wallet_summary" FOR INSERT WITH CHECK (("auth"."uid"() = "user_id"));
+
+
+
+CREATE POLICY "wallet_summary_select_own" ON "public"."wallet_summary" FOR SELECT USING (("auth"."uid"() = "user_id"));
+
+
+
+CREATE POLICY "wallet_summary_update_own" ON "public"."wallet_summary" FOR UPDATE USING (("auth"."uid"() = "user_id"));
+
+
+
+GRANT USAGE ON SCHEMA "public" TO "postgres";
+GRANT USAGE ON SCHEMA "public" TO "anon";
+GRANT USAGE ON SCHEMA "public" TO "authenticated";
+GRANT USAGE ON SCHEMA "public" TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."apply_default_host_to_game"() TO "anon";
+GRANT ALL ON FUNCTION "public"."apply_default_host_to_game"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."apply_default_host_to_game"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."apply_wallet_refund"("p_user_id" "uuid", "p_amount" numeric) TO "anon";
+GRANT ALL ON FUNCTION "public"."apply_wallet_refund"("p_user_id" "uuid", "p_amount" numeric) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."apply_wallet_refund"("p_user_id" "uuid", "p_amount" numeric) TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."generate_user_code"("p_full_name" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."generate_user_code"("p_full_name" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."generate_user_code"("p_full_name" "text") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "anon";
+GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."protect_locked_game_fields"() TO "anon";
+GRANT ALL ON FUNCTION "public"."protect_locked_game_fields"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."protect_locked_game_fields"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."required_players_from_format"("p_format" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."required_players_from_format"("p_format" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."required_players_from_format"("p_format" "text") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."set_field_total_spots_from_format"() TO "anon";
+GRANT ALL ON FUNCTION "public"."set_field_total_spots_from_format"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."set_field_total_spots_from_format"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."set_game_duration_default"() TO "anon";
+GRANT ALL ON FUNCTION "public"."set_game_duration_default"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."set_game_duration_default"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."set_game_format"() TO "anon";
+GRANT ALL ON FUNCTION "public"."set_game_format"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."set_game_format"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."set_game_total_spots"() TO "anon";
+GRANT ALL ON FUNCTION "public"."set_game_total_spots"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."set_game_total_spots"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."sync_field_total_spots_with_format"() TO "anon";
+GRANT ALL ON FUNCTION "public"."sync_field_total_spots_with_format"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."sync_field_total_spots_with_format"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."sync_manager_to_venue_staff"() TO "anon";
+GRANT ALL ON FUNCTION "public"."sync_manager_to_venue_staff"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."sync_manager_to_venue_staff"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."update_game_lifecycle"() TO "anon";
+GRANT ALL ON FUNCTION "public"."update_game_lifecycle"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."update_game_lifecycle"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."validate_format_vs_total_spots"() TO "anon";
+GRANT ALL ON FUNCTION "public"."validate_format_vs_total_spots"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."validate_format_vs_total_spots"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."validate_game_total_spots"() TO "anon";
+GRANT ALL ON FUNCTION "public"."validate_game_total_spots"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."validate_game_total_spots"() TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."broadcasts" TO "anon";
+GRANT ALL ON TABLE "public"."broadcasts" TO "authenticated";
+GRANT ALL ON TABLE "public"."broadcasts" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."fields" TO "anon";
+GRANT ALL ON TABLE "public"."fields" TO "authenticated";
+GRANT ALL ON TABLE "public"."fields" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."game_players" TO "anon";
+GRANT ALL ON TABLE "public"."game_players" TO "authenticated";
+GRANT ALL ON TABLE "public"."game_players" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."games" TO "anon";
+GRANT ALL ON TABLE "public"."games" TO "authenticated";
+GRANT ALL ON TABLE "public"."games" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."game_live_spots" TO "anon";
+GRANT ALL ON TABLE "public"."game_live_spots" TO "authenticated";
+GRANT ALL ON TABLE "public"."game_live_spots" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."notifications" TO "anon";
+GRANT ALL ON TABLE "public"."notifications" TO "authenticated";
+GRANT ALL ON TABLE "public"."notifications" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."promo_codes" TO "anon";
+GRANT ALL ON TABLE "public"."promo_codes" TO "authenticated";
+GRANT ALL ON TABLE "public"."promo_codes" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."rating" TO "anon";
+GRANT ALL ON TABLE "public"."rating" TO "authenticated";
+GRANT ALL ON TABLE "public"."rating" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."reservations" TO "anon";
+GRANT ALL ON TABLE "public"."reservations" TO "authenticated";
+GRANT ALL ON TABLE "public"."reservations" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."users" TO "anon";
+GRANT ALL ON TABLE "public"."users" TO "authenticated";
+GRANT ALL ON TABLE "public"."users" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."venue_staff" TO "anon";
+GRANT ALL ON TABLE "public"."venue_staff" TO "authenticated";
+GRANT ALL ON TABLE "public"."venue_staff" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."venues" TO "anon";
+GRANT ALL ON TABLE "public"."venues" TO "authenticated";
+GRANT ALL ON TABLE "public"."venues" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."wallet_summary" TO "anon";
+GRANT ALL ON TABLE "public"."wallet_summary" TO "authenticated";
+GRANT ALL ON TABLE "public"."wallet_summary" TO "service_role";
+
+
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "postgres";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "anon";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "authenticated";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "service_role";
+
+
+
+
+
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "postgres";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "anon";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "authenticated";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "service_role";
+
+
+
+
+
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "postgres";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "anon";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "authenticated";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
+
+
+
+
+
+
+

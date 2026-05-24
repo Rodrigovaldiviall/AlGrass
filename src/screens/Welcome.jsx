@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BLUE, TEXT, SUB } from '../constants';
 import { haptic } from '../utils/haptic';
+import logo from '../assets/logo.webp';
 
 export const WELCOME_KEY = 'pichanga_welcome_seen';
 
@@ -29,8 +30,8 @@ function Ball({ size = 80 }) {
 function SplashView() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 22 }}>
-      <div style={{ animation: 'spin 1.8s ease-in-out forwards' }}>
-        <Ball size={88} />
+      <div style={{ animation: 'logo-spin 1.6s ease-in-out forwards' }}>
+        <img src={logo} alt="Algrass" style={{ width: 140, height: 'auto', objectFit: 'contain' }} />
       </div>
       <span style={{ fontSize: 34, fontWeight: 800, color: BLUE, letterSpacing: -1.2 }}>
         Algrass

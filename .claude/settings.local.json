@@ -34,7 +34,11 @@
       "Bash(xargs grep -l \"img\\\\|cover\\\\|objectFit\")",
       "Bash(Get-ChildItem -Path \"c:\\\\Claude Code\\\\AlGrass\\\\supabase\\\\\" -Recurse -Include \"*.sql\", \"*.js\" -ErrorAction SilentlyContinue)",
       "Bash(gzip -c dist/assets/index-5-yTEPNj.js)",
-      "Bash(gzip -c dist/assets/games-CrVXFMc7.js)"
+      "Bash(gzip -c dist/assets/games-CrVXFMc7.js)",
+      "Bash(Get-ChildItem -Recurse -Include *.js, *.jsx)",
+      "Bash(Select-Object -First 30 FullName)",
+      "Bash(npx supabase *)",
+      "Bash(curl -s \"https://iwghvtmijlyakufdghwb.supabase.co/rest/v1/notifications?limit=1\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3Z2h2dG1pamx5YWt1ZmRnaHdiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2NjMyMTgsImV4cCI6MjA5NDIzOTIxOH0.tXtVyIyPm94f3c9T4-flnXPuKELTcLHxauY2U5Cii-c\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3Z2h2dG1pamx5YWt1ZmRnaHdiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2NjMyMTgsImV4cCI6MjA5NDIzOTIxOH0.tXtVyIyPm94f3c9T4-flnXPuKELTcLHxauY2U5Cii-c\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\rodri\\.claude\\projects\\c--Claude-Code-AlGrass\\memory"

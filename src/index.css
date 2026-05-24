@@ -56,6 +56,7 @@ input:-webkit-autofill:hover {
 }
 
 @keyframes spin        { to   { transform: rotate(360deg); } }
+@keyframes logo-spin   { 0% { transform: perspective(400px) rotateY(0deg); } 100% { transform: perspective(400px) rotateY(360deg); } }
 @keyframes lp-fadein   { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes lp-slideup  { from { transform: translateY(100%); }             to { transform: translateY(0); } }
 @keyframes pulse       { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }

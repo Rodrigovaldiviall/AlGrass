@@ -149,11 +149,9 @@ function SocialButton({ label, icon, onClick, loading, variant = 'light' }) {
 const PROFILE_KEY   = 'pichanga_profile';
 const USERCODES_KEY = 'pichanga_usercodes';
 const USERS_KEY     = 'pichanga_users';
-const SEED_USERS    = { 'rodrigo@gm.com': { name: 'Rodrigo', password: 'Palopalo' } };
-
 function getUsers() {
-  try { return { ...SEED_USERS, ...JSON.parse(localStorage.getItem(USERS_KEY)) || {} }; }
-  catch { return SEED_USERS; }
+  try { return JSON.parse(localStorage.getItem(USERS_KEY)) || {}; }
+  catch { return {}; }
 }
 function userExists(email) {
   return !!getUsers()[email.toLowerCase().trim()];

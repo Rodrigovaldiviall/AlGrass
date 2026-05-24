@@ -50,7 +50,7 @@ function buildGame(sel) {
       description: GAME_DEFAULTS.description,
       recommendations: GAME_DEFAULTS.recommendations,
       organizer: GAME_DEFAULTS.organizer,
-      players: GAME_DEFAULTS.players,
+      players: [],
       price: 'S/. 8.49',
       priceNumber: 8.49,
       currency: 'S/.',
@@ -71,7 +71,7 @@ function buildGame(sel) {
     sel.showers   && { kind: 'showers',  label: 'Duchas' },
   ].filter(Boolean);
   const confirmed = Math.max(0, total - (sel.openSpots ?? 0));
-  const players = GAME_DEFAULTS.players.slice(0, Math.min(confirmed, GAME_DEFAULTS.players.length));
+  const players = [];
   return {
     id: sel.id,
     field: sel.field,
@@ -1532,9 +1532,9 @@ export default function GameDetail() {
               </button>
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <Avatar name={g.organizer.name} size={44} />
+                <Avatar name={g.field || g.organizer.name} size={44} />
                 <div style={{ fontSize: 'var(--gd-body, 14px)', color: TEXT, lineHeight: 1.4 }}>
-                  Este juego es organizado por <span style={{ fontWeight: 700 }}>{g.organizer.name}</span>
+                  Este juego es organizado por <span style={{ fontWeight: 700 }}>{g.field || g.organizer.name}</span>
                 </div>
               </div>
             )}

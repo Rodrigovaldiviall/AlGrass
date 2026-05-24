@@ -81,18 +81,6 @@ export const FIELD_INFO = {
   'Ibèria':             { address: ['Ibèria',              'Carrer Mallorca 90'] },
 };
 
-export const DEMO_WAITLIST_IDS = ['g28'];
-export function seedDemoWaitlist() {
-  try {
-    const wl = JSON.parse(localStorage.getItem('pichanga_waitlist')) || {};
-    let changed = false;
-    for (const id of DEMO_WAITLIST_IDS) {
-      if (!wl[id]) { wl[id] = { gameId: id, userId: 'demo', joinedAt: '' }; changed = true; }
-    }
-    if (changed) localStorage.setItem('pichanga_waitlist', JSON.stringify(wl));
-  } catch {}
-}
-
 export const GAME_DEFAULTS = {
   duration: '60 min',
   fieldNumber: 'Cancha 2',
@@ -104,20 +92,5 @@ export const GAME_DEFAULTS = {
   recommendations: [
     'Por favor llegar 15 minutos antes.',
     'Llevar una camiseta oscura.',
-  ],
-  organizer: { name: 'Juan León' },
-  players: [
-    { name: 'Carlos Pérez',   age: 28, position: 'MED'               },
-    { name: 'Luis Ramos',     age: 32, position: 'DEF · ARQ'         },
-    { name: 'Ana Torres',     age: 24, position: 'DEL · MED · DEF'   },
-    { name: 'Diego Morales',  age: 27, position: 'DEL'               },
-    { name: 'Pablo Suárez',   age: 35, position: 'ARQ'               },
-    { name: 'Marco Vela',     age: 22, position: 'MED · DEF'         },
-    { name: 'Andrés Quiroz',  age: 30, position: 'DEL · MED · DEF · ARQ' },
-    { name: 'Felipe Ruiz',    age: 26, position: 'DEF'               },
-    { name: 'Iván Castillo',  age: 29, position: 'DEL · MED'         },
-    { name: 'Renato Díaz',    age: 31, position: 'MED · DEF · ARQ'   },
-    { name: 'Sergio Pino',    age: 23, position: 'DEL · MED · DEF'   },
-    { name: 'Tomás Vega',     age: 34, position: 'DEF · ARQ'         },
   ],
 };

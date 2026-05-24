@@ -451,9 +451,9 @@ export default function FieldDetail() {
 
         <Section title="Organizador">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <Avatar name={g.organizer.name} size={44} />
+            <Avatar name={g.field || g.organizer.name} size={44} />
             <div style={{ fontSize: 14, color: TEXT, lineHeight: 1.4 }}>
-              Este campo es organizado por <span style={{ fontWeight: 700 }}>{g.organizer.name}</span>
+              Este campo es organizado por <span style={{ fontWeight: 700 }}>{g.field || g.organizer.name}</span>
             </div>
           </div>
         </Section>

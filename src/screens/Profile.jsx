@@ -946,12 +946,11 @@ function CityPicker({ value, onChange }) {
   );
 }
 
-const _SEED_PW = { 'rodrigo@gm.com': 'Palopalo' };
 function getStoredPassword(email) {
   try {
     const users = JSON.parse(localStorage.getItem('pichanga_users') || '{}');
     const key = (email || '').toLowerCase().trim();
-    return users[key]?.password ?? _SEED_PW[key] ?? null;
+    return users[key]?.password ?? null;
   } catch { return null; }
 }
 
@@ -1660,7 +1659,7 @@ function GameRow({ game, onPress, muted = false, userId = null }) {
         if (game.status === 'guest') return (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
             <div className="game-status-pill" style={{ ...pillBase, background: '#EDF5FF', border: `1.2px solid ${BLUE}40`, color: BLUE }}>Invitado</div>
-            <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
+            <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap', minWidth: PM, textAlign: 'center' }}>
               {game.activeGuestCount > 0
                 ? `${game.activeGuestCount} ${game.activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}`
                 : `por ${abbreviateName(game.paidBy)}`}
@@ -2099,6 +2098,38 @@ export default function Profile() {
 
   const canceledGames = useMemo(() => deriveCanceledWithGuestsGames(), [extraGames]);
 
+  // Games where user canceled their own slot but still has active guests.
+  // extraGames misses these because the refund record filters them out.
+  const canceledWithGuestsFromPlayerRows = useMemo(() => {
+    if (!user?.id || !myPlayerRowsReady) return [];
+    const byGame = {};
+    myPlayerRows.forEach(r => { (byGame[r.game_id] ??= []).push(r); });
+    const result = [];
+    for (const [gameId, rows] of Object.entries(byGame)) {
+      const state = deriveGameState(rows, user.id);
+      if (state.relationship !== 'canceled-with-guests') continue;
+      const g = rows[0]?.games;
+      if (!g) continue;
+      const { time, ampm } = parseGameTime(g.time);
+      result.push({
+        id:            gameId,
+        gameId,
+        dateKey:       g.date_key                           ?? null,
+        time24:        g.time                               ?? null,
+        durationMin:   g.duration_min ?? g.fields?.duration_min ?? null,
+        date:          formatDateLabel(g.date_key),
+        time,
+        ampm,
+        field:         g.fields?.venues?.name               || '',
+        format:        g.format ?? g.fields?.format         ?? '7v7',
+        type:          'game',
+        status:        'canceled-with-guests',
+        activeGuestCount: state.activeGuestCount,
+      });
+    }
+    return result;
+  }, [myPlayerRows, user?.id, myPlayerRowsReady]);
+
   const hostedGameRows = useMemo(
     () => hostedRows.map(g => {
       const row = sbHostedGameToRow(g);
@@ -2135,6 +2166,7 @@ export default function Profile() {
       ...waitlistEntries,
       ...guestGames,
       ...canceledGames,
+      ...canceledWithGuestsFromPlayerRows,
       ...hostedGameRows, // fallback: makes hosted games visible when not in reservations/game_players
     ];
     // one card per game — keep highest-priority status row

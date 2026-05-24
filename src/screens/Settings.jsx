@@ -16,8 +16,10 @@ const PRIVACY_KEY = 'pichanga_privacy';
 const NOTIF_KEY   = 'pichanga_notif';
 const ROLE_KEY    = 'pichanga_role';
 
-// Cities enabled by admin — replace with remote fetch when backend is ready
-const ENABLED_CITIES = ['Arequipa', 'Lima', 'Cusco'];
+async function fetchAvailableCities() {
+  const { data } = await supabase.from('venues').select('city').not('city', 'is', null);
+  return [...new Set((data ?? []).map(r => r.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+}
 
 const TERMS_TEXT = `Algrass es una plataforma de reservas deportivas que conecta jugadores con organizadores de partidos y campos de fútbol. Al suscribirte aceptas usar la plataforma de forma responsable y confirmas ser mayor de 18 años. Las reservas están sujetas a disponibilidad y los pagos son procesados de forma segura. Algrass no se responsabiliza por lesiones ocurridas durante los partidos. Los organizadores son responsables de las condiciones de sus instalaciones. Nos reservamos el derecho de suspender cuentas que incumplan estas normas.`;
 
@@ -359,6 +361,9 @@ export default function Settings() {
   const [role, setRole] = useState(() => {
     try { return localStorage.getItem(ROLE_KEY) || 'jugador'; } catch { return 'jugador'; }
   });
+  const [availableCities, setAvailableCities] = useState([]);
+  useEffect(() => { fetchAvailableCities().then(setAvailableCities); }, []);
+
   const [groupOpen, setGroupOpen] = useState({ jugador: false, organizador: false });
   const [openQuestion, setOpenQuestion] = useState(null);
   const [legalModal, setLegalModal] = useState(null);
@@ -462,7 +467,7 @@ export default function Settings() {
           <div style={{ display: 'flex', alignItems: 'center', padding: '0 16px', minHeight: 38, gap: 12 }}>
             <span style={{ flex: 1, fontSize: 13.5, color: TEXT }}>Ciudad</span>
             <select
-              value={city || ENABLED_CITIES[0]}
+              value={city || availableCities[0] || ''}
               onChange={e => saveCity(e.target.value)}
               style={{
                 height: 28, borderRadius: 8, border: `1px solid ${HAIR}`,
@@ -471,7 +476,7 @@ export default function Settings() {
                 outline: 'none', cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none',
                 boxSizing: 'border-box', flexShrink: 0,
               }}>
-              {ENABLED_CITIES.map(c => <option key={c} value={c}>{c}</option>)}
+              {availableCities.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
         </Section>

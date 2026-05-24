@@ -4,6 +4,7 @@ import { AuthProvider } from './context/AuthContext';
 import { StaffProvider, useStaff } from './context/StaffContext';
 import StaffInviteModal from './components/StaffInviteModal';
 import Sidebar from './components/Sidebar';
+import logo from './assets/logo.webp';
 
 function StaffModalBridge() {
   const staff = useStaff();
@@ -38,7 +39,11 @@ function Placeholder({ title }) {
 }
 
 function RouteShell() {
-  return <div className="screen-shell" style={{ background: '#F2F2F4' }} />;
+  return (
+    <div className="screen-shell" style={{ background: '#3F5FE0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <img src={logo} alt="Algrass" style={{ width: 130, height: 'auto', objectFit: 'contain', animation: 'logo-spin 1.6s ease-in-out forwards' }} />
+    </div>
+  );
 }
 
 export default function App() {
