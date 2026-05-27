@@ -85,9 +85,10 @@ export default function TabBar({ activeTab: activeProp }) {
   const badges = { notificaciones: getNotifBadge(), perfil: getUpcomingBadge() };
 
   return (
+    <>
     <div className="tab-bar" style={{
       borderTop: '1px solid #E5E5EA', background: '#fff',
-      display: 'flex', paddingBottom: 'calc(env(safe-area-inset-bottom) + 4px)', paddingTop: 4,
+      display: 'flex', paddingBottom: 4, paddingTop: 4,
     }}>
       {TABS.map(t => (
         <TabItem
@@ -111,5 +112,7 @@ export default function TabBar({ activeTab: activeProp }) {
         />
       ))}
     </div>
+    <div style={{ height: 'env(safe-area-inset-bottom)', flexShrink: 0 }} />
+    </>
   );
 }

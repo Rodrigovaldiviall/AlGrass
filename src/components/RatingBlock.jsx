@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { TEXT, SUB, HAIR, ORANGE, SOFT } from '../constants';
-import { getRatings, setRatings } from '../services/ratingService';
+import { saveRating } from '../services/ratingService';
+import { useAuth } from '../context/AuthContext';
 
 function StarIcon({ filled, size = 28 }) {
   return (
@@ -15,21 +16,27 @@ function StarIcon({ filled, size = 28 }) {
   );
 }
 
-export default function RatingBlock({ gameId, existingRating }) {
+export default function RatingBlock({ gameId, existingRating, gameType, hostUserId }) {
+  const { user } = useAuth();
   const [stars,   setStars]   = useState(existingRating?.stars   ?? 0);
   const [comment, setComment] = useState(existingRating?.comment ?? '');
   const [hovered, setHovered] = useState(0);
   const [saved,   setSaved]   = useState(false);
 
-  const preRated = !!existingRating;  // had a rating on mount → no button, read-only
-  const frozen   = preRated || saved; // interactions locked
+  const preRated = !!existingRating;
+  const frozen   = preRated || saved;
   const active   = hovered || stars;
 
   async function handleSave() {
     const cleanComment = comment.trim() || null;
-    const all = await getRatings();
-    all[gameId] = { stars, comment: cleanComment, ratedAt: new Date().toISOString() };
-    await setRatings(all);
+    await saveRating({
+      userId:      user?.id ?? null,
+      gameType:    gameType ?? 'match',
+      gameId,
+      hostUserId:  hostUserId ?? null,
+      stars,
+      comment:     cleanComment,
+    });
     setComment(cleanComment ?? '');
     setSaved(true);
   }

@@ -1,53 +1,91 @@
 import { supabase } from '../lib/supabase';
 
-const RATINGS_KEY = 'pichanga_ratings';
+const TABLE  = 'rating';
+const LS_KEY = 'pichanga_ratings';
 
-export async function getRatings() {
-  try { return JSON.parse(localStorage.getItem(RATINGS_KEY)) || {}; } catch { return {}; }
+// ── Local cache helpers ──────────────────────────────────────────────────────
+export function getLocalRatings() {
+  try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch { return {}; }
+}
+export function setLocalRatings(map) {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(map)); } catch {}
 }
 
-export async function setRatings(ratings) {
-  try { localStorage.setItem(RATINGS_KEY, JSON.stringify(ratings)); } catch {}
-}
+// ── Save rating (localStorage + Supabase) ───────────────────────────────────
+export async function saveRating({ userId, gameType, gameId, venueId, fieldId, hostUserId, stars, comment }) {
+  // Write local cache immediately for instant UI feedback
+  const local = getLocalRatings();
+  local[gameId] = { stars, comment: comment || null, ratedAt: new Date().toISOString() };
+  setLocalRatings(local);
 
-/**
- * Save a game rating for the current user.
- * Writes to Supabase `game_ratings` if available; always mirrors to localStorage.
- *
- * Required DB table (create once):
- *   CREATE TABLE game_ratings (
- *     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
- *     game_id     uuid NOT NULL REFERENCES games(id),
- *     rater_id    uuid NOT NULL REFERENCES auth.users(id),
- *     stars       smallint NOT NULL CHECK (stars BETWEEN 1 AND 5),
- *     comment     text,
- *     created_at  timestamptz NOT NULL DEFAULT now(),
- *     UNIQUE (game_id, rater_id)
- *   );
- *   -- RLS: rater can insert own row; anyone can read.
- *
- * Only confirmed game_players can rate (enforced in frontend via isGamePast + confirmed status).
- */
-export async function saveRating({ gameId, raterId, stars, comment }) {
-  if (supabase && gameId && raterId) {
-    const { error } = await supabase
-      .from('game_ratings')
-      .upsert({ game_id: gameId, rater_id: raterId, stars, comment: comment || null },
-               { onConflict: 'game_id,rater_id' });
-    if (error) console.warn('[ratingService] saveRating:', error.message);
+  // ── Guard checks — log reason if we bail ────────────────────────────────
+  if (!supabase) { console.error('[rating] supabase client is null — skipping insert'); return; }
+  if (!userId)   { console.error('[rating] userId is null/undefined — skipping insert'); return; }
+  if (!gameId)   { console.error('[rating] gameId is null/undefined — skipping insert'); return; }
+
+  // ── Look up field_id / venue_id if not provided ─────────────────────────
+  let fId = fieldId ?? null;
+  let vId = venueId ?? null;
+  if (!fId || !vId) {
+    const { data: gData, error: gErr } = await supabase
+      .from('games')
+      .select('field_id, fields:field_id ( venue_id )')
+      .eq('id', gameId)
+      .maybeSingle();
+    if (gErr) console.warn('[rating] game lookup error:', gErr.message);
+    if (gData) {
+      fId = fId ?? gData.field_id ?? null;
+      vId = vId ?? gData.fields?.venue_id ?? null;
+    }
+  }
+
+  const payload = {
+    user_id:      userId,
+    game_type:    gameType ?? 'match',
+    game_id:      gameId,
+    venue_id:     vId,
+    field_id:     fId,
+    host_user_id: hostUserId ?? null,
+    stars,
+    comment:      comment || null,
+  };
+  console.log('[rating] INSERT payload:', payload);
+
+  // Try INSERT first; if duplicate (23505) do UPDATE instead
+  const { data: insertData, error: insertErr } = await supabase
+    .from(TABLE)
+    .insert(payload)
+    .select();
+
+  if (!insertErr) {
+    console.log('[rating] INSERT success:', insertData);
+    return;
+  }
+
+  console.error('[rating] INSERT error:', insertErr.code, insertErr.message, insertErr.details);
+
+  // Duplicate → UPDATE existing row
+  if (insertErr.code === '23505') {
+    console.log('[rating] duplicate detected — attempting UPDATE');
+    const { data: updateData, error: updateErr } = await supabase
+      .from(TABLE)
+      .update({ stars, comment: comment || null, venue_id: vId, field_id: fId, host_user_id: hostUserId ?? null })
+      .eq('user_id', userId)
+      .eq('game_id', gameId)
+      .select();
+    if (updateErr) console.error('[rating] UPDATE error:', updateErr.code, updateErr.message);
+    else console.log('[rating] UPDATE success:', updateData);
   }
 }
 
-/**
- * Fetch all ratings submitted by a user (for showing "already rated" state).
- * Returns a map: { [gameId]: { stars, comment } }
- */
-export async function fetchMyRatings(raterId) {
-  if (!supabase || !raterId) return {};
+// ── Fetch all ratings for a user from Supabase ──────────────────────────────
+export async function fetchMyRatings(userId) {
+  if (!supabase || !userId) return {};
   const { data, error } = await supabase
-    .from('game_ratings')
+    .from(TABLE)
     .select('game_id, stars, comment')
-    .eq('rater_id', raterId);
-  if (error) { console.warn('[ratingService] fetchMyRatings:', error.message); return {}; }
+    .eq('user_id', userId);
+  if (error) { console.error('[rating] fetchMyRatings error:', error.message); return {}; }
+  console.log('[rating] fetchMyRatings:', data?.length ?? 0, 'ratings loaded');
   return Object.fromEntries((data || []).map(r => [r.game_id, { stars: r.stars, comment: r.comment }]));
 }

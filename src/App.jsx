@@ -1,10 +1,14 @@
-import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { lazy, Suspense, useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { StaffProvider, useStaff } from './context/StaffContext';
 import StaffInviteModal from './components/StaffInviteModal';
 import Sidebar from './components/Sidebar';
 import logo from './assets/logo.webp';
+import IntroScreen from './screens/IntroScreen';
+
+const INTRO_KEY = 'algrass_intro_seen';
+
 
 function StaffModalBridge() {
   const staff = useStaff();
@@ -46,18 +50,41 @@ function RouteShell() {
   );
 }
 
+// IntroGate lives inside BrowserRouter so it can navigate directly.
+// onStart fires at button-click → navigate + Games starts loading during the fade.
+// onDone fires 480ms later → removes IntroScreen after fade completes.
+function IntroGate() {
+  const navigate = useNavigate();
+  const [introDone, setIntroDone] = useState(() => {
+    try {
+      const done = !!localStorage.getItem(INTRO_KEY);
+      if (done) {
+        const m = document.querySelector('meta[name="theme-color"]');
+        if (m) m.content = '#3F5FE0';
+      }
+      return done;
+    } catch { return true; }
+  });
+
+  if (introDone) return null;
+  return (
+    <IntroScreen
+      onStart={() => {
+        try { localStorage.setItem(WELCOME_KEY, '1'); } catch {}
+      }}
+      onDone={() => {
+        setIntroDone(true);
+        setTimeout(() => navigate('/games', { state: { showCitySheet: true } }), 0);
+      }}
+    />
+  );
+}
+
 export default function App() {
   return (
     <AuthProvider>
     <StaffProvider>
     <BrowserRouter>
-      <div style={{
-        position: 'fixed', top: 0, left: 0, right: 0,
-        height: 'env(safe-area-inset-top)',
-        background: '#3F5FE0',
-        zIndex: 99999,
-        pointerEvents: 'none',
-      }} />
       <div className="app-layout">
         <Sidebar />
         <div className="app-main">
@@ -82,6 +109,7 @@ export default function App() {
         </div>
       </div>
       <StaffModalBridge />
+      <IntroGate />
     </BrowserRouter>
     </StaffProvider>
     </AuthProvider>

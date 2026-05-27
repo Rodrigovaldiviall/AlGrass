@@ -14,6 +14,17 @@ import { getAvatarUrl } from '../utils/avatar';
 
 const ROSTER_KEY = 'pichanga_game_rosters';
 
+function firstName(fullName) {
+  return (fullName ?? '').split(' ')[0] || 'Un jugador';
+}
+
+function guestNamesText(gs) {
+  const names = gs.map(g => firstName(g.name)).filter(Boolean);
+  if (!names.length) return 'tus invitados';
+  if (names.length === 1) return names[0];
+  return `${names.slice(0, -1).join(', ')} y ${names[names.length - 1]}`;
+}
+
 
 function getFavorites(paidPlayers) {
   const seen = new Set();
@@ -202,7 +213,7 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
     });
   }
 
-  const allKnownPlayers = { ...sbPlayerMap };
+  const allKnownPlayers = { ...Object.fromEntries(favorites.map(p => [p.id, p])), ...sbPlayerMap };
 
   const topList = q
     ? [
@@ -806,6 +817,7 @@ export default function ConfirmReservation() {
               recipient_user_id: guest.id,
               source_type: 'venue', delivery_type: 'automatic', category: 'invitation',
               template_key: 'invited_by_player',
+              custom_text: `${firstName(authUser?.name)} te invitó a jugar. Revisa los detalles.`,
               game_id: gameId, venue_id: game?.venueId ?? null,
               created_by: authUser?.id,
               sent_at: new Date().toISOString(),
@@ -851,6 +863,7 @@ export default function ConfirmReservation() {
             recipient_user_id: authUser?.id,
             source_type: 'venue', delivery_type: 'automatic', category: 'reservation',
             template_key: 'reservation_confirmed_with_guests',
+            custom_text: `Añadiste a ${guestNamesText(guests)} a tu reserva. Recuérdales la hora y lugar.`,
             game_id: gameId, venue_id: game?.venueId ?? null,
             sent_at: new Date().toISOString(),
           }).then(({ error }) => {
@@ -863,6 +876,7 @@ export default function ConfirmReservation() {
               recipient_user_id: guest.id,
               source_type: 'venue', delivery_type: 'automatic', category: 'invitation',
               template_key: 'invited_by_player',
+              custom_text: `${firstName(authUser?.name)} te invitó a jugar. Revisa los detalles.`,
               game_id: gameId, venue_id: game?.venueId ?? null,
               created_by: authUser?.id,
               sent_at: new Date().toISOString(),
@@ -925,6 +939,7 @@ export default function ConfirmReservation() {
           recipient_user_id: guest.id,
           source_type: 'venue', delivery_type: 'automatic', category: 'invitation',
           template_key: 'invited_by_player',
+          custom_text: `${firstName(authUser?.name)} te invitó a jugar. Revisa los detalles.`,
           game_id: game?.id, venue_id: game?.venueId ?? null,
           created_by: authUser?.id,
           sent_at: new Date().toISOString(),

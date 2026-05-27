@@ -340,6 +340,51 @@ function RoleButton({ role, onSwitch }) {
   );
 }
 
+// ── SecuritySheet ──────────────────────────────────────────────────────────
+
+function SecuritySheet({ onClose, onDeleteRequest }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
+
+  function close() { setOpen(false); setTimeout(onClose, 260); }
+  function handleDelete() { setOpen(false); setTimeout(onDeleteRequest, 260); }
+
+  return (
+    <div
+      onClick={close}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9000,
+        background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)',
+        transition: 'background .22s ease',
+        display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
+        pointerEvents: open ? 'auto' : 'none',
+      }}>
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: SOFT,
+          borderTopLeftRadius: 24, borderTopRightRadius: 24,
+          padding: '8px 16px calc(28px + env(safe-area-inset-bottom))',
+          boxShadow: '0 -8px 32px rgba(0,0,0,0.10)',
+          transform: open ? 'translateY(0)' : 'translateY(100%)',
+          transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)',
+        }}>
+        <div style={{ width: 36, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '8px auto 20px' }} />
+        <div style={{ fontSize: 11, fontWeight: 600, color: SUB, letterSpacing: 0.5, textTransform: 'uppercase', paddingLeft: 4, marginBottom: 7 }}>
+          Seguridad
+        </div>
+        <div style={{ background: '#fff', borderRadius: 16, overflow: 'hidden' }}>
+          <Row label="Eliminar mi cuenta" onPress={handleDelete} danger />
+        </div>
+        <div style={{ height: 12 }} />
+        <div style={{ background: '#fff', borderRadius: 16, overflow: 'hidden' }}>
+          <Row label="Cancelar" onPress={close} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Screen ─────────────────────────────────────────────────────────────────
 
 export default function Settings() {
@@ -367,6 +412,7 @@ export default function Settings() {
   const [groupOpen, setGroupOpen] = useState({ jugador: false, organizador: false });
   const [openQuestion, setOpenQuestion] = useState(null);
   const [legalModal, setLegalModal] = useState(null);
+  const [showSecurity, setShowSecurity] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
 
   const shellRef = useRef(null);
@@ -391,6 +437,13 @@ export default function Settings() {
     const v = !privacyOn;
     setPrivacyOn(v);
     try { localStorage.setItem(PRIVACY_KEY, JSON.stringify(v)); } catch {}
+    if (supabase && user?.id) {
+      console.log('[privacy] UPDATE profile_private =', !v, 'user =', user.id);
+      supabase.from('users').update({ profile_private: !v }).eq('id', user.id)
+        .then(({ error }) => console.log('[privacy] update result error =', error));
+    } else {
+      console.warn('[privacy] skipped — supabase:', !!supabase, 'user?.id:', user?.id);
+    }
   }
 
   function toggleNotif() {
@@ -424,6 +477,7 @@ export default function Settings() {
   }
 
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [loggingOut, setLoggingOut]               = useState(false);
 
   function doLogout() {
     setShowLogoutConfirm(true);
@@ -432,8 +486,11 @@ export default function Settings() {
   function confirmLogout() {
     haptic();
     setShowLogoutConfirm(false);
-    logout();
-    navigate('/auth', { replace: true });
+    setLoggingOut(true);
+    setTimeout(() => {
+      logout();
+      navigate('/auth', { replace: true });
+    }, 520);
   }
 
   return (
@@ -524,7 +581,7 @@ export default function Settings() {
           </div>
         </Section>
 
-        {/* 4. Editar perfil + 5. Privacidad */}
+        {/* 4. Cuenta */}
         <Section title="Cuenta">
           <Row
             label="Editar perfil"
@@ -536,6 +593,12 @@ export default function Settings() {
             label="Privacidad del perfil"
             sublabel="Edad, sexo y posición visibles para otros"
             right={<Toggle on={privacyOn} onChange={togglePrivacy} />}
+          />
+          <Sep />
+          <Row
+            label="Seguridad"
+            onPress={() => setShowSecurity(true)}
+            right={<ChevRight />}
           />
         </Section>
 
@@ -579,13 +642,11 @@ export default function Settings() {
           ))}
         </Section>
 
-        {/* 7+8. Legal + Eliminar cuenta */}
+        {/* 7+8. Legal */}
         <Section title="Legal">
           <Row label="Términos de servicio" onPress={() => setLegalModal('terms')} right={<ChevRight />} />
           <Sep />
           <Row label="Política de privacidad" onPress={() => setLegalModal('privacy')} right={<ChevRight />} />
-          <Sep />
-          <Row label="Eliminar mi cuenta" onPress={() => setShowDelete(true)} danger />
         </Section>
 
         {/* 9. Notificaciones */}
@@ -625,7 +686,29 @@ export default function Settings() {
       </div>
 
       {legalModal && <LegalModal type={legalModal} onClose={() => setLegalModal(null)} />}
+      {showSecurity && (
+        <SecuritySheet
+          onClose={() => setShowSecurity(false)}
+          onDeleteRequest={() => { setShowSecurity(false); setShowDelete(true); }}
+        />
+      )}
       {showDelete && <DeleteModal onConfirm={deleteAccount} onCancel={() => setShowDelete(false)} />}
+      {loggingOut && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 99999,
+          background: 'rgba(255,255,255,0.94)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          gap: 14,
+        }}>
+          <div style={{
+            width: 34, height: 34, borderRadius: '50%',
+            border: `3px solid ${SOFT}`, borderTopColor: BLUE,
+            animation: 'spin 0.7s linear infinite',
+          }} />
+          <div style={{ fontSize: 14, color: SUB, fontWeight: 500 }}>Cerrando sesión...</div>
+        </div>
+      )}
+
       {showLogoutConfirm && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 9999,

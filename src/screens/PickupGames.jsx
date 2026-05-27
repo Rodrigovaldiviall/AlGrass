@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, RED, GREEN, ORANGE } from '../constants';
 import I from '../icons';
@@ -80,6 +81,7 @@ const ALL_SPOTS = Array.from({ length: 22 }, (_, i) => i + 1);
 
 function FilterPanel({ open, onClose, flt, setFlt }) {
   const [spotsExpanded, setSpotsExpanded] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   const toggleBool = k    => setFlt(f => ({ ...f, [k]: !f[k] }));
   const toggleArr  = (k, v) => setFlt(f => ({ ...f, [k]: f[k].includes(v) ? f[k].filter(x => x !== v) : [...f[k], v] }));
@@ -99,6 +101,10 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
   }, [open]);
+
+  useEffect(() => { if (open) setMounted(true); }, [open]);
+
+  if (!mounted) return null;
 
   const btnBase = (active) => ({
     height: 32, padding: '0 11px', borderRadius: 9,
@@ -128,7 +134,7 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
         transition: 'background .22s ease',
         pointerEvents: open ? 'auto' : 'none',
       }}>
-      <div className="sheet-panel" style={{
+      <div className="sheet-panel" onTransitionEnd={() => { if (!open) setMounted(false); }} style={{
         background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22,
         boxShadow: '0 -12px 40px rgba(0,0,0,0.18)',
         transform: open ? 'translateY(0)' : 'translateY(100%)',
@@ -295,10 +301,13 @@ function Header({ city, onCityTap }) {
   );
 }
 
-function CitySheet({ cities, current, onSelect, onClose }) {
+function CitySheet({ cities, current, onSelect, onClose, required = false }) {
   return (
     <>
-      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200 }} />
+      <div
+        onClick={required ? undefined : onClose}
+        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200 }}
+      />
       <div style={{
         position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 201,
         background: '#fff', borderRadius: '20px 20px 0 0',
@@ -306,7 +315,14 @@ function CitySheet({ cities, current, onSelect, onClose }) {
         animation: 'lp-slideup 0.28s cubic-bezier(0.32,0.72,0,1) forwards',
       }}>
         <div style={{ width: 36, height: 4, borderRadius: 2, background: '#E0E0E6', margin: '0 auto 16px' }} />
-        <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 14 }}>Ciudad</div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: required ? 4 : 14 }}>
+          {required ? 'Elige tu ciudad' : 'Ciudad'}
+        </div>
+        {required && (
+          <div style={{ fontSize: 13, color: SUB, marginBottom: 14, lineHeight: 1.4 }}>
+            Podrás cambiarla en cualquier momento
+          </div>
+        )}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {cities.map(c => (
             <button key={c} onClick={() => onSelect(c)} style={{
@@ -599,8 +615,11 @@ function DateHeader({ dateKey, refEl }) {
 const _WELCOME_KEY  = 'pichanga_welcome_seen';
 const _PROFILE_KEY  = 'pichanga_profile';
 
-function CityOnboardSheet({ onSelect }) {
+function CityOnboardSheet({ onDone }) {
   const [cities, setCities] = useState([]);
+  const [open, setOpen]     = useState(false);
+  const cityRef             = useRef(null);
+
   useEffect(() => {
     supabase.from('venues').select('city').not('city', 'is', null)
       .then(({ data }) => {
@@ -608,15 +627,35 @@ function CityOnboardSheet({ onSelect }) {
         setCities(sorted);
       });
   }, []);
-  return (
+
+  // Trigger open animation after first paint
+  useEffect(() => { requestAnimationFrame(() => setOpen(true)); }, []);
+
+  function handleSelect(city) {
+    cityRef.current = city;
+    setOpen(false);
+  }
+
+  return createPortal(
     <>
-      <div className="sheet-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200 }} />
-      <div className="sheet-overlay" style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 201,
-        background: '#fff', borderRadius: '20px 20px 0 0',
-        padding: '20px 20px calc(env(safe-area-inset-bottom) + 28px)',
-        animation: 'lp-slideup 0.32s cubic-bezier(0.32,0.72,0,1) forwards',
-      }}>
+      {/* Scrim — fullscreen, no onClick (city selection is mandatory) */}
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 100000,
+        background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)',
+        transition: 'background .22s ease',
+        pointerEvents: open ? 'all' : 'none',
+      }} />
+      {/* Sheet panel — slides up/down; onDone fires after close animation */}
+      <div
+        className="sheet-overlay"
+        onTransitionEnd={e => { if (e.propertyName === 'transform' && !open) onDone(cityRef.current); }}
+        style={{
+          position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 100001,
+          background: '#fff', borderRadius: '20px 20px 0 0',
+          padding: '20px 20px calc(env(safe-area-inset-bottom) + 28px)',
+          transform: open ? 'translateY(0)' : 'translateY(100%)',
+          transition: 'transform .32s cubic-bezier(0.32,0.72,0,1)',
+        }}>
         <div style={{ width: 36, height: 4, borderRadius: 2, background: '#E0E0E6', margin: '0 auto 20px' }} />
         <div style={{ fontSize: 17, fontWeight: 700, color: TEXT, marginBottom: 4 }}>
           Elige tu ciudad
@@ -628,7 +667,7 @@ function CityOnboardSheet({ onSelect }) {
           {cities.map(c => (
             <button
               key={c}
-              onClick={() => onSelect(c)}
+              onClick={() => handleSelect(c)}
               style={{
                 width: '100%', padding: '14px 16px', borderRadius: 13,
                 border: '1.5px solid #E5E5EA', background: '#fff',
@@ -641,7 +680,8 @@ function CityOnboardSheet({ onSelect }) {
           ))}
         </div>
       </div>
-    </>
+    </>,
+    document.body
   );
 }
 
@@ -671,7 +711,11 @@ export default function PickupGames() {
   const location = useLocation();
   const { user }  = useAuth();
 
-  const [showCitySheet, setShowCitySheet] = useState(!!location.state?.showCitySheet);
+  const [showCitySheet, setShowCitySheet]   = useState(false);
+  const [cityOnboarding, setCityOnboarding] = useState(!!location.state?.showCitySheet);
+  useEffect(() => {
+    if (location.state?.showCitySheet) { setCitySheetOpen(true); setCityOnboarding(true); }
+  }, [location.state?.showCitySheet]);
   const [games, setGames]     = useState(() => _gamesCache);
   const [loading, setLoading] = useState(_gamesCache.length === 0);
   useEffect(() => {
@@ -727,15 +771,14 @@ export default function PickupGames() {
   const [userCity, setUserCity] = useState(() => {
     try { return JSON.parse(localStorage.getItem('pichanga_profile'))?.city || ''; } catch { return ''; }
   });
-  const [citySheetOpen, setCitySheetOpen] = useState(false);
-  const [availableCities, setAvailableCities] = useState([]);
+  const [citySheetOpen, setCitySheetOpen] = useState(!!location.state?.showCitySheet);
+  const availableCities = useMemo(() => {
+    const cs = [...new Set(games.filter(g => g.status === 'published').map(g => g.city).filter(Boolean))];
+    return cs.sort((a, b) => a.localeCompare(b, 'es'));
+  }, [games]);
   useEffect(() => {
-    supabase.from('venues').select('city').not('city', 'is', null).then(({ data }) => {
-      const cities = [...new Set((data ?? []).map(r => r.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
-      setAvailableCities(cities);
-      if (!userCity && cities.length > 0) setUserCity(cities[0]);
-    });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!userCity && availableCities.length > 0) setUserCity(availableCities[0]);
+  }, [availableCities]); // eslint-disable-line react-hooks/exhaustive-deps
   function handleCityChange(c) {
     setUserCity(c);
     setCitySheetOpen(false);
@@ -1069,23 +1112,23 @@ export default function PickupGames() {
       <TabBar activeTab="partidos" />
       <FilterPanel open={panelOpen} onClose={() => setPanelOpen(false)} flt={flt} setFlt={setFlt} />
       {showCitySheet && (
-        <CityOnboardSheet onSelect={city => {
+        <CityOnboardSheet onDone={city => {
           try {
             const p = JSON.parse(localStorage.getItem(_PROFILE_KEY)) || {};
             localStorage.setItem(_PROFILE_KEY, JSON.stringify({ ...p, city }));
           } catch {}
           localStorage.setItem(_WELCOME_KEY, '1');
-          setShowCitySheet(false);
           setUserCity(city);
-          navigate('/games', { replace: true });
+          setShowCitySheet(false);
         }} />
       )}
       {citySheetOpen && (
         <CitySheet
           cities={availableCities}
-          current={userCity}
-          onSelect={handleCityChange}
-          onClose={() => setCitySheetOpen(false)}
+          current={cityOnboarding ? null : userCity}
+          onSelect={city => { handleCityChange(city); setCityOnboarding(false); }}
+          onClose={() => { setCityOnboarding(false); setCitySheetOpen(false); }}
+          required={cityOnboarding}
         />
       )}
     </div>

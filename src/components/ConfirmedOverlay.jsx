@@ -15,6 +15,7 @@ export default function ConfirmedOverlay({ game, onOK }) {
       background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)',
       transition: 'background .22s ease',
       display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
+      pointerEvents: open ? 'auto' : 'none',
     }}>
       <div className="sheet-panel" style={{
         background: '#fff',

@@ -54,14 +54,35 @@ export const notificationTemplates = {
 
   reservation_cancelled_credit_owner: {
     title:       'Reserva cancelada',
-    body:        'El organizador canceló el partido. Tu crédito ya está disponible.',
+    body:        'Tu reserva fue cancelada. El crédito fue devuelto al titular.',
     sourceLabel: 'Tu partido',
     imageType:   'venue_image',
   },
 
   guest_invitation_cancelled_credit: {
     title:       'Invitación cancelada',
-    body:        'La invitación fue cancelada. El crédito fue devuelto al pagador.',
+    body:        'La invitación fue cancelada. El crédito fue añadido a tu billetera.',
+    sourceLabel: 'Tu partido',
+    imageType:   'venue_image',
+  },
+
+  reservation_cancelled_guests_credit: {
+    title:       'Reserva cancelada',
+    body:        'Cancelaste la reserva de tu/s invitado/s. El crédito fue añadido a tu billetera.',
+    sourceLabel: 'Tu partido',
+    imageType:   'venue_image',
+  },
+
+  reservation_cancelled_self_and_guests: {
+    title:       'Reserva cancelada',
+    body:        'Cancelaste tu reserva y la de tu/s invitado/s. El crédito fue añadido a tu billetera.',
+    sourceLabel: 'Tu partido',
+    imageType:   'venue_image',
+  },
+
+  guest_invitation_cancelled_by_owner: {
+    title:       'Invitación cancelada',
+    body:        'El titular ha cancelado tu invitación.',
     sourceLabel: 'Tu partido',
     imageType:   'venue_image',
   },
@@ -129,6 +150,7 @@ export const notificationTemplates = {
 export function renderNotification(row) {
   const tpl = notificationTemplates[row.template_key];
   if (!tpl) return null;
-  // v2: interpolar row.params sobre title/body con replace de tokens {param}
-  return { ...tpl };
+  const body = row.custom_text ?? tpl.body;
+  const venueName = row.games?.fields?.venues?.name ?? null;
+  return { ...tpl, body: venueName ? `${venueName}. ${body}` : body };
 }

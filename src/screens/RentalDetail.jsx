@@ -6,6 +6,8 @@ import TabBar from '../components/TabBar';
 import { supabase } from '../lib/supabase';
 import { getVenueCoverUrl } from '../utils/venue';
 import { getAvatarUrl } from '../utils/avatar';
+import { isGamePast } from '../utils/deriveGameState';
+import RatingBlock from '../components/RatingBlock';
 import { getGameById } from '../services/gameService';
 import { cancelRental } from '../services/reservationService';
 import { useAuth } from '../context/AuthContext';
@@ -259,7 +261,7 @@ function ManageSheet({ onClose, onViewPayment, onCancel }) {
     </svg>
   );
   return (
-    <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease' }}>
+    <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease', pointerEvents: open ? 'auto' : 'none' }}>
       <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(20px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
         <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 20px' }} />
         <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 16, textAlign: 'center', letterSpacing: -0.2 }}>Gestionar la reserva</div>
@@ -295,7 +297,7 @@ function PaymentSheet({ onClose, userName, reservation }) {
     </div>
   );
   return (
-    <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease' }}>
+    <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease', pointerEvents: open ? 'auto' : 'none' }}>
       <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(24px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
         <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 20px' }} />
         <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 16, textAlign: 'center', letterSpacing: -0.2 }}>Detalles del pago</div>
@@ -376,7 +378,7 @@ export default function RentalDetail() {
   if (!game) {
     return (
       <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#F2F2F4' }}>
-        <Header title="Cancha" onBack={() => navigate('/fields')} />
+        <Header title="Cancha" onBack={() => navigate(location.state?.backPath ?? '/fields')} />
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: SUB, fontSize: 15 }}>
           Cancha no encontrada
         </div>
@@ -409,6 +411,10 @@ export default function RentalDetail() {
   const timeRow      = [timeStr, duration].filter(Boolean).join(' · ');
   const priceNum     = game.priceTotalNum ?? 0;
   const priceDisplay = priceNum > 0 ? `S/.${priceNum.toFixed(2)}` : null;
+  const isPastRental = isGamePast(game.dateKey, game.time24, game.durationMin);
+  const existingRating = location.state?.rating ?? (() => {
+    try { return JSON.parse(localStorage.getItem('pichanga_ratings') || '{}')[game.id] ?? null; } catch { return null; }
+  })();
 
   const chips = [
     game.format  && { label: game.format,      icon: I.twoPeople },
@@ -420,10 +426,14 @@ export default function RentalDetail() {
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
-      <Header title={title} onBack={() => navigate('/fields')} />
+      <Header title={title} onBack={() => navigate(location.state?.backPath ?? '/fields')} />
 
       <div className="no-sb" style={{ flex: 1, overflowY: 'auto', background: '#fff' }}>
         <HeroImage coverPath={game.venueCoverPath} coverVersion={game.venueCoverVersion} />
+
+        {statusReady && isPastRental && userBooked && (
+          <RatingBlock gameId={game.id} existingRating={existingRating} gameType="rental" hostUserId={game.hostUserId} />
+        )}
 
         <div style={{ padding: '12px 16px 4px' }}>
           {date && (
@@ -477,7 +487,15 @@ export default function RentalDetail() {
         <div style={{ height: 8 }} />
       </div>
 
-      {statusReady && !isHost && userBooked ? (
+      {statusReady && !isHost && isPastRental && userBooked ? (
+        <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '12px 16px' }}>
+          <button
+            onClick={() => setPaymentOpen(true)}
+            style={{ width: '100%', padding: '8px 16px', background: 'transparent', border: `1.5px solid ${BLUE}`, borderRadius: 12, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 600, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+            Ver pago
+          </button>
+        </div>
+      ) : statusReady && !isHost && userBooked ? (
         <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '12px 16px' }}>
           <button
             onClick={() => setManageOpen(true)}

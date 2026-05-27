@@ -87,6 +87,7 @@ const PANEL_HORARIOS = [
 // ── Filter panel ───────────────────────────────────────────────────────────
 
 function FilterPanel({ open, onClose, flt, setFlt }) {
+  const [mounted, setMounted] = useState(false);
   const toggleBool = k      => setFlt(f => ({ ...f, [k]: !f[k] }));
   const toggleArr  = (k, v) => setFlt(f => ({ ...f, [k]: f[k].includes(v) ? f[k].filter(x => x !== v) : [...f[k], v] }));
   const clearAll   = ()     => setFlt(EMPTY_FLT);
@@ -100,6 +101,10 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
   }, [open]);
+
+  useEffect(() => { if (open) setMounted(true); }, [open]);
+
+  if (!mounted) return null;
 
   const btnBase = (active) => ({
     height: 32, padding: '0 11px', borderRadius: 9,
@@ -128,7 +133,7 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
         transition: 'background .22s ease',
         pointerEvents: open ? 'auto' : 'none',
       }}>
-      <div style={{
+      <div onTransitionEnd={() => { if (!open) setMounted(false); }} style={{
         background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22,
         boxShadow: '0 -12px 40px rgba(0,0,0,0.18)',
         transform: open ? 'translateY(0)' : 'translateY(100%)',

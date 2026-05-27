@@ -357,7 +357,7 @@ function PaymentDetailSheet({ price, breakdown, paidBy, userName, titularCancele
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
   return (
-    <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease' }}>
+    <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease', pointerEvents: open ? 'auto' : 'none' }}>
       <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(24px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
         <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 20px' }} />
         <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 16, textAlign: 'center', letterSpacing: -0.2 }}>Detalles del pago</div>
@@ -536,6 +536,8 @@ function PlayerModal({ player, onClose, isHost = false }) {
   const [open, setOpen]           = useState(false);
   const [profile, setProfile]     = useState(null);
   const [isVerified, setVerified] = useState(false);
+  const [gamesPlayed, setGamesPlayed] = useState(null);
+  const [isPrivate, setIsPrivate]     = useState(false);
 
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
 
@@ -543,10 +545,16 @@ function PlayerModal({ player, onClose, isHost = false }) {
     if (!player.user_id || !supabase) return;
     supabase
       .from('users')
-      .select('full_name, user_code, avatar_hue, avatar_path, avatar_updated_at, sex, birth_date, preferred_position, city, phone, nationality, occupation')
+      .select('full_name, user_code, avatar_hue, avatar_path, avatar_updated_at, sex, birth_date, preferred_position, city, phone, nationality, occupation, profile_private')
       .eq('id', player.user_id)
       .maybeSingle()
-      .then(({ data }) => { if (data) setProfile(data); });
+      .then(({ data, error }) => {
+        console.log('[PlayerModal] profile fetch', { data, error });
+        if (data) {
+          setProfile(data);
+          setIsPrivate(data.profile_private === true);
+        }
+      });
     supabase
       .from('game_players')
       .select('id')
@@ -562,6 +570,13 @@ function PlayerModal({ player, onClose, isHost = false }) {
       .eq('status', 'spend')
       .limit(1)
       .then(({ data }) => { if (data?.length) setVerified(true); });
+    // Games played count
+    supabase
+      .from('game_players')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', player.user_id)
+      .eq('status', 'confirmed')
+      .then(({ count }) => { if (count != null) setGamesPlayed(count); });
   }, [player.user_id]);
 
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
@@ -609,6 +624,7 @@ function PlayerModal({ player, onClose, isHost = false }) {
         transition: 'background .22s ease',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         padding: '0 24px',
+        pointerEvents: open ? 'auto' : 'none',
       }}>
       <div
         className="player-card-inner"
@@ -688,15 +704,15 @@ function PlayerModal({ player, onClose, isHost = false }) {
 
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', paddingTop: 4 }}>
             <div style={{ paddingBottom: 10 }}>
-              {stat(null, 'Partidos jugados')}
+              {stat(gamesPlayed, 'Partidos jugados')}
             </div>
             <div style={{ height: 1, background: HAIR, marginBottom: 10 }} />
             <div style={{ display: 'flex', gap: 0, paddingBottom: 10 }}>
-              <div style={{ flex: 1 }}>{stat(sex, 'Sexo')}</div>
-              <div style={{ flex: 1 }}>{stat(age != null ? String(age) : null, 'Edad')}</div>
+              <div style={{ flex: 1 }}>{stat(isPrivate ? null : sex, 'Sexo')}</div>
+              <div style={{ flex: 1 }}>{stat(isPrivate ? null : (age != null ? String(age) : null), 'Edad')}</div>
             </div>
             <div style={{ height: 1, background: HAIR, marginBottom: 10 }} />
-            {stat(position, 'Posición')}
+            {stat(isPrivate ? null : position, 'Posición')}
           </div>
         </div>
       </div>
@@ -717,7 +733,7 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
   );
   const canAdd = isHost ? (canAddPlayers && canAddGuests) : canAddGuests;
   return (
-    <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease' }}>
+    <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease', pointerEvents: open ? 'auto' : 'none' }}>
       <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(20px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
         <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 20px' }} />
         <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 16, textAlign: 'center', letterSpacing: -0.2 }}>
@@ -804,7 +820,7 @@ function HostCancelInvitedSheet({ gameId, invitedPlayers, unitPrice = 0, onClose
 
   return (
     <div className="sheet-overlay" onClick={step !== 'processing' ? dismiss : undefined}
-      style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease' }}>
+      style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease', pointerEvents: open ? 'auto' : 'none' }}>
       <div className="sheet-panel" onClick={e => e.stopPropagation()}
         style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
 
@@ -933,10 +949,10 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
             if (shown[gameId]) { delete shown[gameId]; localStorage.setItem('pichanga_shown_confirmations', JSON.stringify(shown)); }
           } catch {}
           // titular first so cascade detection in cancelGuestPlayers sees titular as canceled
-          cancelGamePlayer(gameId)
+          cancelGamePlayer(gameId, { skipNotification: checkedGuests.size > 0 })
             .then(({ skipped, error }) => {
               if (skipped || error) { if (error) console.error('[cancel] titular failed:', error); return; }
-              if (checkedGuests.size > 0) cancelGuestPlayers(gameId, [...checkedGuests]);
+              if (checkedGuests.size > 0) cancelGuestPlayers(gameId, [...checkedGuests], { selfAlsoCanceled: true });
             })
             .catch(e => console.error('[cancel] chain threw:', e));
         } else if (checkedGuests.size > 0) {
@@ -963,7 +979,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
   );
 
   return (
-    <div className="sheet-overlay" onClick={step !== 'processing' ? dismiss : undefined} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease' }}>
+    <div className="sheet-overlay" onClick={step !== 'processing' ? dismiss : undefined} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease', pointerEvents: open ? 'auto' : 'none' }}>
       <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
 
         {step === 'select' && (<>
@@ -1486,7 +1502,7 @@ export default function GameDetail() {
           )}
 
           {infoMode && isPastGame && (
-            <RatingBlock gameId={sel?.id ?? id ?? 'unknown'} existingRating={rating} />
+            <RatingBlock gameId={sel?.id ?? id ?? 'unknown'} existingRating={rating} gameType={g.type ?? 'match'} hostUserId={g.hostUserId} />
           )}
 
           <div style={{ padding: '12px 16px 4px' }}>

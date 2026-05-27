@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, RED, DANGER, WHATSAPP_NUMBER, WHATSAPP_DISPLAY, SUPPORT_EMAIL } from '../constants';
@@ -14,7 +14,7 @@ import { GAMES } from '../data/games';
 import { deriveGameState, isGamePast, isGameStarted, gameStartDate } from '../utils/deriveGameState';
 import { GameMetaLine } from '../components/GameMetaLine';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
-import { saveRating } from '../services/ratingService';
+import { saveRating, fetchMyRatings, getLocalRatings, setLocalRatings } from '../services/ratingService';
 import { uploadAvatar, getAvatarUrl } from '../utils/avatar';
 
 const USER = {
@@ -116,7 +116,6 @@ function waitlistGameToRow(gameId) {
   if (!g) return null;
   return { id: g.id, dateKey: g.dateKey, time24: g.time24 ?? null, date: formatDateLabel(g.dateKey), time: g.time, ampm: g.ampm, field: g.field, format: g.format || '7v7', status: 'waitlist', type: 'game', price: g.price != null ? `S/. ${Number(g.price).toFixed(2)}` : null, openSpots: g.openSpots ?? 0 };
 }
-const RATINGS_KEY  = 'pichanga_ratings';
 const SHOWN_KEY    = 'pichanga_shown_confirmations';
 const SKIPPED_KEY  = 'pichanga_skipped_ratings';
 const ROSTER_KEY   = 'pichanga_game_rosters';
@@ -310,7 +309,7 @@ function sbHostedGameToRow(g) {
     covered:     field?.field_amenities?.covered ?? false,
     parking:     venue?.venue_amenities?.parking ?? false,
     hostUserId:  g.host_user_id ?? null,
-    status:      'reserved',
+    status:      g.status ?? 'published',
     type:        g.type ?? 'game',
     price:       null,
     activeGuestCount: 0,
@@ -1625,17 +1624,29 @@ function GameRow({ game, onPress, muted = false, userId = null }) {
       {(() => {
         const PM = 76;
         const pillBase = { height: 26, minWidth: PM, padding: '0 10px', borderRadius: 999, fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' };
-        if (isHost) return (
-          <div className="game-status-pill" style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', minWidth: PM, padding: '5px 8px', borderRadius: 999, background: ORANGE, flexShrink: 0 }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: '#1B1B1F', lineHeight: 1.2 }}>Organiza</span>
-            {isRental
-              ? <span style={{ fontSize: 10.5, fontWeight: 600, color: '#1B1B1F', opacity: 0.75, lineHeight: 1.2 }}>Cancha</span>
-              : game.totalSpots > 0 && game.openSpots != null && (
-                  <span style={{ fontSize: 10.5, fontWeight: 600, color: '#1B1B1F', opacity: 0.75, lineHeight: 1.2 }}>{game.totalSpots - game.openSpots}/{game.totalSpots}</span>
+        if (isHost) {
+          const confirmed      = (game.totalSpots > 0 && game.openSpots != null) ? game.totalSpots - game.openSpots : 0;
+          const hasReservations = confirmed > 0;
+          const rentalReserved  = isRental && (game.status === 'reserved' || game.status === 'completed');
+          const pillBg    = muted ? 'transparent' : ORANGE;
+          const labelColor = muted ? SUB : '#1B1B1F';
+          return (
+            <div className="game-status-pill" style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', minWidth: PM, padding: '5px 8px', borderRadius: 999, background: pillBg, flexShrink: 0 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: labelColor, lineHeight: 1.2 }}>Organiza</span>
+              {isRental ? (
+                <span style={{ fontSize: 10.5, fontWeight: 600, lineHeight: 1.2, color: (!muted && rentalReserved) ? BLUE : labelColor, opacity: (!muted && !rentalReserved) ? 0.75 : 1 }}>
+                  {rentalReserved ? 'Reservado' : 'Cancha'}
+                </span>
+              ) : (
+                game.totalSpots > 0 && game.openSpots != null && (
+                  <span style={{ fontSize: 10.5, fontWeight: 600, lineHeight: 1.2, color: (!muted && hasReservations) ? BLUE : labelColor, opacity: (!muted && !hasReservations) ? 0.75 : 1 }}>
+                    {confirmed}/{game.totalSpots}
+                  </span>
                 )
-            }
-          </div>
-        );
+              )}
+            </div>
+          );
+        }
         if (game.status === 'waitlist') return (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
             {(game.openSpots ?? 0) <= 0
@@ -1722,13 +1733,14 @@ function RatingModal({ game, onRate, onSkip }) {
   const active = hovered || stars;
 
   return (
-    <div className="sheet-overlay" style={{
+    <div className="sheet-overlay" onClick={skip} style={{
       position: 'fixed', inset: 0, zIndex: 100,
       background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)',
       transition: 'background .22s ease',
       display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
+      pointerEvents: open ? 'auto' : 'none',
     }}>
-      <div className="sheet-panel" style={{
+      <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{
         background: '#fff',
         borderTopLeftRadius: 24, borderTopRightRadius: 24,
         padding: '28px 24px calc(28px + env(safe-area-inset-bottom))',
@@ -1846,18 +1858,8 @@ export default function Profile() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const profileScrollPosRef = useRef(0);
-
-  useEffect(() => {
-    const el = profileScrollRef.current;
-    if (!el || initPfScrollRef.current == null) return;
-    const target = initPfScrollRef.current;
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        el.scrollTo({ top: target, behavior: 'instant' });
-      });
-    });
-  }, []); // eslint-disable-line
+  const profileScrollPosRef    = useRef(0);
+  const pfScrollRestoredRef    = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -1902,9 +1904,7 @@ export default function Profile() {
       return Object.keys(wl).map(waitlistGameToRow).filter(Boolean);
     } catch { return []; }
   });
-  const [ratings,        setRatings]        = useState(() => {
-    try { return JSON.parse(localStorage.getItem(RATINGS_KEY)) || {}; } catch { return {}; }
-  });
+  const [ratings,        setRatings]        = useState(() => getLocalRatings());
   const [skippedRatings, setSkippedRatings] = useState(() => {
     try { return JSON.parse(localStorage.getItem(SKIPPED_KEY)) || {}; } catch { return {}; }
   });
@@ -1923,6 +1923,16 @@ export default function Profile() {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session?.user?.id) { setMyPlayerRowsReady(true); setSbGamesReady(true); setHostedReady(true); return; }
       const uid = session.user.id;
+
+      // Fetch real ratings from Supabase and merge with local cache
+      fetchMyRatings(uid).then(sbRatings => {
+        if (!Object.keys(sbRatings).length) return;
+        setRatings(prev => {
+          const merged = { ...prev, ...sbRatings };
+          setLocalRatings(merged);
+          return merged;
+        });
+      });
 
       supabase
         .from('users')
@@ -2026,7 +2036,7 @@ export default function Profile() {
         `)
         .eq('host_user_id', uid)
         .in('type', ['match', 'rental'])
-        .in('status', ['published', 'reserved'])
+        .in('status', ['published', 'reserved', 'completed', 'expired'])
         .then(async ({ data, error }) => {
           if (error) { console.warn('[Profile] hosted games:', error.message); }
           else if (data?.length) {
@@ -2142,6 +2152,43 @@ export default function Profile() {
     [hostedRows, hostedConfirmed]
   );
 
+  // Fallback for games where a guest-refund record incorrectly removed the game from
+  // extraGames even though the titular slot is still confirmed in game_players.
+  const titularFallbackGames = useMemo(() => {
+    if (!user?.id || !myPlayerRowsReady) return [];
+    const extraIds = new Set(extraGames.map(g => g.id));
+    const byGame = {};
+    myPlayerRows.forEach(r => { (byGame[r.game_id] ??= []).push(r); });
+    const out = [];
+    for (const [gameId, rows] of Object.entries(byGame)) {
+      if (extraIds.has(gameId)) continue;
+      const state = deriveGameState(rows, user.id);
+      if (!state.isTitularConfirmed) continue;
+      const g = rows[0]?.games;
+      if (!g) continue;
+      const { time, ampm } = parseGameTime(g.time);
+      out.push({
+        id:           gameId,
+        dateKey:      g.date_key      ?? null,
+        time24:       g.time          ?? null,
+        durationMin:  g.duration_min  ?? g.fields?.duration_min  ?? null,
+        date:         formatDateLabel(g.date_key),
+        time, ampm,
+        field:        g.fields?.venues?.name ?? '',
+        format:       g.format ?? g.fields?.format ?? '7v7',
+        totalSpots:   g.total_spots   ?? g.fields?.total_spots   ?? 0,
+        womenOnly:    g.game_amenities?.women_only ?? false,
+        covered:      g.fields?.field_amenities?.covered ?? false,
+        parking:      g.fields?.venues?.venue_amenities?.parking ?? false,
+        hostUserId:   g.host_user_id  ?? null,
+        status:       'reserved',
+        type:         g.type ?? 'match',
+        activeGuestCount: state.activeGuestCount,
+      });
+    }
+    return out;
+  }, [myPlayerRows, extraGames, user?.id, myPlayerRowsReady]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // status priority: lower = wins dedup
   const STATUS_PRIORITY = { reserved: 0, guest: 1, 'canceled-with-guests': 2, 'guest-canceled-with-sub-guests': 3, waitlist: 4 };
 
@@ -2163,6 +2210,7 @@ export default function Profile() {
         }
         return row;
       }).filter(Boolean),
+      ...titularFallbackGames,
       ...waitlistEntries,
       ...guestGames,
       ...canceledGames,
@@ -2182,6 +2230,16 @@ export default function Profile() {
     return [...seen.values()];
   })();
   const dataReady = myPlayerRowsReady && sbGamesReady && hostedReady;
+
+  // useLayoutEffect fires before the browser paints, so scroll is set before the user sees
+  // the new content — eliminating the flash-to-top that useEffect + rAF would cause.
+  useLayoutEffect(() => {
+    if (!dataReady || pfScrollRestoredRef.current || initPfScrollRef.current == null) return;
+    const el = profileScrollRef.current;
+    if (!el) return;
+    pfScrollRestoredRef.current = true;
+    el.scrollTo({ top: initPfScrollRef.current, behavior: 'instant' });
+  }, [dataReady]); // eslint-disable-line
   // Only classify games that have valid temporal data and whose player status is settled
   const temporalGames = dataReady ? allGames.filter(g => g.dateKey && g.time24) : [];
   const upcoming      = sortByDt(temporalGames.filter(g => !isPast(g) && !(g.status === 'waitlist' && isStarted(g))), false);
@@ -2195,7 +2253,7 @@ export default function Profile() {
   const visibleUpcoming = upcomingExpanded ? upcoming : upcoming.slice(0, 10);
 
   const gameToRate = (dataReady && user)
-    ? past.find(g => g.type === 'match' && !ratings[g.id] && !skippedRatings[g.id]) ?? null
+    ? past.find(g => (g.type === 'match' || g.type === 'rental') && !ratings[g.id] && !skippedRatings[g.id]) ?? null
     : null;
 
   async function handleSave(updated) {
@@ -2277,7 +2335,7 @@ export default function Profile() {
     const baseState  = { infoMode: isGuest || (!isWaitlist && !isCanceledWithGuests && !isGuestCanceledWithSub), isPast: past, rating: ratings[navId] ?? null, backPath: '/profile' };
     sessionStorage.setItem('pf_back', '1');
     if (g.type === 'rental') {
-      navigate(`/rental/${navId}`, { state: { field: { id: navId, dateKey: g.dateKey ?? null, time24: g.time24 ?? null, field: g.field, date: g.date, time: g.time, ampm: g.ampm, format: g.format || '7v7' } } });
+      navigate(`/rental/${navId}`, { state: { isPast: past, rating: ratings[navId] ?? null, backPath: '/profile', field: { id: navId, dateKey: g.dateKey ?? null, time24: g.time24 ?? null, field: g.field, date: g.date, time: g.time, ampm: g.ampm, format: g.format || '7v7' } } });
     } else if (g.type === 'campo') {
       navigate(`/field/${navId}`, { state: { ...baseState, field: { id: navId, dateKey: g.dateKey ?? null, time24: g.time24 ?? null, field: g.field, date: g.date, time: g.time, ampm: g.ampm, format: g.format || '7v7', price: g.price || '', address: '', paymentBreakdown: g.paymentBreakdown ?? null, paidBy: isGuest ? (g.paidBy ?? null) : null, paidByCode: isGuest ? (g.paidByCode ?? null) : null } } });
     } else {
@@ -2289,14 +2347,22 @@ export default function Profile() {
   function handleRate({ stars, comment }) {
     if (!gameToRate) return;
     const cleanComment = comment?.trim() || null;
+    const gId = gameToRate.gameId ?? gameToRate.id;
     const updated = {
       ...ratings,
-      [gameToRate.id]: { stars, comment: cleanComment, ratedAt: new Date().toISOString(), field: gameToRate.field, date: gameToRate.date },
+      [gId]: { stars, comment: cleanComment, ratedAt: new Date().toISOString(), field: gameToRate.field, date: gameToRate.date },
     };
     setRatings(updated);
-    try { localStorage.setItem(RATINGS_KEY, JSON.stringify(updated)); } catch {}
-    savePlayedGame(gameToRate.id);
-    if (user?.id) saveRating({ gameId: gameToRate.gameId ?? gameToRate.id, raterId: user.id, stars, comment: cleanComment });
+    setLocalRatings(updated);
+    savePlayedGame(gId);
+    if (user?.id) saveRating({
+      userId:      user.id,
+      gameType:    gameToRate.type === 'rental' ? 'rental' : 'match',
+      gameId:      gId,
+      hostUserId:  gameToRate.hostUserId ?? null,
+      stars,
+      comment:     cleanComment,
+    });
   }
 
   const displayName = sbProfile?.full_name || profileData.fullName || user?.name || USER.name;
@@ -2337,25 +2403,29 @@ export default function Profile() {
         zIndex: 10, pointerEvents: 'none',
       }}>
         <div style={{ height: 44, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4, pointerEvents: 'auto' }}>
-          <div style={{ position: 'relative' }}>
-            <button onClick={() => setSupportOpen(v => !v)} style={{
-              width: 36, height: 36, background: 'transparent', border: 'none', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              WebkitTapHighlightColor: 'transparent', outline: 'none', padding: 0,
-            }}>
-              <HeadsetIcon />
-            </button>
-            {supportOpen && <SupportMenu onClose={() => setSupportOpen(false)} />}
-          </div>
-          <button
-            onClick={() => navigate('/settings')}
-            style={{
-              width: 36, height: 36, marginRight: -4, background: 'transparent', border: 'none', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              WebkitTapHighlightColor: 'transparent', outline: 'none', padding: 0,
-            }}>
-            <GearIcon />
-          </button>
+          {user && (
+            <>
+              <div style={{ position: 'relative' }}>
+                <button onClick={() => setSupportOpen(v => !v)} style={{
+                  width: 36, height: 36, background: 'transparent', border: 'none', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  WebkitTapHighlightColor: 'transparent', outline: 'none', padding: 0,
+                }}>
+                  <HeadsetIcon />
+                </button>
+                {supportOpen && <SupportMenu onClose={() => setSupportOpen(false)} />}
+              </div>
+              <button
+                onClick={() => navigate('/settings')}
+                style={{
+                  width: 36, height: 36, marginRight: -4, background: 'transparent', border: 'none', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  WebkitTapHighlightColor: 'transparent', outline: 'none', padding: 0,
+                }}>
+                <GearIcon />
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -2493,7 +2563,7 @@ export default function Profile() {
 
       {confirmedGame && <ConfirmedOverlay game={confirmedGame} onOK={handleOK} />}
       {!confirmedGame && gameToRate && (
-        <RatingModal game={gameToRate} onRate={handleRate} onSkip={() => {
+        <RatingModal key={gameToRate.id} game={gameToRate} onRate={handleRate} onSkip={() => {
           const updated = { ...skippedRatings, [gameToRate.id]: true };
           setSkippedRatings(updated);
           try { localStorage.setItem(SKIPPED_KEY, JSON.stringify(updated)); } catch {}

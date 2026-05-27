@@ -38,7 +38,13 @@
       "Bash(Get-ChildItem -Recurse -Include *.js, *.jsx)",
       "Bash(Select-Object -First 30 FullName)",
       "Bash(npx supabase *)",
-      "Bash(curl -s \"https://iwghvtmijlyakufdghwb.supabase.co/rest/v1/notifications?limit=1\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3Z2h2dG1pamx5YWt1ZmRnaHdiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2NjMyMTgsImV4cCI6MjA5NDIzOTIxOH0.tXtVyIyPm94f3c9T4-flnXPuKELTcLHxauY2U5Cii-c\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3Z2h2dG1pamx5YWt1ZmRnaHdiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2NjMyMTgsImV4cCI6MjA5NDIzOTIxOH0.tXtVyIyPm94f3c9T4-flnXPuKELTcLHxauY2U5Cii-c\")"
+      "Bash(curl -s \"https://iwghvtmijlyakufdghwb.supabase.co/rest/v1/notifications?limit=1\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3Z2h2dG1pamx5YWt1ZmRnaHdiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2NjMyMTgsImV4cCI6MjA5NDIzOTIxOH0.tXtVyIyPm94f3c9T4-flnXPuKELTcLHxauY2U5Cii-c\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3Z2h2dG1pamx5YWt1ZmRnaHdiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2NjMyMTgsImV4cCI6MjA5NDIzOTIxOH0.tXtVyIyPm94f3c9T4-flnXPuKELTcLHxauY2U5Cii-c\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\Claude Code\\\\AlGrass\\\\src\" -Recurse -Filter \"*.jsx\" -o Name)",
+      "Bash(curl -s \"https://iwghvtmijlyakufdghwb.supabase.co/rest/v1/rating?limit=0\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3Z2h2dG1pamx5YWt1ZmRnaHdiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2NjMyMTgsImV4cCI6MjA5NDIzOTIxOH0.tXtVyIyPm94f3c9T4-flnXPuKELTcLHxauY2U5Cii-c\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3Z2h2dG1pamx5YWt1ZmRnaHdiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2NjMyMTgsImV4cCI6MjA5NDIzOTIxOH0.tXtVyIyPm94f3c9T4-flnXPuKELTcLHxauY2U5Cii-c\")",
+      "Bash(cd /c/\"Claude Code\"/AlGrass && grep -n \"pastGameCount\" src/screens/Profile.jsx)",
+      "Read(//c/c/Claude Code/AlGrass/src/screens/**)",
+      "Bash(cd /c/\"Claude Code\"/AlGrass && grep -rn \"PRIVACY_KEY\\\\|pichanga_privacy\" src/)",
+      "Read(//c/c/Claude Code/AlGrass/**)"
     ],
     "additionalDirectories": [
       "c:\\Users\\rodri\\.claude\\projects\\c--Claude-Code-AlGrass\\memory"

@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase';
-import { isExpiredPeru } from '../lib/peruTime';
+import { isExpiredPeru, parsePeruDateTime } from '../lib/peruTime';
 
 // ── internal helpers ──────────────────────────────────────────────────────────
 
@@ -37,6 +37,14 @@ async function applyRefund(userId, refundAmount) {
 }
 
 const deaccent = s => (s || '').normalize('NFD').replace(/\p{Diacritic}/gu, '');
+
+function formatGameTime(timeStr) {
+  if (!timeStr) return '';
+  const [h, m] = timeStr.split(':').map(Number);
+  if (isNaN(h)) return timeStr;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  return `${h % 12 || 12}:${String(m ?? 0).padStart(2, '0')} ${ampm}`;
+}
 
 function rankPlayers(players, query) {
   const q = deaccent(query).toLowerCase();
@@ -258,7 +266,7 @@ export async function createInvitedReservation({ gameId, playersCount = 1, unitP
 // ── cancel ────────────────────────────────────────────────────────────────────
 
 // Cancels current user's confirmed slot, appends a refund reservation, updates wallet.
-export async function cancelGamePlayer(gameId) {
+export async function cancelGamePlayer(gameId, { skipNotification = false } = {}) {
   if (!supabase) return { skipped: true };
   const session = await getSession();
   if (!session?.user?.id) return { skipped: true };
@@ -299,6 +307,64 @@ export async function cancelGamePlayer(gameId) {
     });
     if (ledgerErr) console.error('[cancelGamePlayer] refund ledger insert failed:', ledgerErr);
     await applyRefund(refundTo, row.amount);
+
+    if (refundTo === session.user.id) {
+      // Self-paid slot: credit goes back to the canceler.
+      // Caller may pass skipNotification=true when a combined notification will be sent via cancelGuestPlayers.
+      if (!skipNotification) {
+        supabase.from('notifications').insert({
+          recipient_user_id: session.user.id,
+          source_type:       'venue',
+          delivery_type:     'automatic',
+          category:          'refund',
+          template_key:      'reservation_cancelled_credit_self',
+          game_id:           gameId,
+          created_by:        session.user.id,
+          sent_at:           new Date().toISOString(),
+        }).then(({ error }) => {
+          if (error) console.error('[notif] reservation_cancelled_credit_self (game) failed:', error);
+          else console.log('[notif] reservation_cancelled_credit_self (game) inserted for', session.user.id);
+        });
+      }
+    } else {
+      // Guest slot paid by someone else: fetch both names in one query
+      supabase.from('users').select('id, full_name').in('id', [session.user.id, refundTo])
+        .then(({ data: users }) => {
+          const byId = Object.fromEntries((users ?? []).map(u => [u.id, u.full_name]));
+          const cancelerFirst = (byId[session.user.id] ?? '').split(' ')[0] || 'Un jugador';
+          const payerFirst    = (byId[refundTo]         ?? '').split(' ')[0] || 'el titular';
+          // 1 — notify the guest who canceled
+          supabase.from('notifications').insert({
+            recipient_user_id: session.user.id,
+            source_type:       'venue',
+            delivery_type:     'automatic',
+            category:          'refund',
+            template_key:      'reservation_cancelled_credit_owner',
+            custom_text:       `Cancelaste la reserva a la que te invitaron. El crédito fue devuelto a ${payerFirst}.`,
+            game_id:           gameId,
+            created_by:        session.user.id,
+            sent_at:           new Date().toISOString(),
+          }).then(({ error }) => {
+            if (error) console.error('[notif] reservation_cancelled_credit_owner failed for guest', session.user.id, error);
+            else console.log('[notif] reservation_cancelled_credit_owner inserted for guest', session.user.id);
+          });
+          // 2 — notify the payer
+          supabase.from('notifications').insert({
+            recipient_user_id: refundTo,
+            source_type:       'venue',
+            delivery_type:     'automatic',
+            category:          'refund',
+            template_key:      'guest_invitation_cancelled_credit',
+            custom_text:       `${cancelerFirst} canceló su invitación. El crédito fue añadido a tu billetera.`,
+            game_id:           gameId,
+            created_by:        session.user.id,
+            sent_at:           new Date().toISOString(),
+          }).then(({ error }) => {
+            if (error) console.error('[notif] guest_invitation_cancelled_credit failed for payer', refundTo, error);
+            else console.log('[notif] guest_invitation_cancelled_credit inserted for payer', refundTo);
+          });
+        });
+    }
   }
 
   return { data: row };
@@ -306,7 +372,7 @@ export async function cancelGamePlayer(gameId) {
 
 // Cancels confirmed guest slots owned by current user (payer_id = session.user.id),
 // appends one refund reservation per slot, updates wallet with total.
-export async function cancelGuestPlayers(gameId, guestUserIds) {
+export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCanceled = false } = {}) {
   if (!supabase || !guestUserIds?.length) return { skipped: true };
   const session = await getSession();
   if (!session?.user?.id) return { skipped: true };
@@ -348,6 +414,62 @@ export async function cancelGuestPlayers(gameId, guestUserIds) {
     if (ledgerErr) console.error('[cancelGuestPlayers] refund ledger insert failed:', ledgerErr);
     await applyRefund(session.user.id, refundTotal);
   }
+
+  // Fetch payer + all guest names in one query for all notification types
+  const guestRows = rows.filter(r => r.user_id);
+  const allIds = [session.user.id, ...guestRows.map(r => r.user_id)];
+  supabase.from('users').select('id, full_name').in('id', allIds)
+    .then(({ data: users }) => {
+      const byId = Object.fromEntries((users ?? []).map(u => [u.id, u.full_name]));
+      const payerFirst = (byId[session.user.id] ?? '').split(' ')[0] || 'El titular';
+
+      if (refundTotal > 0) {
+        const titularTemplate = selfAlsoCanceled
+          ? 'reservation_cancelled_self_and_guests'
+          : 'reservation_cancelled_guests_credit';
+        const guestNames = guestRows
+          .map(r => (byId[r.user_id] ?? '').split(' ')[0])
+          .filter(Boolean);
+        const guestNamesStr = guestNames.length === 0 ? 'tus invitados'
+          : guestNames.length === 1 ? guestNames[0]
+          : `${guestNames.slice(0, -1).join(', ')} y ${guestNames[guestNames.length - 1]}`;
+        const titularText = selfAlsoCanceled
+          ? `Cancelaste tu reserva y la de ${guestNamesStr}. El crédito fue añadido a tu billetera.`
+          : `Cancelaste la reserva de ${guestNamesStr}. El crédito fue añadido a tu billetera.`;
+        supabase.from('notifications').insert({
+          recipient_user_id: session.user.id,
+          source_type:       'venue',
+          delivery_type:     'automatic',
+          category:          'refund',
+          template_key:      titularTemplate,
+          custom_text:       titularText,
+          game_id:           gameId,
+          created_by:        session.user.id,
+          sent_at:           new Date().toISOString(),
+        }).then(({ error }) => {
+          if (error) console.error('[notif]', titularTemplate, 'failed for titular:', session.user.id, error);
+          else console.log('[notif]', titularTemplate, 'inserted for titular:', session.user.id);
+        });
+      }
+
+      // Always notify each canceled guest
+      guestRows.forEach(r => {
+        supabase.from('notifications').insert({
+          recipient_user_id: r.user_id,
+          source_type:       'venue',
+          delivery_type:     'automatic',
+          category:          'invitation',
+          template_key:      'guest_invitation_cancelled_by_owner',
+          custom_text:       `${payerFirst} canceló tu invitación.`,
+          game_id:           gameId,
+          created_by:        session.user.id,
+          sent_at:           new Date().toISOString(),
+        }).then(({ error }) => {
+          if (error) console.error('[notif] guest_invitation_cancelled_by_owner failed for', r.user_id, error);
+          else console.log('[notif] guest_invitation_cancelled_by_owner inserted for', r.user_id);
+        });
+      });
+    });
 
   return { data: rows };
 }
@@ -437,6 +559,20 @@ export async function cancelRental(gameId) {
 
   if (refundAmount > 0) {
     await applyRefund(userId, refundAmount);
+
+    supabase.from('notifications').insert({
+      recipient_user_id: userId,
+      source_type:       'venue',
+      delivery_type:     'automatic',
+      category:          'refund',
+      template_key:      'reservation_cancelled_credit_self',
+      game_id:           gameId,
+      created_by:        userId,
+      sent_at:           new Date().toISOString(),
+    }).then(({ error }) => {
+      if (error) console.error('[notif] reservation_cancelled_credit_self (rental) failed:', error);
+      else console.log('[notif] reservation_cancelled_credit_self (rental) inserted for', userId);
+    });
   }
 
   const { error: gameErr } = await supabase.from('games').update({ status: 'published' }).eq('id', gameId);
@@ -493,4 +629,134 @@ export async function cancelInvitedPlayers(gameId, invitedUserIds, unitPrice = 0
   if (ledgerErr) console.error('[cancelInvitedPlayers] ledger insert failed:', ledgerErr);
 
   return { data: rows };
+}
+
+// Sends venue_changed notifications to all confirmed players of a game.
+// customText: optional dynamic body (e.g. 'Tu partido fue movido a la cancha 3.').
+// If null, renderNotification falls back to the template's static body.
+// The venue name is prepended automatically at render time via the game_id join.
+export async function notifyVenueChanged(gameId, { customText = null } = {}) {
+  if (!supabase || !gameId) return;
+  const { data: players, error } = await supabase
+    .from('game_players')
+    .select('user_id')
+    .eq('game_id', gameId)
+    .eq('status', 'confirmed');
+
+  if (error) { console.error('[notifyVenueChanged] fetch players failed:', error); return; }
+  if (!players?.length) { console.warn('[notifyVenueChanged] no confirmed players for game', gameId); return; }
+
+  const userIds = [...new Set(players.map(r => r.user_id).filter(Boolean))];
+  const now = new Date().toISOString();
+
+  userIds.forEach(userId => {
+    supabase.from('notifications').insert({
+      recipient_user_id: userId,
+      source_type:       'venue',
+      delivery_type:     'automatic',
+      category:          'operational',
+      template_key:      'venue_changed',
+      custom_text:       customText ?? null,
+      game_id:           gameId,
+      sent_at:           now,
+    }).then(({ error: e }) => {
+      if (e) console.error('[notif] venue_changed failed for', userId, e);
+      else console.log('[notif] venue_changed inserted for', userId);
+    });
+  });
+}
+
+// Updates a game's field and notifies all confirmed players.
+// Call this from admin/staff UI instead of updating the game directly.
+export async function changeGameField(gameId, newFieldId, { customText = null } = {}) {
+  if (!supabase || !gameId || !newFieldId) return { skipped: true };
+  const { error } = await supabase
+    .from('games')
+    .update({ field_id: newFieldId })
+    .eq('id', gameId);
+  if (error) { console.error('[changeGameField] update failed:', error); return { error }; }
+  notifyVenueChanged(gameId, { customText });
+  return { data: { gameId, newFieldId } };
+}
+
+// Sends next_day_reminder notifications to all eligible confirmed players.
+// "Eligible" = reserved BEFORE 6PM Lima today (the standard send window).
+// Idempotent: skips user+game pairs that already have a next_day_reminder.
+// Call manually for testing; wire to a cron job at 18:00 Lima when ready.
+export async function sendNextDayReminders() {
+  if (!supabase) return { skipped: true };
+
+  // Peru date utilities — Lima is UTC-5, no DST
+  const todayKey    = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Lima' });
+  const [ty, tm, td] = todayKey.split('-').map(Number);
+  const tomorrowKey = new Date(Date.UTC(ty, tm - 1, td + 1)).toISOString().slice(0, 10);
+  const cutoffISO   = parsePeruDateTime(todayKey, '18:00').toISOString(); // 6PM Lima today → UTC
+
+  console.log('[reminders] tomorrowKey:', tomorrowKey, '| cutoff:', cutoffISO);
+
+  // 1 — games scheduled tomorrow with their field name and start time
+  const { data: games, error: gErr } = await supabase
+    .from('games')
+    .select('id, time, fields:field_id(name)')
+    .eq('date_key', tomorrowKey);
+
+  if (gErr)           { console.error('[reminders] games fetch failed:', gErr); return { error: gErr }; }
+  if (!games?.length) { console.log('[reminders] no games tomorrow'); return { sent: 0 }; }
+
+  const gameIds  = games.map(g => g.id);
+  const gameById = Object.fromEntries(games.map(g => [g.id, g]));
+
+  // 2 — confirmed players who reserved before the 6PM cutoff
+  const { data: players, error: pErr } = await supabase
+    .from('game_players')
+    .select('user_id, game_id')
+    .in('game_id', gameIds)
+    .eq('status', 'confirmed')
+    .lt('created_at', cutoffISO);
+
+  if (pErr)            { console.error('[reminders] players fetch failed:', pErr); return { error: pErr }; }
+  if (!players?.length) { console.log('[reminders] no eligible players'); return { sent: 0 }; }
+
+  // 3 — dedup: skip user+game pairs already notified
+  const { data: existing } = await supabase
+    .from('notifications')
+    .select('recipient_user_id, game_id')
+    .eq('template_key', 'next_day_reminder')
+    .in('game_id', gameIds);
+
+  const alreadySent = new Set((existing ?? []).map(r => `${r.recipient_user_id}:${r.game_id}`));
+
+  // 4 — insert missing notifications (fire-and-forget)
+  const now  = new Date().toISOString();
+  let   sent = 0;
+
+  for (const { user_id: userId, game_id: gameId } of players) {
+    if (!userId || alreadySent.has(`${userId}:${gameId}`)) continue;
+
+    const game       = gameById[gameId];
+    const fieldName  = game?.fields?.name ?? null;
+    const timeStr    = formatGameTime(game?.time ?? '');
+    const customText = (fieldName && timeStr)
+      ? `Tienes un partido mañana en ${fieldName} a las ${timeStr}. Recuerda llegar 15 minutos antes.`
+      : null;
+
+    supabase.from('notifications').insert({
+      recipient_user_id: userId,
+      source_type:       'venue',
+      delivery_type:     'automatic',
+      category:          'reminder',
+      template_key:      'next_day_reminder',
+      custom_text:       customText,
+      game_id:           gameId,
+      sent_at:           now,
+    }).then(({ error: e }) => {
+      if (e) console.error('[notif] next_day_reminder failed for', userId, gameId, e);
+      else   console.log('[notif] next_day_reminder inserted for', userId, gameId);
+    });
+
+    sent++;
+  }
+
+  console.log(`[reminders] queued ${sent} next_day_reminder notifications`);
+  return { sent, tomorrowKey };
 }

@@ -9,7 +9,9 @@ import { useStaff } from '../context/StaffContext';
 import { supabase } from '../lib/supabase';
 import { renderNotification } from '../data/notificationTemplates';
 
-const LONG_MSG = 100;
+const LONG_MSG  = 100;
+const PAGE_SIZE = 20;
+const NOTIF_SELECT = 'id, template_key, custom_text, game_id, read_at, created_at, games:game_id(date_key, fields:field_id(venues:venue_id(name)))';
 
 const _DOW = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const _MON = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -244,8 +246,11 @@ export default function Notifications() {
   const navigate   = useNavigate();
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading]             = useState(true);
+  const [loadingMore, setLoadingMore]     = useState(false);
+  const [hasMore, setHasMore]             = useState(false);
   const [expandedIds, setExpandedIds]     = useState(() => new Set());
   const notifScrollRef = useRef(null);
+  const cursorRef      = useRef(null);
 
   useEffect(() => {
     function onTabScrollTop(e) {
@@ -259,15 +264,41 @@ export default function Notifications() {
     if (!user?.id) { setLoading(false); return; }
     supabase
       .from('notifications')
-      .select('id, template_key, custom_text, game_id, read_at, created_at, games:game_id(date_key)')
+      .select(NOTIF_SELECT)
       .eq('recipient_user_id', user.id)
       .order('created_at', { ascending: false })
-      .limit(50)
+      .limit(PAGE_SIZE + 1)
       .then(({ data }) => {
-        setNotifications((data ?? []).map(mapRow).filter(Boolean));
+        const rows  = data ?? [];
+        const more  = rows.length > PAGE_SIZE;
+        const slice = more ? rows.slice(0, PAGE_SIZE) : rows;
+        if (slice.length > 0) cursorRef.current = slice[slice.length - 1].created_at;
+        setNotifications(slice.map(mapRow).filter(Boolean));
+        setHasMore(more);
         setLoading(false);
       });
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function loadMore() {
+    if (!user?.id || loadingMore || !cursorRef.current) return;
+    setLoadingMore(true);
+    supabase
+      .from('notifications')
+      .select(NOTIF_SELECT)
+      .eq('recipient_user_id', user.id)
+      .lt('created_at', cursorRef.current)
+      .order('created_at', { ascending: false })
+      .limit(PAGE_SIZE + 1)
+      .then(({ data }) => {
+        const rows  = data ?? [];
+        const more  = rows.length > PAGE_SIZE;
+        const slice = more ? rows.slice(0, PAGE_SIZE) : rows;
+        if (slice.length > 0) cursorRef.current = slice[slice.length - 1].created_at;
+        setNotifications(prev => [...prev, ...slice.map(mapRow).filter(Boolean)]);
+        setHasMore(more);
+        setLoadingMore(false);
+      });
+  }
 
   const groups    = useMemo(() => groupAndSort(notifications), [notifications]);
   const hasUnread = useMemo(() => notifications.some(n => !n.read), [notifications]);
@@ -373,6 +404,21 @@ export default function Notifications() {
                 </div>
               </div>
             ))
+          )}
+          {hasMore && (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: '4px 0 8px' }}>
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                style={{
+                  background: 'transparent', border: 'none', cursor: loadingMore ? 'default' : 'pointer',
+                  fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: loadingMore ? SUB : BLUE,
+                  padding: '8px 16px', borderRadius: 10,
+                  WebkitTapHighlightColor: 'transparent', outline: 'none',
+                }}>
+                {loadingMore ? 'Cargando…' : 'Ver más'}
+              </button>
+            </div>
           )}
           <div style={{ height: 16 }} />
         </div>

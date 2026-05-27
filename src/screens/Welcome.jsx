@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { BLUE, TEXT, SUB } from '../constants';
+
+const INTRO_KEY = 'algrass_intro_seen';
 import { haptic } from '../utils/haptic';
 import logo from '../assets/logo.webp';
 
@@ -83,6 +85,12 @@ function WelcomeView({ onStart }) {
 export default function Welcome() {
   const navigate = useNavigate();
   const [phase, setPhase] = useState('splash');
+
+  try {
+    // Intro not yet seen → IntroScreen is covering us; render nothing to avoid flash
+    if (!localStorage.getItem(INTRO_KEY)) return null;
+    return <Navigate to="/games" replace state={{ showCitySheet: true }} />;
+  } catch {}
 
   useEffect(() => {
     const t = setTimeout(() => setPhase('welcome'), 2000);
