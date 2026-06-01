@@ -16,9 +16,8 @@ import { supabase } from '../lib/supabase';
 import { getAvatarUrl } from '../utils/avatar';
 import { getVenueCoverUrl } from '../utils/venue';
 import { deriveGameState, requiredPlayers, gameStartDate, gameEndDate, isGamePast, isGameStarted, deriveAttendance } from '../utils/deriveGameState';
-
-const WAITLIST_KEY   = 'pichanga_waitlist';
-const ROSTER_KEY_GD  = 'pichanga_game_rosters';
+import { joinWaitlist, leaveWaitlist, getMyWaitlistGameIds } from '../services/waitlistService';
+const ROSTER_KEY_GD = 'pichanga_game_rosters';
 
 
 const _DOW = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
@@ -390,16 +389,21 @@ function Avatar({ name, size = 36, hue = null, avatarPath = null, avatarVersion 
 }
 
 // ── Waitlist
-function WaitlistRow({ inList, onToggle }) {
+function WaitlistRow({ inList, openSpots = 0, onToggle }) {
+  const spotFreed = inList && openSpots > 0;
   return (
     <div style={{ padding: '10px 10px 0', background: '#fff', borderTop: `1px solid ${HAIR}` }}>
       <div style={{
         padding: '8px 10px 8px 12px',
-        background: '#FFF8EC', border: '1px solid #F4E4C2', borderRadius: 14,
+        background: spotFreed ? '#F0FAF3' : '#FFF8EC',
+        border: `1px solid ${spotFreed ? '#B2DFC0' : '#F4E4C2'}`,
+        borderRadius: 14,
         display: 'flex', alignItems: 'center', gap: 10,
       }}>
         <div style={{ flex: 1, fontSize: 13, color: TEXT, lineHeight: 1.35, fontWeight: 500 }}>
-          {inList ? 'Te notificaremos si se libera una reserva' : 'Avísame si se libera una reserva'}
+          {spotFreed
+            ? 'Se liberó un cupo. ¡Reserva ahora!'
+            : inList ? 'Te notificaremos si se libera una reserva' : 'Avísame si se libera una reserva'}
         </div>
         <button
           onClick={onToggle}
@@ -1221,11 +1225,7 @@ export default function GameDetail() {
   const isFull = !infoMode && liveOpenSpots === 0;
   const openSpots = liveOpenSpots;
   const confirmed = g.totalSpots - openSpots;
-  const [inWaitlist, setInWaitlist] = useState(() => {
-    if (!gameId) return false;
-    try { return !!(JSON.parse(localStorage.getItem(WAITLIST_KEY)) || {})[gameId]; }
-    catch { return false; }
-  });
+  const [inWaitlist, setInWaitlist] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [modifyOpen, setModifyOpen] = useState(false);
   const [cancelOpen,  setCancelOpen]  = useState(false);
@@ -1258,6 +1258,13 @@ export default function GameDetail() {
       if (fetched) setSbGame(fetched);
     });
   }, [gameId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!user?.id || !gameId) return;
+    getMyWaitlistGameIds(user.id).then(ids => {
+      setInWaitlist(ids.includes(gameId));
+    });
+  }, [user?.id, gameId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!g.hostUserId || !supabase) return;
@@ -1430,16 +1437,10 @@ export default function GameDetail() {
       navigate('/checkout', { state: { waitlistMode: true, backPath: id ? `/game/${id}` : '/games' } });
       return;
     }
-    try {
-      const wl = JSON.parse(localStorage.getItem(WAITLIST_KEY)) || {};
-      if (inWaitlist) {
-        delete wl[gameId];
-      } else {
-        wl[gameId] = { gameId, userId: user.email, joinedAt: new Date().toISOString() };
-      }
-      localStorage.setItem(WAITLIST_KEY, JSON.stringify(wl));
-    } catch {}
-    setInWaitlist(v => !v);
+    const next = !inWaitlist;
+    setInWaitlist(next);
+    if (next) joinWaitlist(user.id, gameId);
+    else leaveWaitlist(user.id, gameId);
   }
 
   return (
@@ -1610,7 +1611,7 @@ export default function GameDetail() {
           <div style={{ height: 8 }} />
         </div>
         {!infoMode && !isStarted && !isHost && (isFull || inWaitlist) && (
-          <WaitlistRow inList={inWaitlist} onToggle={handleWaitlistToggle} />
+          <WaitlistRow inList={inWaitlist} openSpots={openSpots} onToggle={handleWaitlistToggle} />
         )}
         {isHost ? (
           /* ── Host action bar ───────────────────────────── */

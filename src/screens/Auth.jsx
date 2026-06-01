@@ -539,8 +539,8 @@ export default function AuthScreen() {
 
       <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
         <div style={{ padding: '4px 16px 8px', textAlign: 'center' }}>
-          <span style={{ fontSize: 26, fontWeight: 800, color: TEXT, letterSpacing: -1 }}>
-            La<span style={{ color: BLUE }}>Pichanga</span>
+          <span style={{ fontSize: 32, fontWeight: 800, color: TEXT, letterSpacing: -1 }}>
+            Al<span style={{ color: BLUE }}>Grass</span>
           </span>
           <div style={{ marginTop: 16, fontSize: 20, fontWeight: 700, color: TEXT, letterSpacing: -0.3 }}>Suscribirme o Ingresar</div>
           <div style={{ marginTop: 2, fontSize: 13, color: SUB, letterSpacing: -0.1 }}>{subtitle}</div>

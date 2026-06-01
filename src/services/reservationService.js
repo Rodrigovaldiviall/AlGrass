@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { isExpiredPeru, parsePeruDateTime } from '../lib/peruTime';
+import { notifyWaitlistUsers } from './waitlistService';
 
 // ── internal helpers ──────────────────────────────────────────────────────────
 
@@ -292,6 +293,7 @@ export async function cancelGamePlayer(gameId, { skipNotification = false } = {}
     .eq('id', row.id);
   if (cancelErr) { console.error('[cancelGamePlayer] update failed:', cancelErr); return { error: cancelErr }; }
   await setMatchPublishedIfEmpty(gameId);
+  notifyWaitlistUsers(gameId);
 
   if (row.amount > 0) {
     const { error: ledgerErr } = await supabase.from('reservations').insert({
@@ -397,6 +399,7 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
     .in('id', ids);
   if (cancelErr) { console.error('[cancelGuestPlayers] update failed:', cancelErr); return { error: cancelErr }; }
   await setMatchPublishedIfEmpty(gameId);
+  notifyWaitlistUsers(gameId, rows.length);
 
   const refundTotal = rows.reduce((s, r) => s + (r.amount || 0), 0);
   if (refundTotal > 0) {

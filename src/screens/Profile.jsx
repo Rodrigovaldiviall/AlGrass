@@ -15,6 +15,7 @@ import { deriveGameState, isGamePast, isGameStarted, gameStartDate } from '../ut
 import { GameMetaLine } from '../components/GameMetaLine';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import { saveRating, fetchMyRatings, getLocalRatings, setLocalRatings } from '../services/ratingService';
+import { getMyWaitlistGamesFull } from '../services/waitlistService';
 import { uploadAvatar, getAvatarUrl } from '../utils/avatar';
 
 const USER = {
@@ -1648,12 +1649,15 @@ function GameRow({ game, onPress, muted = false, userId = null }) {
           );
         }
         if (game.status === 'waitlist') return (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
-            {(game.openSpots ?? 0) <= 0
-              ? <div className="game-status-pill" style={{ ...pillBase, border: `1.2px solid ${RED}`, color: RED, fontWeight: 500 }}>Completo</div>
-              : <div className="game-status-pill" style={{ ...pillBase, background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN }}>{game.openSpots} {game.openSpots === 1 ? 'cupo' : 'cupos'}</div>
-            }
-            <div style={{ fontSize: 11, fontWeight: 700, color: BLUE, letterSpacing: 0.2, alignSelf: 'flex-end', marginRight: 10 }}>En lista</div>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4 }}>
+            <span style={{ fontSize: 13, lineHeight: 1, marginTop: 5 }}>🔔</span>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+              {(game.openSpots ?? 0) <= 0
+                ? <div className="game-status-pill" style={{ ...pillBase, width: PM, minWidth: 0, border: `1.2px solid ${RED}`, color: RED, fontWeight: 500 }}>Completo</div>
+                : <div className="game-status-pill" style={{ ...pillBase, width: PM, minWidth: 0, background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN }}>{game.openSpots} {game.openSpots === 1 ? 'cupo' : 'cupos'}</div>
+              }
+              <div style={{ fontSize: 11, fontWeight: 700, color: BLUE, letterSpacing: 0.2 }}>En lista</div>
+            </div>
           </div>
         );
         if (muted) return (
@@ -1898,12 +1902,7 @@ export default function Profile() {
   const [creditBalance, setCreditBalance] = useState(() => {
     try { const c = JSON.parse(localStorage.getItem(CREDIT_KEY)); return (c?.balance || 0) > 0 ? c.balance : 0; } catch { return 0; }
   });
-  const [waitlistEntries, setWaitlistEntries] = useState(() => {
-    try {
-      const wl = JSON.parse(localStorage.getItem(WAITLIST_KEY_P)) || {};
-      return Object.keys(wl).map(waitlistGameToRow).filter(Boolean);
-    } catch { return []; }
-  });
+  const [waitlistEntries, setWaitlistEntries] = useState([]);
   const [ratings,        setRatings]        = useState(() => getLocalRatings());
   const [skippedRatings, setSkippedRatings] = useState(() => {
     try { return JSON.parse(localStorage.getItem(SKIPPED_KEY)) || {}; } catch { return {}; }
@@ -2053,6 +2052,45 @@ export default function Profile() {
           }
           setHostedReady(true);
         });
+
+      getMyWaitlistGamesFull(uid).then(async rows => {
+        if (!rows.length) return;
+        const gameIds = rows.map(r => r.game_id);
+        const { data: cpRows } = await supabase
+          .from('game_players')
+          .select('game_id')
+          .eq('status', 'confirmed')
+          .in('game_id', gameIds);
+        const confirmedMap = new Map();
+        (cpRows ?? []).forEach(r => { confirmedMap.set(r.game_id, (confirmedMap.get(r.game_id) ?? 0) + 1); });
+        const entries = rows.map(r => {
+          const g = r.games;
+          if (!g) return null;
+          const { time, ampm } = parseGameTime(g.time);
+          const totalSpots = g.total_spots ?? g.fields?.total_spots ?? 0;
+          const openSpots  = Math.max(0, totalSpots - (confirmedMap.get(r.game_id) ?? 0));
+          return {
+            id: r.game_id,
+            dateKey:     g.date_key    ?? null,
+            time24:      g.time        ?? null,
+            durationMin: g.duration_min ?? g.fields?.duration_min ?? null,
+            date:        formatDateLabel(g.date_key),
+            time,
+            ampm,
+            field:      g.fields?.venues?.name || '',
+            format:     g.format ?? g.fields?.format ?? '7v7',
+            totalSpots,
+            openSpots,
+            womenOnly:  g.game_amenities?.women_only ?? false,
+            covered:    g.fields?.field_amenities?.covered ?? false,
+            parking:    g.fields?.venues?.venue_amenities?.parking ?? false,
+            status: 'waitlist',
+            type:   g.type ?? 'match',
+            price:  null,
+          };
+        }).filter(Boolean);
+        setWaitlistEntries(entries);
+      });
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

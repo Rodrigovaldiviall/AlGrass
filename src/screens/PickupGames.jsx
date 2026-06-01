@@ -12,6 +12,7 @@ import { supabase } from '../lib/supabase';
 import { deriveGameState, requiredPlayers, isGameStarted } from '../utils/deriveGameState';
 import { GameMetaLine } from '../components/GameMetaLine';
 import { abbreviateName, formatDateLabel } from '../utils/format';
+import { getMyWaitlistGameIds } from '../services/waitlistService';
 
 const DOW_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
@@ -524,15 +525,19 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
     );
   }
   if (inWaitlist) {
+    const wlPillStyle = { height: 22, width: 72, padding: '0 8px', borderRadius: 999, fontSize: 'var(--gm-pill-fs, 11px)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' };
     const capPill = openSpots <= 0 ? (
-      <div className="game-status-pill" style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, border: `1.2px solid ${RED}`, color: RED, fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>Completo</div>
+      <div className="game-status-pill" style={{ ...wlPillStyle, border: `1.2px solid ${RED}`, color: RED, fontWeight: 500 }}>Completo</div>
     ) : (
-      <div className="game-status-pill" style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN, fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{openSpots} {openSpots === 1 ? 'cupo' : 'cupos'}</div>
+      <div className="game-status-pill" style={{ ...wlPillStyle, background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN, fontWeight: 600 }}>{openSpots} {openSpots === 1 ? 'cupo' : 'cupos'}</div>
     );
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
-        {capPill}
-        <div style={{ fontSize: 11, fontWeight: 700, color: BLUE, letterSpacing: 0.2, alignSelf: 'flex-end', marginRight: 10 }}>En lista</div>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4 }}>
+        <span style={{ fontSize: 13, lineHeight: 1, marginTop: 3 }}>🔔</span>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+          {capPill}
+          <div style={{ fontSize: 11, fontWeight: 700, color: BLUE, letterSpacing: 0.2 }}>En lista</div>
+        </div>
       </div>
     );
   }
@@ -807,12 +812,11 @@ export default function PickupGames() {
   const stripCellRefs      = useRef({});
   const programmaticScrollRef = useRef(false);
 
-  const waitlistGameIds = useMemo(() => {
-    try {
-      const wl = JSON.parse(localStorage.getItem('pichanga_waitlist')) || {};
-      return new Set(Object.keys(wl));
-    } catch { return new Set(); }
-  }, []);
+  const [waitlistGameIds, setWaitlistGameIds] = useState(new Set());
+  useEffect(() => {
+    if (!user?.id) return;
+    getMyWaitlistGameIds(user.id).then(ids => setWaitlistGameIds(new Set(ids)));
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const gameStateMap = useMemo(() => {
     if (!user?.id) return new Map();

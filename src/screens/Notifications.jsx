@@ -28,15 +28,17 @@ function mapRow(row) {
   if (!rendered) return null;
   const d = new Date(row.created_at);
   return {
-    id:        row.id,
-    type:      rendered.imageType === 'venue_image' ? 'reservation' : 'app',
-    title:     rendered.title,
-    message:   rendered.body,
-    gameDate:  row.games?.date_key ?? null,
-    time:      `${pad2(d.getHours())}:${pad2(d.getMinutes())}`,
-    dateKey:   ymd(d.getTime()),
-    read:      row.read_at != null,
-    createdAt: d.getTime(),
+    id:          row.id,
+    type:        rendered.imageType === 'venue_image' ? 'reservation' : 'app',
+    title:       rendered.title,
+    message:     rendered.body,
+    gameDate:    row.games?.date_key ?? null,
+    time:        `${pad2(d.getHours())}:${pad2(d.getMinutes())}`,
+    dateKey:     ymd(d.getTime()),
+    read:        row.read_at != null,
+    createdAt:   d.getTime(),
+    templateKey: row.template_key ?? null,
+    gameId:      row.game_id ?? null,
   };
 }
 
@@ -304,7 +306,7 @@ export default function Notifications() {
   const hasUnread = useMemo(() => notifications.some(n => !n.read), [notifications]);
 
   function handlePress(id) {
-    setExpandedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+    const notif = notifications.find(n => n.id === id);
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
     console.log('[notif] handlePress updating read_at for id:', id, 'user:', user?.id);
     supabase.from('notifications')
@@ -316,6 +318,11 @@ export default function Notifications() {
         if (error) console.error('[notif] handlePress update failed:', error, { status, statusText });
         else console.log('[notif] handlePress update ok:', { status, count });
       });
+    if (notif?.templateKey === 'waitlist_spot_available' && notif?.gameId) {
+      navigate(`/game/${notif.gameId}`);
+      return;
+    }
+    setExpandedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
   }
 
   function markAll() {

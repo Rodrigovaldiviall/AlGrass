@@ -43,6 +43,15 @@ export const notificationTemplates = {
     imageType:   'venue_image',
   },
 
+  // ── Waitlist ───────────────────────────────────────────────────────────────
+
+  waitlist_spot_available: {
+    title:       'Partido disponible',
+    body:        'Se ha abierto un cupo para ti. Aprovecha y reserva ahora.',
+    sourceLabel: 'Tu partido',
+    imageType:   'venue_image',
+  },
+
   // ── Cancellations & credits ────────────────────────────────────────────────
 
   reservation_cancelled_credit_self: {

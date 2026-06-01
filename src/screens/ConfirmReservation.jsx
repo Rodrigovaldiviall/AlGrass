@@ -9,6 +9,7 @@ import { supabase } from '../lib/supabase';
 import aprobarComprasYape from '../assets/Aprobar compras yape.webp';
 import codigoYape from '../assets/Código yape.webp';
 import { createReservation, createGamePlayer, createInvitedReservation, validatePromoCode, searchUsers, getWalletBalance } from '../services/reservationService';
+import { markWaitlistReserved } from '../services/waitlistService';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import { getAvatarUrl } from '../utils/avatar';
 
@@ -949,6 +950,7 @@ export default function ConfirmReservation() {
         });
       });
     });
+    markWaitlistReserved(authUser?.id, game?.id);
     navigate('/profile', { state: { confirmedGame: {
       id:           game?.id,
       field:        game?.field,
