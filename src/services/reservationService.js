@@ -190,8 +190,12 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoDis
   if (error) { console.error('[createReservation]', error); return { data, error }; }
 
   if (source === 'rental' && gameId) {
+    // Claim if published (normal) OR reserved-but-unclaimed (stuck state from pre-migration booking).
     const { error: gameErr } = await supabase
-      .from('games').update({ status: 'reserved' }).eq('id', gameId);
+      .from('games')
+      .update({ status: 'reserved', booked_by_user_id: session.user.id })
+      .eq('id', gameId)
+      .or('status.eq.published,and(status.eq.reserved,booked_by_user_id.is.null)');
     if (gameErr) console.error('[createReservation] game status update failed:', gameErr);
   }
 
@@ -485,26 +489,13 @@ export async function getMyBookedGameIds(gameIds) {
   if (!session?.user?.id) return new Set();
   const userId = session.user.id;
 
-  const { data: spends } = await supabase
-    .from('reservations')
-    .select('game_id')
-    .eq('user_id', userId)
-    .eq('status', 'spend')
-    .in('game_id', gameIds);
+  const { data } = await supabase
+    .from('games')
+    .select('id')
+    .in('id', gameIds)
+    .eq('booked_by_user_id', userId);
 
-  if (!spends?.length) return new Set();
-
-  const spendIds = spends.map(r => r.game_id);
-
-  const { data: refunds } = await supabase
-    .from('reservations')
-    .select('game_id')
-    .eq('user_id', userId)
-    .eq('status', 'refund')
-    .in('game_id', spendIds);
-
-  const refundedSet = new Set((refunds || []).map(r => r.game_id));
-  return new Set(spendIds.filter(id => !refundedSet.has(id)));
+  return new Set((data || []).map(g => g.id));
 }
 
 // Cancels a rental reservation — no game_players involved.
@@ -516,17 +507,17 @@ export async function cancelRental(gameId) {
   if (!session?.user?.id) return { skipped: true };
   const userId = session.user.id;
 
-  // Idempotency: if refund already exists, the cancel already ran — skip.
-  const { data: existingRefund } = await supabase
-    .from('reservations')
-    .select('id')
-    .eq('game_id', gameId)
-    .eq('user_id', userId)
-    .eq('status', 'refund')
-    .limit(1);
-
-  if (existingRefund?.length) {
-    console.warn('[cancelRental] refund already exists — skipping');
+  // Idempotency: block if another user holds the booking.
+  // Allow when booked_by_user_id === userId (normal) OR null (stuck state: booked before migration).
+  const { data: gameData, error: gameCheckErr } = await supabase
+    .from('games').select('booked_by_user_id').eq('id', gameId).single();
+  if (gameCheckErr) {
+    console.warn('[cancelRental] could not verify booker — skipping');
+    return { skipped: true };
+  }
+  const currentBooker = gameData?.booked_by_user_id;
+  if (currentBooker !== null && currentBooker !== userId) {
+    console.warn('[cancelRental] another user holds this booking — skipping');
     return { skipped: true };
   }
 
@@ -578,7 +569,9 @@ export async function cancelRental(gameId) {
     });
   }
 
-  const { error: gameErr } = await supabase.from('games').update({ status: 'published' }).eq('id', gameId);
+  const { error: gameErr } = await supabase.from('games')
+    .update({ status: 'published', booked_by_user_id: null })
+    .eq('id', gameId);
   if (gameErr) console.error('[cancelRental] game status update failed:', gameErr);
 
   return { refundAmount };

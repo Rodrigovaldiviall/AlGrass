@@ -1,14 +1,30 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { StaffProvider, useStaff } from './context/StaffContext';
 import StaffInviteModal from './components/StaffInviteModal';
 import Sidebar from './components/Sidebar';
 import logo from './assets/logo.webp';
 import IntroScreen from './screens/IntroScreen';
+import { supabase } from './lib/supabase';
+import { setNotifBadge } from './utils/notifBadge';
 
 const INTRO_KEY = 'algrass_intro_seen';
 
+
+function NotifBadgeSync() {
+  const { user } = useAuth();
+  useEffect(() => {
+    if (!user?.id) { setNotifBadge(0); return; }
+    supabase
+      .from('notifications')
+      .select('id', { count: 'exact', head: true })
+      .eq('recipient_user_id', user.id)
+      .is('read_at', null)
+      .then(({ count }) => setNotifBadge(count ?? 0));
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  return null;
+}
 
 function StaffModalBridge() {
   const staff = useStaff();
@@ -108,6 +124,7 @@ export default function App() {
           </Suspense>
         </div>
       </div>
+      <NotifBadgeSync />
       <StaffModalBridge />
       <IntroGate />
     </BrowserRouter>

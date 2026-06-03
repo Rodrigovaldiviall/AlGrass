@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { useStaff } from '../context/StaffContext';
 import { supabase } from '../lib/supabase';
 import { renderNotification } from '../data/notificationTemplates';
+import { setNotifBadge, getNotifCount } from '../utils/notifBadge';
 
 const LONG_MSG  = 100;
 const PAGE_SIZE = 20;
@@ -251,6 +252,7 @@ export default function Notifications() {
   const [loadingMore, setLoadingMore]     = useState(false);
   const [hasMore, setHasMore]             = useState(false);
   const [expandedIds, setExpandedIds]     = useState(() => new Set());
+  const [unreadCount, setUnreadCount]     = useState(getNotifCount);
   const notifScrollRef = useRef(null);
   const cursorRef      = useRef(null);
 
@@ -260,6 +262,13 @@ export default function Notifications() {
     }
     window.addEventListener('tab-scroll-top', onTabScrollTop);
     return () => window.removeEventListener('tab-scroll-top', onTabScrollTop);
+  }, []);
+
+  useEffect(() => {
+    setUnreadCount(getNotifCount());
+    function onBadge(e) { setUnreadCount(Math.max(0, e.detail || 0)); }
+    window.addEventListener('notif-badge', onBadge);
+    return () => window.removeEventListener('notif-badge', onBadge);
   }, []);
 
   useEffect(() => {
@@ -303,11 +312,13 @@ export default function Notifications() {
   }
 
   const groups    = useMemo(() => groupAndSort(notifications), [notifications]);
-  const hasUnread = useMemo(() => notifications.some(n => !n.read), [notifications]);
+  const hasUnread = unreadCount > 0;
 
   function handlePress(id) {
     const notif = notifications.find(n => n.id === id);
+    const wasUnread = notif && !notif.read;
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    if (wasUnread) setNotifBadge(Math.max(0, getNotifCount() - 1));
     console.log('[notif] handlePress updating read_at for id:', id, 'user:', user?.id);
     supabase.from('notifications')
       .update({ read_at: new Date().toISOString() })
@@ -326,15 +337,15 @@ export default function Notifications() {
   }
 
   function markAll() {
-    const unreadIds = notifications.filter(n => !n.read).map(n => n.id);
-    if (!unreadIds.length) return;
+    if (!unreadCount) return;
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-    console.log('[notif] markAll updating', unreadIds.length, 'ids:', unreadIds, 'user:', user?.id);
+    setNotifBadge(0);
+    console.log('[notif] markAll updating all unread for user:', user?.id);
     supabase.from('notifications')
       .update({ read_at: new Date().toISOString() })
-      .in('id', unreadIds)
       .eq('recipient_user_id', user.id)
-      .then(({ error, data, count, status, statusText }) => {
+      .is('read_at', null)
+      .then(({ error, count, status, statusText }) => {
         if (error) console.error('[notif] markAll update failed:', error, { status, statusText });
         else console.log('[notif] markAll update ok:', { status, count });
       });

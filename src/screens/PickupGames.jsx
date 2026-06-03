@@ -384,7 +384,7 @@ function FilterButton({ onClick, hasActive }) {
 
 const CHIP_DEFS = [
   { id: 'spots',           label: '+1 cupos',        icon: c => I.joinIcon(c)   },
-  { id: 'cubierta',        label: 'Cubierto',         icon: c => I.roof(c)       },
+  { id: 'cubierta',        label: 'Techado',         icon: c => I.roof(c)       },
   { id: 'mujeres',         label: 'Para mujeres',     icon: c => I.female(c)     },
   { id: 'estacionamiento', label: 'Estacionamiento',  icon: c => ParkingIcon(c)  },
   { id: 'duchas',          label: 'Duchas',           icon: c => ShowerIcon(c)   },
@@ -473,7 +473,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
       <div className="game-status-pill" style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', minWidth: PILL_MIN, padding: '4px 8px', borderRadius: 999, background: ORANGE, flexShrink: 0 }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: '#1B1B1F', lineHeight: 1.2 }}>Organiza</span>
         {totalSpots > 0 && (
-          <span style={{ fontSize: 10, fontWeight: 600, color: '#1B1B1F', opacity: 0.75, lineHeight: 1.2 }}>{confirmed}/{totalSpots}</span>
+          <span style={{ fontSize: 10, fontWeight: 600, color: BLUE, lineHeight: 1.2 }}>{confirmed}/{totalSpots}</span>
         )}
       </div>
     );
@@ -615,7 +615,82 @@ function DateHeader({ dateKey, refEl }) {
   );
 }
 
-// ── City onboarding sheet (shown once after welcome flow) ───────────────────
+// ── Coach marks (shown once after first city selection) ─────────────────────
+
+const COACH_KEY = 'pichanga_coach_seen';
+
+const COACH_STEPS = [
+  {
+    title: 'Partidos',
+    body: 'Únete a partidos organizados, invita a tus amigos y solo preocúpate por jugar.',
+    cta: 'Siguiente',
+    tabIndex: 0,
+  },
+  {
+    title: 'Canchas',
+    body: 'Reserva tu propia cancha en segundos, sin llamadas ni coordinaciones.',
+    cta: 'Empezar',
+    tabIndex: 1,
+  },
+];
+
+function CoachOverlay({ step, onAdvance }) {
+  const mark = COACH_STEPS[step];
+  return (
+    <div
+      onClick={onAdvance}
+      style={{ position: 'fixed', inset: 0, zIndex: 950, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+      <div style={{
+        position: 'absolute', bottom: 0,
+        left: `${step * 25}vw`, width: '25vw',
+        height: 'calc(60px + env(safe-area-inset-bottom))',
+        boxShadow: '0 0 0 200vmax rgba(0,0,0,0.46)',
+      }} />
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          position: 'relative', zIndex: 1,
+          margin: '0 16px',
+          marginBottom: 'calc(env(safe-area-inset-bottom) + 72px)',
+          background: '#fff', borderRadius: 18,
+          padding: '18px 18px 14px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.22)',
+        }}>
+        <div style={{
+          position: 'absolute', bottom: -7,
+          left: `calc(${(step + 0.5) * 25}vw - 22px)`,
+          width: 14, height: 14, background: '#fff',
+          transform: 'rotate(45deg)', borderRadius: 2,
+        }} />
+        <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 6 }}>{mark.title}</div>
+        <div style={{ fontSize: 14, color: SUB, lineHeight: 1.52, marginBottom: 16 }}>{mark.body}</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', gap: 5 }}>
+            {COACH_STEPS.map((_, i) => (
+              <div key={i} style={{
+                width: i === step ? 16 : 6, height: 6, borderRadius: 999,
+                background: i === step ? BLUE : '#D1D1D6',
+                transition: 'width .2s ease',
+              }} />
+            ))}
+          </div>
+          <button
+            onClick={onAdvance}
+            style={{
+              height: 38, padding: '0 20px', borderRadius: 999,
+              background: BLUE, color: '#fff', border: 'none',
+              fontSize: 14, fontWeight: 700, cursor: 'pointer',
+              fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none',
+            }}>
+            {mark.cta}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── City onboarding sheet (shown once after welcome flow) ─────────────────────
 
 const _WELCOME_KEY  = 'pichanga_welcome_seen';
 const _PROFILE_KEY  = 'pichanga_profile';
@@ -690,6 +765,29 @@ function CityOnboardSheet({ onDone }) {
   );
 }
 
+// ── SWR helpers ────────────────────────────────────────────────────────────
+
+const _PR_KEY = uid => `pg_player_rows_${uid}`;
+const _WL_KEY = uid => `pg_waitlist_${uid}`;
+const _PR_TTL = 15 * 60 * 1000;
+const _WL_TTL = 10 * 60 * 1000;
+
+function _readPRCache(uid) {
+  try {
+    const d = JSON.parse(sessionStorage.getItem(_PR_KEY(uid)));
+    if (!d || Date.now() - d.ts > _PR_TTL) return null;
+    return d;
+  } catch { return null; }
+}
+
+function _readWLCache(uid) {
+  try {
+    const d = JSON.parse(sessionStorage.getItem(_WL_KEY(uid)));
+    if (!d || Date.now() - d.ts > _WL_TTL) return null;
+    return d;
+  } catch { return null; }
+}
+
 // ── Screen ─────────────────────────────────────────────────────────────────
 
 let _gamesCache = [];
@@ -716,6 +814,12 @@ export default function PickupGames() {
   const location = useLocation();
   const { user }  = useAuth();
 
+  const [coachStep, setCoachStep] = useState(null);
+  function advanceCoach() {
+    if (coachStep < COACH_STEPS.length - 1) { setCoachStep(s => s + 1); }
+    else { try { localStorage.setItem(COACH_KEY, '1'); } catch {} setCoachStep(null); }
+  }
+
   const [showCitySheet, setShowCitySheet]   = useState(false);
   const [cityOnboarding, setCityOnboarding] = useState(!!location.state?.showCitySheet);
   useEffect(() => {
@@ -729,9 +833,14 @@ export default function PickupGames() {
     });
   }, []);
 
-  const [myPlayerRows,      setMyPlayerRows]      = useState([]);
-  const [payerNames,        setPayerNames]        = useState({});
+  const _pr0 = user?.id ? _readPRCache(user.id) : null;
+  const _wl0 = user?.id ? _readWLCache(user.id) : null;
+  const [myPlayerRows,      setMyPlayerRows]      = useState(_pr0?.rows ?? []);
+  const [payerNames,        setPayerNames]        = useState(_pr0?.names ?? {});
   const [confirmedCountMap, setConfirmedCountMap] = useState(new Map());
+  const [myPlayerRowsReady, setMyPlayerRowsReady] = useState(!!_pr0);
+  const [confirmedCountReady, setConfirmedCountReady] = useState(false);
+  const [waitlistReady,     setWaitlistReady]     = useState(!!_wl0);
 
   useEffect(() => {
     if (!supabase || !user?.id) return;
@@ -751,6 +860,8 @@ export default function PickupGames() {
         }
         setMyPlayerRows(rows);
         setPayerNames(names);
+        setMyPlayerRowsReady(true);
+        try { sessionStorage.setItem(_PR_KEY(user.id), JSON.stringify({ rows, names, ts: Date.now() })); } catch {}
       });
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -766,6 +877,7 @@ export default function PickupGames() {
         const map = new Map();
         data.forEach(r => { map.set(r.game_id, (map.get(r.game_id) ?? 0) + 1); });
         setConfirmedCountMap(map);
+        setConfirmedCountReady(true);
       });
   }, [games]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -777,13 +889,14 @@ export default function PickupGames() {
     try { return JSON.parse(localStorage.getItem('pichanga_profile'))?.city || ''; } catch { return ''; }
   });
   const [citySheetOpen, setCitySheetOpen] = useState(!!location.state?.showCitySheet);
-  const availableCities = useMemo(() => {
-    const cs = [...new Set(games.filter(g => g.status === 'published').map(g => g.city).filter(Boolean))];
-    return cs.sort((a, b) => a.localeCompare(b, 'es'));
-  }, [games]);
+  const [availableCities, setAvailableCities] = useState([]);
   useEffect(() => {
-    if (!userCity && availableCities.length > 0) setUserCity(availableCities[0]);
-  }, [availableCities]); // eslint-disable-line react-hooks/exhaustive-deps
+    supabase.from('venues').select('city').not('city', 'is', null).then(({ data }) => {
+      const cities = [...new Set((data ?? []).map(r => r.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+      setAvailableCities(cities);
+      if (!userCity && cities.length > 0) setUserCity(cities[0]);
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   function handleCityChange(c) {
     setUserCity(c);
     setCitySheetOpen(false);
@@ -812,10 +925,14 @@ export default function PickupGames() {
   const stripCellRefs      = useRef({});
   const programmaticScrollRef = useRef(false);
 
-  const [waitlistGameIds, setWaitlistGameIds] = useState(new Set());
+  const [waitlistGameIds, setWaitlistGameIds] = useState(() => _wl0 ? new Set(_wl0.ids) : new Set());
   useEffect(() => {
     if (!user?.id) return;
-    getMyWaitlistGameIds(user.id).then(ids => setWaitlistGameIds(new Set(ids)));
+    getMyWaitlistGameIds(user.id).then(ids => {
+      setWaitlistGameIds(new Set(ids));
+      setWaitlistReady(true);
+      try { sessionStorage.setItem(_WL_KEY(user.id), JSON.stringify({ ids, ts: Date.now() })); } catch {}
+    });
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const gameStateMap = useMemo(() => {
@@ -1057,12 +1174,12 @@ export default function PickupGames() {
                 return (
                 <GameRow key={g.id} g={g}
                   last={i === games.length - 1 && isLast}
-                  booked={!isHost && st?.isBooked}
-                  inWaitlist={!isHost && waitlistGameIds.has(g.id)}
-                  guestInfo={!isHost && st?.isGuestConfirmed ? { paidBy: st.paidBy, payerCode: st.payerCode, guestId: st.guestId, activeGuestCount: st.activeGuestCount } : undefined}
-                  canceledCount={!isHost && st?.relationship === 'canceled-with-guests' ? st.activeGuestCount : undefined}
-                  activeGuestCount={st?.activeGuestCount ?? 0}
-                  liveOpenSpots={liveOpenSpotsMap.get(g.id)}
+                  booked={myPlayerRowsReady && !isHost && st?.isBooked}
+                  inWaitlist={waitlistReady && !isHost && waitlistGameIds.has(g.id)}
+                  guestInfo={myPlayerRowsReady && !isHost && st?.isGuestConfirmed ? { paidBy: st.paidBy, payerCode: st.payerCode, guestId: st.guestId, activeGuestCount: st.activeGuestCount } : undefined}
+                  canceledCount={myPlayerRowsReady && !isHost && st?.relationship === 'canceled-with-guests' ? st.activeGuestCount : undefined}
+                  activeGuestCount={myPlayerRowsReady ? (st?.activeGuestCount ?? 0) : 0}
+                  liveOpenSpots={confirmedCountReady ? liveOpenSpotsMap.get(g.id) : g.openSpots}
                   isHost={isHost}
                   onOpen={() => {
                     if (st?.isGuestConfirmed) {
@@ -1130,11 +1247,16 @@ export default function PickupGames() {
         <CitySheet
           cities={availableCities}
           current={cityOnboarding ? null : userCity}
-          onSelect={city => { handleCityChange(city); setCityOnboarding(false); }}
+          onSelect={city => {
+            handleCityChange(city);
+            setCityOnboarding(false);
+            if (cityOnboarding && !localStorage.getItem(COACH_KEY)) setTimeout(() => setCoachStep(0), 220);
+          }}
           onClose={() => { setCityOnboarding(false); setCitySheetOpen(false); }}
           required={cityOnboarding}
         />
       )}
+      {coachStep !== null && <CoachOverlay step={coachStep} onAdvance={advanceCoach} />}
     </div>
   );
 }

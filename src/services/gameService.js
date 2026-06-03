@@ -30,6 +30,7 @@ const GAME_SELECT = `
   format,
   duration_min,
   host_user_id,
+  booked_by_user_id,
   game_amenities:amenities,
   fields:field_id (
     name,
@@ -87,6 +88,8 @@ function mapGame(g) {
     hostUserId:          g.host_user_id                ?? null,
     fieldDefaultHostId:  field?.default_host_user_id   ?? null,
     effectiveHostUserId: g.host_user_id                ?? null,
+    // Rental operational SoT: who currently holds the booking (null = available)
+    bookedByUserId:      g.booked_by_user_id           ?? null,
   };
 }
 

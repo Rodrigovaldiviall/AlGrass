@@ -3,12 +3,12 @@ import { haptic } from '../utils/haptic';
 import { useNavigate } from 'react-router-dom';
 import {
   BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, DANGER,
-  WHATSAPP_NUMBER, WHATSAPP_DISPLAY, SUPPORT_EMAIL,
 } from '../constants';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faWhatsapp } from '@fortawesome/free-brands-svg-icons';
+import { faHeadset } from '@fortawesome/free-solid-svg-icons';
+import { SupportMenu } from '../components/SupportMenu';
 import pkg from '../../package.json';
 
 const PROFILE_KEY = 'pichanga_profile';
@@ -476,6 +476,7 @@ export default function Settings() {
     navigate('/auth', { replace: true });
   }
 
+  const [supportOpen, setSupportOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [loggingOut, setLoggingOut]               = useState(false);
 
@@ -539,37 +540,16 @@ export default function Settings() {
         </Section>
 
         {/* 2. Contactar soporte */}
-        <Section title="Soporte">
-          <a
-            href={`https://wa.me/${WHATSAPP_NUMBER}`}
-            target="_blank" rel="noreferrer"
-            style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0 16px', minHeight: 38, textDecoration: 'none' }}>
-            <div style={{ width: 28, height: 28, borderRadius: 7, background: '#E8F9EF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <FontAwesomeIcon icon={faWhatsapp} style={{ fontSize: 15, color: '#25D366' }} />
-            </div>
-            <div style={{ flex: 1, display: 'flex', alignItems: 'baseline', gap: 6 }}>
-              <span style={{ fontSize: 13.5, color: TEXT }}>WhatsApp</span>
-              <span style={{ fontSize: 12.5, color: SUB }}>{WHATSAPP_DISPLAY}</span>
-            </div>
-            <ChevRight />
-          </a>
-          <Sep />
-          <a
-            href={`mailto:${SUPPORT_EMAIL}`}
-            style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '0 16px', minHeight: 38, textDecoration: 'none' }}>
-            <div style={{ width: 28, height: 28, borderRadius: 7, background: SOFT, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-                <rect x="2" y="4" width="20" height="16" rx="3" stroke={SUB} strokeWidth="1.6"/>
-                <path d="M2 7l10 7 10-7" stroke={SUB} strokeWidth="1.6" strokeLinejoin="round"/>
-              </svg>
-            </div>
-            <div style={{ flex: 1, display: 'flex', alignItems: 'baseline', gap: 6 }}>
-              <span style={{ fontSize: 13.5, color: TEXT }}>Email</span>
-              <span style={{ fontSize: 12.5, color: SUB }}>{SUPPORT_EMAIL}</span>
-            </div>
-            <ChevRight />
-          </a>
-        </Section>
+        <div style={{ position: 'relative' }}>
+          <Section title="Soporte">
+            <Row
+              label="Contactar soporte"
+              onPress={() => setSupportOpen(v => !v)}
+              right={<FontAwesomeIcon icon={faHeadset} style={{ fontSize: 16, color: SUB }} />}
+            />
+          </Section>
+          {supportOpen && <SupportMenu onClose={() => setSupportOpen(false)} />}
+        </div>
 
         {/* 3. Rol */}
         <Section title="Rol">

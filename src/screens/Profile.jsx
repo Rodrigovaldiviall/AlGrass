@@ -1,10 +1,10 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, RED, DANGER, WHATSAPP_NUMBER, WHATSAPP_DISPLAY, SUPPORT_EMAIL } from '../constants';
+import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, RED, DANGER } from '../constants';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faWhatsapp } from '@fortawesome/free-brands-svg-icons';
 import { faHeadset, faCoins } from '@fortawesome/free-solid-svg-icons';
+import { SupportMenu } from '../components/SupportMenu';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
 import { useStaff } from '../context/StaffContext';
@@ -332,7 +332,7 @@ function confirmedGameToRow(cg) {
     dateKey:     cg.dateKey  ?? null,
     time24:      cg.time24   ?? null,
     durationMin: cg.durationMin ?? null,
-    date: cg.date || '',
+    date: cg.dateKey ? formatDateLabel(cg.dateKey) : (cg.date || ''),
     time: parts[0] || cg.time || '',
     ampm: cg.ampm || parts[1] || '',
     field: cg.field || 'Cancha',
@@ -396,13 +396,6 @@ const GearIcon = ({ color = SUB }) => (
 
 const HeadsetIcon = () => <FontAwesomeIcon icon={faHeadset} style={{ fontSize: 20, color: TEXT }} />;
 
-const EmailIcon = () => (
-  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-    <rect x="2" y="4" width="20" height="16" rx="3" stroke={SUB} strokeWidth="1.6"/>
-    <path d="M2 7l10 7 10-7" stroke={SUB} strokeWidth="1.6" strokeLinejoin="round"/>
-  </svg>
-);
-
 const CheckIcon = () => (
   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
     <path d="M3 7l3 3 5-5" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -437,40 +430,6 @@ const CameraIcon = () => (
     <circle cx="10" cy="10" r="2.5" stroke="#fff" strokeWidth="1.6"/>
   </svg>
 );
-
-// ── SupportMenu ────────────────────────────────────────────────────────────
-
-function SupportMenu({ onClose }) {
-  return (
-    <>
-      <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
-      <div style={{
-        position: 'absolute', top: 46, right: 0, zIndex: 41,
-        background: '#fff', borderRadius: 18,
-        boxShadow: '0 8px 32px rgba(0,0,0,0.16)', border: `1px solid ${HAIR}`,
-        minWidth: 252, padding: '6px 0', overflow: 'hidden',
-      }}>
-        <a href={`https://wa.me/${WHATSAPP_NUMBER}`} target="_blank" rel="noreferrer" onClick={onClose}
-          style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', textDecoration: 'none' }}>
-          <FontAwesomeIcon icon={faWhatsapp} style={{ fontSize: 24, color: '#25D366', flexShrink: 0 }} />
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, lineHeight: 1.2 }}>WhatsApp</div>
-            <div style={{ fontSize: 12.5, color: SUB, marginTop: 2 }}>{WHATSAPP_DISPLAY}</div>
-          </div>
-        </a>
-        <div style={{ height: 1, background: HAIR, margin: '0 16px' }} />
-        <a href={`mailto:${SUPPORT_EMAIL}`} onClick={onClose}
-          style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', textDecoration: 'none' }}>
-          <EmailIcon />
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, lineHeight: 1.2 }}>Email</div>
-            <div style={{ fontSize: 12.5, color: SUB, marginTop: 2 }}>{SUPPORT_EMAIL}</div>
-          </div>
-        </a>
-      </div>
-    </>
-  );
-}
 
 // ── Avatar ─────────────────────────────────────────────────────────────────
 
@@ -1588,7 +1547,7 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
 
 // ── GameRow ────────────────────────────────────────────────────────────────
 
-function GameRow({ game, onPress, muted = false, userId = null }) {
+function GameRow({ game, onPress, muted = false, userId = null, highlighted = false }) {
   const [pressed, setPressed] = useState(false);
   const isCampo  = game.type === 'campo';
   const isRental = game.type === 'rental';
@@ -1599,10 +1558,12 @@ function GameRow({ game, onPress, muted = false, userId = null }) {
       onPointerDown={() => setPressed(true)}
       onPointerUp={() => setPressed(false)}
       onPointerLeave={() => setPressed(false)}
+      className={highlighted ? 'game-row-highlighted' : ''}
       style={{
         display: 'flex', alignItems: 'center', gap: 12,
         padding: '14px 16px',
-        background: pressed ? SOFT : '#fff',
+        background: pressed ? SOFT : highlighted ? 'rgba(63,95,224,0.06)' : '#fff',
+        borderRadius: highlighted ? 12 : undefined,
         transform: pressed ? 'scale(0.985)' : 'scale(1)',
         transition: 'transform .12s ease, background .12s ease',
         cursor: 'pointer',
@@ -1635,12 +1596,12 @@ function GameRow({ game, onPress, muted = false, userId = null }) {
             <div className="game-status-pill" style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', minWidth: PM, padding: '5px 8px', borderRadius: 999, background: pillBg, flexShrink: 0 }}>
               <span style={{ fontSize: 12, fontWeight: 700, color: labelColor, lineHeight: 1.2 }}>Organiza</span>
               {isRental ? (
-                <span style={{ fontSize: 10.5, fontWeight: 600, lineHeight: 1.2, color: (!muted && rentalReserved) ? BLUE : labelColor, opacity: (!muted && !rentalReserved) ? 0.75 : 1 }}>
+                <span style={{ fontSize: 10.5, fontWeight: 600, lineHeight: 1.2, color: muted ? labelColor : BLUE }}>
                   {rentalReserved ? 'Reservado' : 'Cancha'}
                 </span>
               ) : (
                 game.totalSpots > 0 && game.openSpots != null && (
-                  <span style={{ fontSize: 10.5, fontWeight: 600, lineHeight: 1.2, color: (!muted && hasReservations) ? BLUE : labelColor, opacity: (!muted && !hasReservations) ? 0.75 : 1 }}>
+                  <span style={{ fontSize: 10.5, fontWeight: 600, lineHeight: 1.2, color: muted ? labelColor : BLUE }}>
                     {confirmed}/{game.totalSpots}
                   </span>
                 )
@@ -1839,7 +1800,8 @@ export default function Profile() {
   const navigate = useNavigate();
   const { user, login } = useAuth();
   const { isVenueStaff, isVenueManager, isGameHost } = useStaff();
-  const { state } = useLocation();
+  const location = useLocation();
+  const { state } = location;
   const profileScrollRef = useRef(null);
   const initPfScrollRef = useRef(undefined);
   if (initPfScrollRef.current === undefined) {
@@ -1864,6 +1826,8 @@ export default function Profile() {
 
   const profileScrollPosRef    = useRef(0);
   const pfScrollRestoredRef    = useRef(false);
+  const highlightedRef         = useRef(null);
+  const [highlightedId, setHighlightedId] = useState(null);
 
   useEffect(() => {
     return () => {
@@ -1888,6 +1852,19 @@ export default function Profile() {
     } catch {}
     return cg;
   });
+
+  // When Profile tab is already mounted, useState initializer won't re-run on navigation.
+  // Watch location.state so a new confirmedGame from navigation triggers the overlay + re-fetch.
+  useEffect(() => {
+    const cg = location.state?.confirmedGame ?? null;
+    if (!cg) return;
+    try {
+      const shown = JSON.parse(localStorage.getItem(SHOWN_KEY)) || {};
+      if (cg.id && shown[cg.id]) return;
+    } catch {}
+    setConfirmedGame(cg);
+  }, [location.state]); // eslint-disable-line
+
   const [profileData,    setProfileData]    = useState(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(PROFILE_KEY)) || {};
@@ -1983,20 +1960,25 @@ export default function Profile() {
         .from('reservations')
         .select(`
           game_id, source, unit_price, promo_discount, credit_applied, total_amount,
-          games:game_id ( type, date_key, time, format, total_spots, duration_min, host_user_id, game_amenities:amenities, fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
+          games:game_id ( type, date_key, time, format, total_spots, duration_min, host_user_id, booked_by_user_id, game_amenities:amenities, fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
         `)
         .eq('user_id', uid)
         .eq('status', 'spend')
         .then(({ data, error }) => {
           if (error) { console.warn('[Profile] reservations:', error.message); setSbGamesReady(true); return; }
           if (!data?.length) { setExtraGames([]); setSbGamesReady(true); return; }
-          // Exclude spend records that already have a corresponding refund (canceled rentals).
+          // Rentals: active if games.booked_by_user_id === uid (operational SoT).
+          // Matches: active if no corresponding refund row exists in the ledger.
           supabase.from('reservations').select('game_id')
             .eq('user_id', uid).eq('status', 'refund')
-            .in('game_id', data.map(r => r.game_id))
+            .in('game_id', data.filter(r => r.games?.type !== 'rental').map(r => r.game_id))
             .then(({ data: refunds }) => {
               const refundedSet = new Set((refunds || []).map(r => r.game_id));
-              const activeRows = data.filter(r => !refundedSet.has(r.game_id)).map(sbReservationToRow);
+              const activeRows = data
+                .filter(r => r.games?.type === 'rental'
+                  ? r.games?.booked_by_user_id === uid
+                  : !refundedSet.has(r.game_id))
+                .map(sbReservationToRow);
               setExtraGames(activeRows);
               try { localStorage.setItem(STORAGE_KEY, JSON.stringify(activeRows)); } catch {}
               setSbGamesReady(true);
@@ -2093,6 +2075,57 @@ export default function Profile() {
       });
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-fetch after a new reservation so the game appears immediately without manual refresh
+  useEffect(() => {
+    const uid = user?.id;
+    if (!confirmedGame?.id || !supabase || !uid) return;
+
+    supabase
+      .from('reservations')
+      .select(`
+        game_id, source, unit_price, promo_discount, credit_applied, total_amount,
+        games:game_id ( type, date_key, time, format, total_spots, duration_min, host_user_id, booked_by_user_id, game_amenities:amenities, fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
+      `)
+      .eq('user_id', uid)
+      .eq('status', 'spend')
+      .then(({ data, error }) => {
+        if (error || !data?.length) return;
+        supabase.from('reservations').select('game_id')
+          .eq('user_id', uid).eq('status', 'refund')
+          .in('game_id', data.filter(r => r.games?.type !== 'rental').map(r => r.game_id))
+          .then(({ data: refunds }) => {
+            const refundedSet = new Set((refunds || []).map(r => r.game_id));
+            const activeRows = data
+              .filter(r => r.games?.type === 'rental'
+                ? r.games?.booked_by_user_id === uid
+                : !refundedSet.has(r.game_id))
+              .map(sbReservationToRow);
+            setExtraGames(activeRows);
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(activeRows)); } catch {}
+          });
+      });
+
+    supabase
+      .from('game_players')
+      .select(`
+        game_id, user_id, payer_id, status, amount,
+        games:game_id ( date_key, time, format, total_spots, duration_min, host_user_id, game_amenities:amenities, fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
+      `)
+      .or(`user_id.eq.${uid},payer_id.eq.${uid}`)
+      .then(async ({ data, error }) => {
+        if (error) return;
+        const rows = data ?? [];
+        setMyPlayerRows(rows);
+        const payerIds = [...new Set(rows.filter(r => r.user_id === uid && r.payer_id !== uid).map(r => r.payer_id))];
+        if (payerIds.length > 0) {
+          const { data: pd } = await supabase.from('users').select('id, full_name, user_code').in('id', payerIds);
+          const map = {};
+          (pd || []).forEach(u => { map[u.id] = { name: u.full_name || '', code: u.user_code || '' }; });
+          setPayerNames(map);
+        }
+      });
+  }, [confirmedGame?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [pastExpanded, setPastExpanded]         = useState(false);
   const [upcomingExpanded, setUpcomingExpanded] = useState(false);
@@ -2269,6 +2302,20 @@ export default function Profile() {
   })();
   const dataReady = myPlayerRowsReady && sbGamesReady && hostedReady;
 
+  useEffect(() => {
+    if (!highlightedId || !dataReady) return;
+    const raf = requestAnimationFrame(() => {
+      highlightedRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [highlightedId, dataReady]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!highlightedId) return;
+    const t = setTimeout(() => setHighlightedId(null), 4500);
+    return () => clearTimeout(t);
+  }, [highlightedId]);
+
   // useLayoutEffect fires before the browser paints, so scroll is set before the user sees
   // the new content — eliminating the flash-to-top that useEffect + rAF would cause.
   useLayoutEffect(() => {
@@ -2360,6 +2407,7 @@ export default function Profile() {
         } catch {}
       }
     }
+    if (confirmedGame?.id) setHighlightedId(confirmedGame.id);
     setConfirmedGame(null);
   }
 
@@ -2520,7 +2568,14 @@ export default function Profile() {
                     {date && date !== 'Próximo partido' && (
                       <div style={{ padding: '4px 16px 8px', fontSize: 13.5, fontWeight: 500, color: SUB }}>{date}</div>
                     )}
-                    {games.map(g => <GameRow key={g.id} game={g} onPress={() => openGameDetail(g)} userId={user?.id} />)}
+                    {games.map(g => (
+                      <div
+                        key={g.id}
+                        ref={g.id === highlightedId ? highlightedRef : null}
+                      >
+                        <GameRow game={g} onPress={() => openGameDetail(g)} userId={user?.id} highlighted={g.id === highlightedId} />
+                      </div>
+                    ))}
                   </div>
                 ));
               })()}

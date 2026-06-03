@@ -271,7 +271,7 @@ function CTA({ price, onPress }) {
           WebkitTapHighlightColor: 'transparent', outline: 'none',
         }}>
         {I.joinIcon('#1B1B1F')}
-        <span>Reservar campo por {price}</span>
+        <span>Reservar cancha por {price}</span>
       </button>
     </div>
   );

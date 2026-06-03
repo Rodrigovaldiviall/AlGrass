@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { BLUE, TAB_INACTIVE, ORANGE } from '../constants';
+import { BLUE, TAB_INACTIVE, RED } from '../constants';
 import I from '../icons';
 import { haptic } from '../utils/haptic';
 import { isGamePast } from '../utils/deriveGameState';
+import { readNotifBadgeLabel, badgeLabel } from '../utils/notifBadge';
 
 const TABS = [
   { id: 'partidos',       icon: I.search,  label: 'Partidos',       route: '/games' },
@@ -11,15 +12,6 @@ const TABS = [
   { id: 'notificaciones', icon: I.bell,    label: 'Notificaciones', route: '/notifications' },
   { id: 'perfil',         icon: I.profile, label: 'Perfil',         route: '/profile' },
 ];
-
-function getNotifBadge() {
-  try {
-    const list = JSON.parse(localStorage.getItem('pichanga_notifications_v2'));
-    if (!Array.isArray(list)) return undefined;
-    const n = list.filter(x => !x.read).length;
-    return n === 0 ? undefined : n > 5 ? '5+' : n;
-  } catch { return undefined; }
-}
 
 function getUpcomingBadge() {
   try {
@@ -63,9 +55,9 @@ function TabItem({ icon, label, active, badge, onClick }) {
         {icon(color, active)}
         {badge !== undefined && (
           <div style={{
-            position: 'absolute', top: -4, right: -10,
+            position: 'absolute', top: -4, right: -14,
             minWidth: 18, height: 18, padding: '0 5px', borderRadius: 999,
-            background: ORANGE, color: '#fff', fontSize: 11, fontWeight: 700,
+            background: RED, color: '#fff', fontSize: 11, fontWeight: 700,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             boxSizing: 'border-box',
           }}>{badge}</div>
@@ -82,7 +74,16 @@ export default function TabBar({ activeTab: activeProp }) {
   const activeTab = activeProp ?? tabFromPath(pathname, state?.backPath);
   const isDetailScreen = pathname.startsWith('/game/') || pathname.startsWith('/field/') || pathname.startsWith('/rental/');
 
-  const badges = { notificaciones: getNotifBadge(), perfil: getUpcomingBadge() };
+  const [notifBadge, setNotifBadgeState] = useState(readNotifBadgeLabel);
+
+  useEffect(() => {
+    setNotifBadgeState(readNotifBadgeLabel());
+    function onBadge(e) { setNotifBadgeState(badgeLabel(e.detail)); }
+    window.addEventListener('notif-badge', onBadge);
+    return () => window.removeEventListener('notif-badge', onBadge);
+  }, []);
+
+  const badges = { notificaciones: notifBadge, perfil: getUpcomingBadge() };
 
   return (
     <>

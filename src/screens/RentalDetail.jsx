@@ -145,7 +145,7 @@ function CTA({ price, onPress }) {
           WebkitTapHighlightColor: 'transparent', outline: 'none',
         }}>
         {I.joinIcon('#1B1B1F')}
-        <span>Reservar campo por {price}</span>
+        <span>Reservar cancha por {price}</span>
       </button>
     </div>
   );
@@ -339,19 +339,16 @@ export default function RentalDetail() {
             .eq('game_id', id).eq('user_id', user.id).eq('status', 'spend')
             .order('reserved_at', { ascending: false }).limit(1)
         : null,
-      user?.id
-        ? supabase.from('reservations').select('id')
-            .eq('game_id', id).eq('user_id', user.id).eq('status', 'refund').limit(1)
-        : null,
-    ]).then(([freshGame, spendsRes, refundsRes]) => {
+    ]).then(([freshGame, spendsRes]) => {
       if (freshGame) setGame(prev => prev
-        ? { ...prev, status: freshGame.status, reserved: freshGame.status === 'reserved' }
+        ? { ...prev, status: freshGame.status, reserved: freshGame.status === 'reserved', bookedByUserId: freshGame.bookedByUserId ?? null }
         : freshGame
       );
       setLoading(false);
       const spends = spendsRes?.data;
-      const refunds = refundsRes?.data;
-      if (spends?.length && !refunds?.length) {
+      // Keep most-recent spend for amount display in PaymentSheet/CancelSheet only.
+      // Active booking state is determined by game.bookedByUserId, not by spend/refund history.
+      if (spends?.length) {
         setMyRes({ amount: spends[0].subtotal_amount ?? spends[0].total_amount ?? 0, reservedAt: spends[0].reserved_at ?? null });
       } else {
         setMyRes(null);
@@ -389,7 +386,7 @@ export default function RentalDetail() {
 
   const isHost       = !!user?.id && !!game.hostUserId && user.id === game.hostUserId;
   const isReserved   = game.reserved ?? (game.status === 'reserved');
-  const userBooked   = !!myReservation;
+  const userBooked   = statusReady && game?.bookedByUserId === user?.id;
 
   const userName = (() => { try { return JSON.parse(localStorage.getItem('pichanga_profile') || '{}').name || user?.email || 'Tú'; } catch { return user?.email || 'Tú'; } })();
 
@@ -418,7 +415,7 @@ export default function RentalDetail() {
 
   const chips = [
     game.format  && { label: game.format,      icon: I.twoPeople },
-    game.covered && { label: 'Cubierto',        icon: I.roof      },
+    game.covered && { label: 'Techado',        icon: I.roof      },
     game.filmed  && { label: 'Filmado',         icon: I.camera    },
     game.parking && { label: 'Estacionamiento', icon: null        },
     game.showers && { label: 'Duchas',          icon: null        },
@@ -430,6 +427,20 @@ export default function RentalDetail() {
 
       <div className="no-sb" style={{ flex: 1, overflowY: 'auto', background: '#fff' }}>
         <HeroImage coverPath={game.venueCoverPath} coverVersion={game.venueCoverVersion} />
+
+        {statusReady && (
+          <div style={{ padding: '7px 16px 0', display: 'flex', justifyContent: 'center' }}>
+            {userBooked && isPastRental ? (
+              <span style={{ display: 'inline-flex', alignItems: 'center', padding: '5px 14px', borderRadius: 999, background: '#F0FFF4', fontSize: 13, fontWeight: 600, color: GREEN }}>Finalizado</span>
+            ) : userBooked ? (
+              <span style={{ display: 'inline-flex', alignItems: 'center', padding: '5px 14px', borderRadius: 999, background: '#F0FFF4', fontSize: 13, fontWeight: 600, color: GREEN }}>Reservado</span>
+            ) : isHost ? (
+              <span style={{ display: 'inline-flex', alignItems: 'center', padding: '5px 14px', borderRadius: 999, background: ORANGE, fontSize: 13, fontWeight: 700, color: '#1B1B1F' }}>Organizador</span>
+            ) : isReserved ? (
+              <span style={{ display: 'inline-flex', alignItems: 'center', padding: '5px 14px', borderRadius: 999, background: SOFT, fontSize: 13, fontWeight: 600, color: SUB }}>No disponible</span>
+            ) : null}
+          </div>
+        )}
 
         {statusReady && isPastRental && userBooked && (
           <RatingBlock gameId={game.id} existingRating={existingRating} gameType="rental" hostUserId={game.hostUserId} />
@@ -513,7 +524,10 @@ export default function RentalDetail() {
               source:      'rental',
               field:       title,
               date,
+              dateKey:     game.dateKey  ?? null,
               time:        timeStr,
+              time24:      game.time24   ?? null,
+              ampm:        game.ampm     ?? null,
               duration:    duration || '',
               format:      game.format || '',
               price:       priceDisplay,

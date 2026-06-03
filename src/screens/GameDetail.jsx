@@ -43,7 +43,7 @@ function buildGame(sel) {
       duration: GAME_DEFAULTS.duration, fieldNumber: GAME_DEFAULTS.fieldNumber,
       address: FIELD_INFO['Xaloc'].address,
       chips: [
-        { kind: 'format', label: '8v8' }, { kind: 'covered', label: 'Cubierto' },
+        { kind: 'format', label: '8v8' }, { kind: 'covered', label: 'Techado' },
         { kind: 'filmed', label: 'Filmado' }, { kind: 'women', label: 'Para mujeres' },
       ],
       description: GAME_DEFAULTS.description,
@@ -62,7 +62,7 @@ function buildGame(sel) {
   const chips = [
     { kind: 'format',   label: sel.format || '7v7' },
     total > requiredPlayers(sel.format) && { kind: 'suplentes', label: 'Con suplentes' },
-    sel.covered   && { kind: 'covered',  label: 'Cubierto' },
+    sel.covered   && { kind: 'covered',  label: 'Techado' },
     sel.filmed    && { kind: 'filmed',   label: 'Filmado' },
     sel.womenOnly && { kind: 'women',    label: 'Solo mujeres' },
     sel.master45  && { kind: 'master45', label: 'Master 45+' },
@@ -1139,6 +1139,22 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
   );
 }
 
+// ── Roster cache (sessionStorage, 15 min TTL, per-user)
+const ROSTER_CACHE_TTL = 15 * 60 * 1000;
+function _rosterCacheKey(gameId) { return `gd_roster_${gameId}`; }
+function readRosterCache(gameId, userId) {
+  if (!gameId || !userId) return null;
+  try {
+    const c = JSON.parse(sessionStorage.getItem(_rosterCacheKey(gameId)));
+    if (!c || c.userId !== userId || !c.ts || Date.now() - c.ts > ROSTER_CACHE_TTL) return null;
+    return c.rows ?? null;
+  } catch { return null; }
+}
+function writeRosterCache(gameId, userId, rows) {
+  if (!gameId || !userId) return;
+  try { sessionStorage.setItem(_rosterCacheKey(gameId), JSON.stringify({ rows, userId, ts: Date.now() })); } catch {}
+}
+
 // ── Screen
 export default function GameDetail() {
   const navigate = useNavigate();
@@ -1148,8 +1164,12 @@ export default function GameDetail() {
   const rating     = location.state?.rating    ?? null;
   const backPath   = location.state?.backPath  ?? '/games';
 
-  const [sbGame, setSbGame]   = useState(null);
-  const [sbRoster, setSbRoster] = useState([]);
+  const { user } = useAuth();
+
+  const [sbGame, setSbGame] = useState(null);
+  const _cachedRoster = readRosterCache(id, user?.id);
+  const [sbRoster, setSbRoster] = useState(_cachedRoster ?? []);
+  const [rosterReady, setRosterReady] = useState(_cachedRoster != null);
 
   const stateGame = location.state?.game ?? null;
   // sbGame (canonical DB fetch) wins for game data; stateGame contributes reservation extras only
@@ -1166,7 +1186,6 @@ export default function GameDetail() {
   }, [sbGame, stateGame, id]);
   const g = useMemo(() => buildGame(sel), [sel]);
 
-  const { user } = useAuth();
   const gameId  = sel?.id ?? id ?? null;
   const guestId = location.state?.game?.guestId ?? null;
 
@@ -1297,6 +1316,8 @@ export default function GameDetail() {
           invited_by_user_id: p.invited_by_user_id        ?? null,
         }));
         setSbRoster(rows);
+        setRosterReady(true);
+        writeRosterCache(gameId, user?.id, rows);
       });
   }
 
@@ -1320,9 +1341,11 @@ export default function GameDetail() {
       .eq('user_id', player.user_id)
       .eq('status', 'confirmed');
     if (error) { console.warn('[attendance]', error.message); return; }
-    setSbRoster(prev => prev.map(r =>
-      r.user_id === player.user_id ? { ...r, checked_in_at: checkedInAt } : r
-    ));
+    setSbRoster(prev => {
+      const updated = prev.map(r => r.user_id === player.user_id ? { ...r, checked_in_at: checkedInAt } : r);
+      writeRosterCache(gameId, user?.id, updated);
+      return updated;
+    });
     // Persist host presence silently on first mark — no-op if already set
     supabase.from('games')
       .update({ host_checked_in_at: checkedInAt })
@@ -1339,9 +1362,11 @@ export default function GameDetail() {
       .eq('user_id', player.user_id)
       .eq('status', 'confirmed');
     if (error) { console.warn('[attendance-reset]', error.message); return; }
-    setSbRoster(prev => prev.map(r =>
-      r.user_id === player.user_id ? { ...r, checked_in_at: null } : r
-    ));
+    setSbRoster(prev => {
+      const updated = prev.map(r => r.user_id === player.user_id ? { ...r, checked_in_at: null } : r);
+      writeRosterCache(gameId, user?.id, updated);
+      return updated;
+    });
   }
 
 
@@ -1425,6 +1450,7 @@ export default function GameDetail() {
   }
 
   function handleCancelDone() {
+    try { sessionStorage.removeItem(`pg_player_rows_${user?.id}`); } catch {}
     setCancelOpen(false);
     fetchRoster();
     navigate(backPath);
@@ -1441,6 +1467,7 @@ export default function GameDetail() {
     setInWaitlist(next);
     if (next) joinWaitlist(user.id, gameId);
     else leaveWaitlist(user.id, gameId);
+    try { sessionStorage.removeItem(`pg_waitlist_${user?.id}`); } catch {}
   }
 
   return (
@@ -1520,7 +1547,7 @@ export default function GameDetail() {
             />
           </div>
 
-          <div style={{ padding: '8px 16px 18px', display: 'flex', flexWrap: 'nowrap', gap: 8, overflowX: 'auto' }}>
+          <div style={{ padding: '8px 16px 18px', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {g.chips.map((c, i) => <Chip key={i} kind={c.kind} label={c.label} />)}
           </div>
 
@@ -1610,7 +1637,7 @@ export default function GameDetail() {
 
           <div style={{ height: 8 }} />
         </div>
-        {!infoMode && !isStarted && !isHost && (isFull || inWaitlist) && (
+        {rosterReady && !infoMode && !isStarted && !isHost && (isFull || inWaitlist) && (
           <WaitlistRow inList={inWaitlist} openSpots={openSpots} onToggle={handleWaitlistToggle} />
         )}
         {isHost ? (
@@ -1624,6 +1651,9 @@ export default function GameDetail() {
               </button>
             </div>
           )
+        ) : !rosterReady ? (
+          /* ── Placeholder — reserves bar height until roster loads ── */
+          <div style={{ height: 70, background: '#fff', borderTop: `1px solid ${HAIR}` }} />
         ) : (isBooked || infoMode) ? (
           /* ── Player: payment + gestionar ────────────────── */
           <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}` }}>

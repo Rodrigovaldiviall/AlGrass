@@ -515,7 +515,9 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
             icon={<span style={{ background: YAPE, color: '#fff', borderRadius: 6, padding: '2px 8px', fontSize: 13, fontWeight: 800, letterSpacing: -0.5 }}>yape</span>}
             label="Paga con Yape"
           >
-            <div style={{ marginTop: 8, fontSize: 12, color: SUB, marginBottom: 8 }}>Ingresa a tu Yape, selecciona "Aprobar compras", copia el "Código de aprobación" y pégalo aquí.</div>
+            <div style={{ marginTop: 8, marginBottom: 12, borderRadius: 10, background: `${YAPE}15`, padding: '9px 12px' }}>
+              <div style={{ fontSize: 12.5, color: TEXT, lineHeight: 1.55 }}>Ingresa a tu Yape, selecciona <strong style={{ color: YAPE }}>"Aprobar compras"</strong>, copia el <strong style={{ color: YAPE }}>"Código de aprobación"</strong> y pégalo aquí.</div>
+            </div>
             <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
               <div style={{ flex: 1, padding: 4, borderRadius: 12, background: `${YAPE}18`, border: `1px solid ${YAPE}40`, textAlign: 'center', position: 'relative' }}>
                 <img src={aprobarComprasYape} alt="Aprobar compras Yape" style={{ width: '100%', height: 'auto', display: 'block', borderRadius: 9 }} />
@@ -791,8 +793,9 @@ export default function ConfirmReservation() {
   }
 
   async function handlePaid(paymentMethod) {
+    setFreeConfirming(true);
     setPayOpen(false);
-    if (!invitedMode && game?.hostUserId && authUser?.id && game.hostUserId === authUser.id) return;
+    if (!invitedMode && game?.hostUserId && authUser?.id && game.hostUserId === authUser.id) { setFreeConfirming(false); return; }
     if (invitedMode) {
       const gameId = game?.id;
       if (gameId && guests.length > 0) {
@@ -856,7 +859,7 @@ export default function ConfirmReservation() {
           paymentMethod: paymentMethod || 'efectivo',
           creditApplied, source: game?.source ?? 'match',
         }).then(({ data: resData, error, skipped }) => {
-          if (skipped || error) return;
+          if (skipped || error) { setFreeConfirming(false); return; }
           const reservationId = resData?.id ?? null;
           if (game?.type === 'match' || !game?.type) guests
             .forEach(guest => createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice, hostUserId: game?.hostUserId ?? null }));
@@ -886,10 +889,27 @@ export default function ConfirmReservation() {
               else console.log('[notif] invited_by_player (addGuests) inserted for', guest.id);
             });
           });
+          try {
+            const shown = JSON.parse(localStorage.getItem('pichanga_shown_confirmations')) || {};
+            delete shown[gameId];
+            localStorage.setItem('pichanga_shown_confirmations', JSON.stringify(shown));
+          } catch {}
+          navigate('/profile', { state: { confirmedGame: {
+            id:       gameId,
+            field:    game?.field,
+            date:     game?.date,
+            dateKey:  game?.dateKey  ?? null,
+            time:     game?.time,
+            ampm:     game?.ampm     ?? null,
+            time24:   game?.time24   ?? null,
+            source:   game?.source,
+            gameType: game?.type     ?? null,
+            amount:   total,
+          }}});
         });
+      } else {
+        setFreeConfirming(false);
       }
-      setFreeConfirming(false);
-      setShowConfirmed(true);
       return;
     }
     if (!isRental && guests.length > 0) {
@@ -915,13 +935,13 @@ export default function ConfirmReservation() {
       paymentMethod,
       creditApplied,
       source:          game?.source ?? 'match',
-    }).then(({ data: resData, error, skipped }) => {
-      if (skipped || error) { if (error) console.warn('[checkout] reservation failed:', error); return; }
+    }).then(async ({ data: resData, error, skipped }) => {
+      if (skipped || error) { if (error) console.warn('[checkout] reservation failed:', error); setFreeConfirming(false); return; }
       const reservationId = resData?.id ?? null;
       const _hostId = game?.hostUserId ?? null;
       if (game?.type === 'match' || !game?.type) {
-        createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet, hostUserId: _hostId });
-        guests.forEach(guest => createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice, hostUserId: _hostId }));
+        await createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet, hostUserId: _hostId });
+        await Promise.all(guests.map(guest => createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice, hostUserId: _hostId })));
       }
       const _tpl = guests.length > 0 ? 'reservation_confirmed_with_guests' : 'reservation_confirmed';
       supabase?.from('notifications').insert({
@@ -949,29 +969,38 @@ export default function ConfirmReservation() {
           else console.log('[notif] invited_by_player (main) inserted for', guest.id);
         });
       });
+      markWaitlistReserved(authUser?.id, game?.id);
+      try { sessionStorage.removeItem(`gd_roster_${game?.id}`); } catch {}
+      try { sessionStorage.removeItem(`pg_player_rows_${authUser?.id}`); } catch {}
+      if (game?.source === 'rental' && game?.id) {
+        try {
+          const shown = JSON.parse(localStorage.getItem('pichanga_shown_confirmations')) || {};
+          delete shown[game.id];
+          localStorage.setItem('pichanga_shown_confirmations', JSON.stringify(shown));
+        } catch {}
+      }
+      navigate('/profile', { state: { confirmedGame: {
+        id:           game?.id,
+        field:        game?.field,
+        date:         game?.date,
+        dateKey:      game?.dateKey   ?? null,
+        time:         game?.time,
+        ampm:         game?.ampm      ?? null,
+        time24:       game?.time24    ?? null,
+        durationMin:  game?.durationMin ?? null,
+        format:       game?.format || '7v7',
+        amount:       total,
+        price:        game?.price,
+        source:       game?.source,
+        gameType:     game?.type ?? null,
+        unitPrice:    unitPrice,
+        promoDiscount: promoApplied?.discount ?? 0,
+        creditApplied: creditApplied,
+        discount:     (promoApplied?.discount ?? 0) + creditApplied,
+        guestsCount:  guests.length,
+        guestsTotal:  guestsTotal,
+      }}});
     });
-    markWaitlistReserved(authUser?.id, game?.id);
-    navigate('/profile', { state: { confirmedGame: {
-      id:           game?.id,
-      field:        game?.field,
-      date:         game?.date,
-      dateKey:      game?.dateKey   ?? null,
-      time:         game?.time,
-      ampm:         game?.ampm      ?? null,
-      time24:       game?.time24    ?? null,
-      durationMin:  game?.durationMin ?? null,
-      format:       game?.format || '7v7',
-      amount:       total,
-      price:        game?.price,
-      source:       game?.source,
-      gameType:     game?.type ?? null,
-      unitPrice:    unitPrice,
-      promoDiscount: promoApplied?.discount ?? 0,
-      creditApplied: creditApplied,
-      discount:     (promoApplied?.discount ?? 0) + creditApplied,
-      guestsCount:  guests.length,
-      guestsTotal:  guestsTotal,
-    }}});
   }
 
   if (subView === 'addplayers') {
@@ -996,12 +1025,14 @@ export default function ConfirmReservation() {
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden', position: 'relative' }}>
       <TopBar
-        title={invitedMode ? 'Agregar jugadores' : addGuestsMode ? 'Agregar invitados' : isRental ? 'Reservar campo' : 'Confirmación de reserva'}
+        title={invitedMode ? 'Agregar jugadores' : addGuestsMode ? 'Agregar invitados' : isRental ? 'Reservar cancha' : 'Confirmación de reserva'}
         onCancel={() => {
           if (addGuestsMode || invitedMode) { navigate(-1); return; }
           const dest = game?.backPath ?? (isRental || game?.source === 'campo' ? '/fields' : '/games');
           if (game?.gameDetailBackPath && dest.startsWith('/game/')) {
             navigate(dest, { state: { backPath: game.gameDetailBackPath } });
+          } else if (dest.startsWith('/field/') || dest.startsWith('/rental/')) {
+            navigate(-1);
           } else {
             navigate(dest);
           }
@@ -1238,7 +1269,7 @@ export default function ConfirmReservation() {
       {showConfirmed && (
         <ConfirmedOverlay
           game={{ field: game?.field, date: game?.date, amount: addGuestsMode ? total : null }}
-          onOK={() => { setShowConfirmed(false); if (addGuestsMode) navigate('/profile'); else navigate(-1); }}
+          onOK={() => { setShowConfirmed(false); navigate(-1); }}
         />
       )}
     </div>

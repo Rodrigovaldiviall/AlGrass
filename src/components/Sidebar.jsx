@@ -1,8 +1,9 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { BLUE, TEXT, SUB, HAIR, TAB_INACTIVE, ORANGE } from '../constants';
+import { BLUE, TEXT, SUB, HAIR, TAB_INACTIVE, RED } from '../constants';
 import I from '../icons';
 import { haptic } from '../utils/haptic';
+import { readNotifBadgeLabel, badgeLabel } from '../utils/notifBadge';
 
 const TABS = [
   { id: 'partidos',       icon: I.search,  label: 'Partidos',       route: '/games' },
@@ -33,14 +34,6 @@ function tabFromPath(pathname) {
   return sessionStorage.getItem(SESSION_KEY) || 'partidos';
 }
 
-function getNotifBadge() {
-  try {
-    const list = JSON.parse(localStorage.getItem('pichanga_notifications_v2'));
-    if (!Array.isArray(list)) return undefined;
-    const n = list.filter(x => !x.read).length;
-    return n === 0 ? undefined : n > 5 ? '5+' : n;
-  } catch { return undefined; }
-}
 
 function getUpcomingBadge() {
   try {
@@ -58,12 +51,20 @@ export default function Sidebar() {
   const isRootScreen = Boolean(ROOT_ROUTES[pathname]);
   const activeTab    = tabFromPath(pathname);
 
-  // Keep sessionStorage in sync with the current root screen.
+  const [notifBadge, setNotifBadgeState] = useState(readNotifBadgeLabel);
+
   useEffect(() => {
     if (isRootScreen) sessionStorage.setItem(SESSION_KEY, ROOT_ROUTES[pathname]);
   }, [pathname, isRootScreen]);
 
-  const badges = { notificaciones: getNotifBadge(), perfil: getUpcomingBadge() };
+  useEffect(() => {
+    setNotifBadgeState(readNotifBadgeLabel());
+    function onBadge(e) { setNotifBadgeState(badgeLabel(e.detail)); }
+    window.addEventListener('notif-badge', onBadge);
+    return () => window.removeEventListener('notif-badge', onBadge);
+  }, []);
+
+  const badges = { notificaciones: notifBadge, perfil: getUpcomingBadge() };
 
   return (
     <nav className="sidebar">
@@ -118,7 +119,7 @@ export default function Sidebar() {
                   <div style={{
                     position: 'absolute', top: -6, right: -12,
                     minWidth: 22, height: 22, padding: '0 6px', borderRadius: 999,
-                    background: ORANGE, color: '#fff', fontSize: 14, fontWeight: 700,
+                    background: RED, color: '#fff', fontSize: 14, fontWeight: 700,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     boxSizing: 'border-box',
                   }}>{badge}</div>

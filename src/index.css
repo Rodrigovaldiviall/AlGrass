@@ -67,6 +67,12 @@ input:-webkit-autofill:hover {
 @keyframes yape-tap    { 0%, 100% { transform: scale(1)   translateY(0);    opacity: 0.85; }
                          40%      { transform: scale(0.82) translateY(2px);  opacity: 1;    }
                          60%      { transform: scale(1.05) translateY(-1px); opacity: 0.9;  } }
+@keyframes profile-card-highlight {
+  0%   { outline: 2px solid #3F5FE0; outline-offset: -2px; }
+  65%  { outline: 2px solid #3F5FE0; outline-offset: -2px; }
+  100% { outline: 2px solid transparent; outline-offset: -2px; }
+}
+.game-row-highlighted { animation: profile-card-highlight 4.5s ease forwards; }
 
 /* Desktop: sheet overlays are bounded to .screen-shell (the exact content panel) */
 @media (min-width: 1024px) {

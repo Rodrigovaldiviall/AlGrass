@@ -345,7 +345,7 @@ function FilterButton({ onClick }) {
 }
 
 const CHIP_DEFS = [
-  { id: 'cubierta',        label: 'Cubierto',        icon: c => I.roof(c)       },
+  { id: 'cubierta',        label: 'Techado',        icon: c => I.roof(c)       },
   { id: 'estacionamiento', label: 'Estacionamiento', icon: c => ParkingIcon(c)  },
   { id: 'duchas',          label: 'Duchas',           icon: c => ShowerIcon(c)   },
   { id: 'noDisp',          label: 'Ocultar No disp.',  icon: c => LockIcon(c)     },
