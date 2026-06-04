@@ -1794,6 +1794,16 @@ function RatingModal({ game, onRate, onSkip }) {
   );
 }
 
+// ── Profile player-rows cache (sessionStorage, 5 min TTL, per-user)
+const _PF_TTL = 5 * 60 * 1000;
+function _readPFCache(userId) {
+  try {
+    const d = JSON.parse(sessionStorage.getItem(`pf_player_rows_${userId}`));
+    if (!d || Date.now() - d.ts > _PF_TTL) return null;
+    return d;
+  } catch { return null; }
+}
+
 // ── Screen ─────────────────────────────────────────────────────────────────
 
 export default function Profile() {
@@ -1886,8 +1896,9 @@ export default function Profile() {
   });
 
   const [sbProfile, setSbProfile] = useState(null);
-  const [myPlayerRows,      setMyPlayerRows]      = useState([]);
-  const [myPlayerRowsReady, setMyPlayerRowsReady] = useState(false);
+  const _pf0 = user?.id ? _readPFCache(user.id) : null;
+  const [myPlayerRows,      setMyPlayerRows]      = useState(_pf0?.rows ?? []);
+  const [myPlayerRowsReady, setMyPlayerRowsReady] = useState(!!_pf0);
   const [sbGamesReady,      setSbGamesReady]      = useState(false);
   const [hostedRows,        setHostedRows]        = useState([]);
   const [hostedReady,       setHostedReady]       = useState(false);
@@ -1935,7 +1946,9 @@ export default function Profile() {
               if (data.avatar_path)        { patch.avatarPath = data.avatar_path; }
               if (data.avatar_updated_at)  { patch.avatarVersion = new Date(data.avatar_updated_at).getTime(); }
               if (userCode)                { patch.userCode = userCode; }
-              return { ...prev, ...patch };
+              const next = { ...prev, ...patch };
+              try { localStorage.setItem(PROFILE_KEY, JSON.stringify(next)); } catch {}
+              return next;
             });
             // Propagate to localStorage so legacy reads (ConfirmReservation, CancelSheet) are correct
             if (userCode) {
@@ -1954,7 +1967,12 @@ export default function Profile() {
         .select('credit_balance')
         .eq('user_id', uid)
         .maybeSingle()
-        .then(({ data }) => { if (data?.credit_balance != null) setCreditBalance(data.credit_balance); });
+        .then(({ data }) => {
+          if (data?.credit_balance != null) {
+            setCreditBalance(data.credit_balance);
+            try { localStorage.setItem(CREDIT_KEY, JSON.stringify({ balance: data.credit_balance })); } catch {}
+          }
+        });
 
       supabase
         .from('reservations')
@@ -1998,6 +2016,7 @@ export default function Profile() {
           const rows = data ?? [];
           setMyPlayerRows(rows);
           setMyPlayerRowsReady(true);
+          try { sessionStorage.setItem(`pf_player_rows_${uid}`, JSON.stringify({ rows, ts: Date.now() })); } catch {}
           const payerIds = [...new Set(rows.filter(r => r.user_id === uid && r.payer_id !== uid).map(r => r.payer_id))];
           if (payerIds.length > 0) {
             const { data: pd } = await supabase.from('users').select('id, full_name, user_code').in('id', payerIds);
@@ -2326,16 +2345,24 @@ export default function Profile() {
     el.scrollTo({ top: initPfScrollRef.current, behavior: 'instant' });
   }, [dataReady]); // eslint-disable-line
   // Only classify games that have valid temporal data and whose player status is settled
-  const temporalGames = dataReady ? allGames.filter(g => g.dateKey && g.time24) : [];
+  const temporalGames = (dataReady ? allGames : extraGames).filter(g => g.dateKey && g.time24);
   const upcoming      = sortByDt(temporalGames.filter(g => !isPast(g) && !(g.status === 'waitlist' && isStarted(g))), false);
   const past          = sortByDt(temporalGames.filter(g =>  isPast(g) && g.status !== 'waitlist'), true);
-  const pastGameCount = past.length;
+  const pastGameCount = dataReady ? past.length : (profileData.pastGameCount ?? null);
   // hasActivity: any confirmed inscription regardless of past/upcoming
   const hasActivity = extraGames.length > 0
     || myPlayerRows.some(r => r.user_id === user?.id && r.status === 'confirmed')
     || isGameHost;
   const visiblePast     = pastExpanded     ? past     : past.slice(0, 4);
   const visibleUpcoming = upcomingExpanded ? upcoming : upcoming.slice(0, 10);
+
+  useEffect(() => {
+    if (!dataReady) return;
+    try {
+      const stored = JSON.parse(localStorage.getItem(PROFILE_KEY) || '{}');
+      localStorage.setItem(PROFILE_KEY, JSON.stringify({ ...stored, pastGameCount: past.length }));
+    } catch {}
+  }, [dataReady]); // eslint-disable-line
 
   const gameToRate = (dataReady && user)
     ? past.find(g => (g.type === 'match' || g.type === 'rental') && !ratings[g.id] && !skippedRatings[g.id]) ?? null

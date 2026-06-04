@@ -705,7 +705,9 @@ export default function ConfirmReservation() {
   const reservationTs               = useRef(Date.now());
 
   useEffect(() => {
-    getWalletBalance().then(balance => setCreditBalance(Math.max(0, balance)));
+    getWalletBalance()
+      .then(balance => setCreditBalance(Math.max(0, balance)))
+      .finally(() => setCreditLoading(false));
   }, []);
 
   const [promoOpen, setPromoOpen]       = useState(false);
@@ -715,7 +717,7 @@ export default function ConfirmReservation() {
   const [promoLoading, setPromoLoading] = useState(false);
   const [freeConfirming, setFreeConfirming] = useState(false);
   const [showConfirmed, setShowConfirmed] = useState(false);
-  const [creditLoading, setCreditLoading]   = useState(false);
+  const [creditLoading, setCreditLoading]   = useState(true);
 
   const [confirmedPlayerIds, setConfirmedPlayerIds] = useState(new Set());
   useEffect(() => {

@@ -769,8 +769,10 @@ function CityOnboardSheet({ onDone }) {
 
 const _PR_KEY = uid => `pg_player_rows_${uid}`;
 const _WL_KEY = uid => `pg_waitlist_${uid}`;
+const _CC_KEY = 'pg_confirmed_counts';
 const _PR_TTL = 15 * 60 * 1000;
 const _WL_TTL = 10 * 60 * 1000;
+const _CC_TTL = 60 * 1000;
 
 function _readPRCache(uid) {
   try {
@@ -784,6 +786,14 @@ function _readWLCache(uid) {
   try {
     const d = JSON.parse(sessionStorage.getItem(_WL_KEY(uid)));
     if (!d || Date.now() - d.ts > _WL_TTL) return null;
+    return d;
+  } catch { return null; }
+}
+
+function _readCCCache() {
+  try {
+    const d = JSON.parse(sessionStorage.getItem(_CC_KEY));
+    if (!d || Date.now() - d.ts > _CC_TTL) return null;
     return d;
   } catch { return null; }
 }
@@ -835,11 +845,12 @@ export default function PickupGames() {
 
   const _pr0 = user?.id ? _readPRCache(user.id) : null;
   const _wl0 = user?.id ? _readWLCache(user.id) : null;
+  const _cc0 = _readCCCache();
   const [myPlayerRows,      setMyPlayerRows]      = useState(_pr0?.rows ?? []);
   const [payerNames,        setPayerNames]        = useState(_pr0?.names ?? {});
-  const [confirmedCountMap, setConfirmedCountMap] = useState(new Map());
+  const [confirmedCountMap, setConfirmedCountMap] = useState(() => _cc0 ? new Map(_cc0.entries) : new Map());
   const [myPlayerRowsReady, setMyPlayerRowsReady] = useState(!!_pr0);
-  const [confirmedCountReady, setConfirmedCountReady] = useState(false);
+  const [confirmedCountReady, setConfirmedCountReady] = useState(!!_cc0);
   const [waitlistReady,     setWaitlistReady]     = useState(!!_wl0);
 
   useEffect(() => {
@@ -878,6 +889,7 @@ export default function PickupGames() {
         data.forEach(r => { map.set(r.game_id, (map.get(r.game_id) ?? 0) + 1); });
         setConfirmedCountMap(map);
         setConfirmedCountReady(true);
+        try { sessionStorage.setItem(_CC_KEY, JSON.stringify({ entries: [...map.entries()], ts: Date.now() })); } catch {}
       });
   }, [games]); // eslint-disable-line react-hooks/exhaustive-deps
 

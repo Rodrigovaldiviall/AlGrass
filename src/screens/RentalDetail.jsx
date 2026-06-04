@@ -313,6 +313,16 @@ function PaymentSheet({ onClose, userName, reservation }) {
   );
 }
 
+// ── Rental status cache (sessionStorage, 5 min TTL, per-game)
+const _RD_TTL = 5 * 60 * 1000;
+function _readRDCache(gameId) {
+  try {
+    const d = JSON.parse(sessionStorage.getItem(`rd_status_${gameId}`));
+    if (!d || Date.now() - d.ts > _RD_TTL) return null;
+    return d;
+  } catch { return null; }
+}
+
 // ── Screen
 export default function RentalDetail() {
   const navigate = useNavigate();
@@ -320,10 +330,15 @@ export default function RentalDetail() {
   const { id }   = useParams();
   const { user } = useAuth();
 
-  const [game, setGame]               = useState(location.state?.field ?? null);
+  const _rd0 = _readRDCache(id);
+  const [game, setGame]               = useState(() => {
+    const base = location.state?.field ?? null;
+    if (base && _rd0) return { ...base, bookedByUserId: _rd0.bookedByUserId };
+    return base;
+  });
   const [loading, setLoading]         = useState(!location.state?.field);
-  const [statusReady, setStatusReady] = useState(false);
-  const [myReservation, setMyRes]     = useState(null);
+  const [statusReady, setStatusReady] = useState(!!_rd0);
+  const [myReservation, setMyRes]     = useState(_rd0?.myReservation ?? null);
   const [cancelOpen, setCancelOpen]   = useState(false);
   const [manageOpen, setManageOpen]   = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
@@ -354,6 +369,15 @@ export default function RentalDetail() {
         setMyRes(null);
       }
       setStatusReady(true);
+      try {
+        sessionStorage.setItem(`rd_status_${id}`, JSON.stringify({
+          bookedByUserId: freshGame?.bookedByUserId ?? null,
+          myReservation:  spends?.length
+            ? { amount: spends[0].subtotal_amount ?? spends[0].total_amount ?? 0, reservedAt: spends[0].reserved_at ?? null }
+            : null,
+          ts: Date.now(),
+        }));
+      } catch {}
     });
   }, [id, user?.id]); // eslint-disable-line
 

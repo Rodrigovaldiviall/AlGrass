@@ -503,7 +503,8 @@ function DateHeader({ dateKey, refEl }) {
 }
 
 // ── Screen
-let _rentalCache = [];
+let _rentalCache    = [];
+let _myBookedCache  = new Set();
 
 export default function Fields() {
   const navigate = useNavigate();
@@ -550,7 +551,7 @@ export default function Fields() {
   const stripCellRefs      = useRef({});
   const programmaticScroll = useRef(false);
 
-  const [myBookedIds, setMyBookedIds]   = useState(new Set());
+  const [myBookedIds, setMyBookedIds]   = useState(() => _myBookedCache);
   const [rentalGames, setRentalGames]   = useState(() => _rentalCache);
   const [loading, setLoading]           = useState(_rentalCache.length === 0);
   useEffect(() => {
@@ -559,7 +560,7 @@ export default function Fields() {
       setRentalGames(data);
       setLoading(false);
       if (user?.id && data.length) {
-        getMyBookedGameIds(data.map(f => f.id)).then(setMyBookedIds);
+        getMyBookedGameIds(data.map(f => f.id)).then(ids => { _myBookedCache = ids; setMyBookedIds(ids); });
       }
     });
   }, []); // eslint-disable-line
