@@ -203,6 +203,11 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
       setTimeout(() => setDupMsg(''), 2500);
       return;
     }
+    if (!selectedIds.has(id) && selectedIds.size >= maxGuests) {
+      setDupMsg('No hay más cupos disponibles');
+      setTimeout(() => setDupMsg(''), 2500);
+      return;
+    }
     setSelectedIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) {
@@ -499,8 +504,8 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
         </div>
 
         {/* Scrollable body */}
-        <div className="no-sb" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'none', padding: '14px 16px 0' }}>
-          <div style={{ paddingBottom: 14 }}>
+        <div className="no-sb" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'none', padding: '10px 16px 0' }}>
+          <div style={{ paddingBottom: 10 }}>
             <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, letterSpacing: -0.3 }}>Método de pago</div>
             <div style={{ marginTop: 2, fontSize: 13, color: SUB }}>
               Total a pagar <strong style={{ color: TEXT, fontWeight: 700 }}>{amtStr}</strong>
@@ -515,20 +520,20 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
             icon={<span style={{ background: YAPE, color: '#fff', borderRadius: 6, padding: '2px 8px', fontSize: 13, fontWeight: 800, letterSpacing: -0.5 }}>yape</span>}
             label="Paga con Yape"
           >
-            <div style={{ marginTop: 8, marginBottom: 12, borderRadius: 10, background: `${YAPE}15`, padding: '9px 12px' }}>
+            <div style={{ marginTop: 6, marginBottom: 6, borderRadius: 10, background: `${YAPE}15`, padding: '7px 12px' }}>
               <div style={{ fontSize: 12.5, color: TEXT, lineHeight: 1.55 }}>Ingresa a tu Yape, selecciona <strong style={{ color: YAPE }}>"Aprobar compras"</strong>, copia el <strong style={{ color: YAPE }}>"Código de aprobación"</strong> y pégalo aquí.</div>
             </div>
-            <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
-              <div style={{ flex: 1, padding: 4, borderRadius: 12, background: `${YAPE}18`, border: `1px solid ${YAPE}40`, textAlign: 'center', position: 'relative' }}>
-                <img src={aprobarComprasYape} alt="Aprobar compras Yape" style={{ width: '100%', height: 'auto', display: 'block', borderRadius: 9 }} />
+            <div style={{ display: 'flex', gap: 10, marginBottom: 8 }}>
+              <div style={{ flex: 1, padding: 4, borderRadius: 12, background: `${YAPE}18`, border: `1px solid ${YAPE}40`, textAlign: 'center', position: 'relative', overflow: 'hidden' }}>
+                <img src={aprobarComprasYape} alt="Aprobar compras Yape" style={{ width: '100%', height: 'auto', maxHeight: 130, objectFit: 'cover', objectPosition: 'top', display: 'block', borderRadius: 9 }} />
                 <span style={{ position: 'absolute', bottom: '18%', left: '84%', transform: 'translateX(-50%)', fontSize: 18, animation: 'yape-tap 2s ease-in-out infinite', pointerEvents: 'none', userSelect: 'none' }}>👆</span>
               </div>
-              <div style={{ flex: 1, padding: 4, borderRadius: 12, background: `${YAPE}18`, border: `1px solid ${YAPE}40`, textAlign: 'center', position: 'relative' }}>
-                <img src={codigoYape} alt="Código Yape" style={{ width: '100%', height: 'auto', display: 'block', borderRadius: 9 }} />
+              <div style={{ flex: 1, padding: 4, borderRadius: 12, background: `${YAPE}18`, border: `1px solid ${YAPE}40`, textAlign: 'center', position: 'relative', overflow: 'hidden' }}>
+                <img src={codigoYape} alt="Código Yape" style={{ width: '100%', height: 'auto', maxHeight: 130, objectFit: 'cover', objectPosition: 'top', display: 'block', borderRadius: 9 }} />
                 <span style={{ position: 'absolute', bottom: '10%', left: '43%', transform: 'translateX(-50%)', fontSize: 18, animation: 'yape-tap 2s ease-in-out 0.4s infinite', pointerEvents: 'none', userSelect: 'none' }}>👆</span>
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', borderRadius: 12, border: `1.5px solid ${HAIR}`, background: '#fff', overflow: 'hidden', marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', borderRadius: 12, border: `1.5px solid ${HAIR}`, background: '#fff', overflow: 'hidden', marginBottom: 8 }}>
               <span style={{ padding: '0 10px 0 14px', fontSize: 13, color: SUB, fontWeight: 600, whiteSpace: 'nowrap', height: 48, display: 'flex', alignItems: 'center', borderRight: `1px solid ${HAIR}` }}>🇵🇪 +51</span>
               <input
                 value={yapePhone}
@@ -716,6 +721,7 @@ export default function ConfirmReservation() {
   const [promoError, setPromoError]     = useState('');
   const [promoLoading, setPromoLoading] = useState(false);
   const [freeConfirming, setFreeConfirming] = useState(false);
+  const [capacityError, setCapacityError]   = useState(null);
   const [showConfirmed, setShowConfirmed] = useState(false);
   const [creditLoading, setCreditLoading]   = useState(true);
 
@@ -796,6 +802,7 @@ export default function ConfirmReservation() {
 
   async function handlePaid(paymentMethod) {
     setFreeConfirming(true);
+    setCapacityError(null);
     setPayOpen(false);
     if (!invitedMode && game?.hostUserId && authUser?.id && game.hostUserId === authUser.id) { setFreeConfirming(false); return; }
     if (invitedMode) {
@@ -860,11 +867,13 @@ export default function ConfirmReservation() {
           playersCount: guests.length, guestTotal: guestsTotal,
           paymentMethod: paymentMethod || 'efectivo',
           creditApplied, source: game?.source ?? 'match',
-        }).then(({ data: resData, error, skipped }) => {
+        }).then(async ({ data: resData, error, skipped }) => {
           if (skipped || error) { setFreeConfirming(false); return; }
           const reservationId = resData?.id ?? null;
-          if (game?.type === 'match' || !game?.type) guests
-            .forEach(guest => createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice, hostUserId: game?.hostUserId ?? null }));
+          if (game?.type === 'match' || !game?.type) {
+            const gpResults = await Promise.all(guests.map(guest => createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice, hostUserId: game?.hostUserId ?? null })));
+            if (gpResults.some(r => r?.error?.message?.startsWith('GAME_FULL'))) { setFreeConfirming(false); setCapacityError('GAME_FULL'); return; }
+          }
           supabase?.from('notifications').insert({
             recipient_user_id: authUser?.id,
             source_type: 'venue', delivery_type: 'automatic', category: 'reservation',
@@ -937,12 +946,14 @@ export default function ConfirmReservation() {
       paymentMethod,
       creditApplied,
       source:          game?.source ?? 'match',
-    }).then(async ({ data: resData, error, skipped }) => {
+    }).then(async ({ data: resData, error, skipped, rentalTaken }) => {
+      if (rentalTaken) { setFreeConfirming(false); setCapacityError('RENTAL_TAKEN'); return; }
       if (skipped || error) { if (error) console.warn('[checkout] reservation failed:', error); setFreeConfirming(false); return; }
       const reservationId = resData?.id ?? null;
       const _hostId = game?.hostUserId ?? null;
       if (game?.type === 'match' || !game?.type) {
-        await createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet, hostUserId: _hostId });
+        const { error: gpErr } = await createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet, hostUserId: _hostId });
+        if (gpErr?.message?.startsWith('GAME_FULL')) { setFreeConfirming(false); setCapacityError('GAME_FULL'); return; }
         await Promise.all(guests.map(guest => createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice, hostUserId: _hostId })));
       }
       const _tpl = guests.length > 0 ? 'reservation_confirmed_with_guests' : 'reservation_confirmed';
@@ -1267,6 +1278,40 @@ export default function ConfirmReservation() {
           </div>
         </div>
       )}
+
+      {capacityError && (() => {
+        const isMatch = capacityError === 'GAME_FULL';
+        return (
+          <div className="sheet-overlay" style={{
+            position: 'fixed', inset: 0, zIndex: 200,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            background: '#fff', padding: '0 32px',
+          }}>
+            <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#FCEAEB', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke={DANGER} strokeWidth="1.8"/>
+                <path d="M15 9l-6 6M9 9l6 6" stroke={DANGER} strokeWidth="1.8" strokeLinecap="round"/>
+              </svg>
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: TEXT, letterSpacing: -0.4, textAlign: 'center' }}>
+              {isMatch ? 'Partido completo' : 'Cancha no disponible'}
+            </div>
+            <div style={{ marginTop: 8, fontSize: 14, color: SUB, textAlign: 'center', lineHeight: 1.5, maxWidth: 300 }}>
+              {isMatch
+                ? 'Mientras procesábamos tu solicitud, los cupos disponibles fueron ocupados por otros jugadores.'
+                : 'Mientras procesábamos tu solicitud, otro usuario completó la reserva de esta cancha.'}
+            </div>
+            <div style={{ marginTop: 14, fontSize: 13, fontWeight: 700, color: DANGER, textAlign: 'center', letterSpacing: 0.2 }}>
+              NO SE REALIZÓ NINGÚN COBRO
+            </div>
+            <div style={{ marginTop: 28, width: '100%', maxWidth: 320 }}>
+              <CtaButton onPress={() => navigate(-1)}>
+                {isMatch ? 'Volver al partido' : 'Volver a la cancha'}
+              </CtaButton>
+            </div>
+          </div>
+        );
+      })()}
 
       {showConfirmed && (
         <ConfirmedOverlay

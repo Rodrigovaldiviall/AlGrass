@@ -23,7 +23,7 @@ export default function RatingBlock({ gameId, existingRating, gameType, hostUser
   const [hovered, setHovered] = useState(0);
   const [saved,   setSaved]   = useState(false);
 
-  const preRated = !!existingRating;
+  const preRated = existingRating?.stars != null;
   const frozen   = preRated || saved;
   const active   = hovered || stars;
 

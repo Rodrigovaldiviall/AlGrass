@@ -913,7 +913,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
   function confirm() {
     setCapturedRefund(totalRefund);
     setStep('processing');
-    setTimeout(() => {
+    setTimeout(async () => {
       if (isGuest) {
         removePlayers(gameId, [...checkedGuests, ...(selfChecked ? [guestId] : [])]);
         if (selfChecked) {
@@ -929,14 +929,12 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
             notifs.unshift({ id: 'notif-gc-' + _now, type: 'app', title: 'Algrass', gameDate: null, message: `${guestSelfName} canceló su reserva. El monto pagado ha retornado a tu crédito.`, time: String(_d.getHours()).padStart(2, '0') + ':' + String(_d.getMinutes()).padStart(2, '0'), dateKey: _d.toISOString().slice(0, 10), read: false, createdAt: _now });
             localStorage.setItem('pichanga_notifications_v2', JSON.stringify(notifs));
           } catch {}
-          cancelGamePlayer(gameId).then(({ skipped, error }) => {
-            if (!skipped && error) console.error('[cancel] guest self failed:', error);
-          });
+          const { skipped: s1, error: e1 } = await cancelGamePlayer(gameId);
+          if (!s1 && e1) console.error('[cancel] guest self failed:', e1);
         }
         if (checkedGuests.size > 0) {
-          cancelGuestPlayers(gameId, [...checkedGuests]).then(({ skipped, error }) => {
-            if (!skipped && error) console.error('[cancel] guest sub-players failed:', error);
-          });
+          const { skipped: s2, error: e2 } = await cancelGuestPlayers(gameId, [...checkedGuests]);
+          if (!s2 && e2) console.error('[cancel] guest sub-players failed:', e2);
         }
       } else {
         if (checkedGuests.size > 0) removePlayers(gameId, [...checkedGuests]);
@@ -953,16 +951,14 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
             if (shown[gameId]) { delete shown[gameId]; localStorage.setItem('pichanga_shown_confirmations', JSON.stringify(shown)); }
           } catch {}
           // titular first so cascade detection in cancelGuestPlayers sees titular as canceled
-          cancelGamePlayer(gameId, { skipNotification: checkedGuests.size > 0 })
-            .then(({ skipped, error }) => {
-              if (skipped || error) { if (error) console.error('[cancel] titular failed:', error); return; }
-              if (checkedGuests.size > 0) cancelGuestPlayers(gameId, [...checkedGuests], { selfAlsoCanceled: true });
-            })
-            .catch(e => console.error('[cancel] chain threw:', e));
+          try {
+            const { skipped, error } = await cancelGamePlayer(gameId, { skipNotification: checkedGuests.size > 0 });
+            if (skipped || error) { if (error) console.error('[cancel] titular failed:', error); }
+            else if (checkedGuests.size > 0) await cancelGuestPlayers(gameId, [...checkedGuests], { selfAlsoCanceled: true });
+          } catch (e) { console.error('[cancel] chain threw:', e); }
         } else if (checkedGuests.size > 0) {
-          cancelGuestPlayers(gameId, [...checkedGuests]).then(({ skipped, error }) => {
-            if (!skipped && error) console.error('[cancel] partial guest cancel failed:', error);
-          });
+          const { skipped, error } = await cancelGuestPlayers(gameId, [...checkedGuests]);
+          if (!skipped && error) console.error('[cancel] partial guest cancel failed:', error);
         }
       }
       setStep('done');
@@ -1170,6 +1166,7 @@ export default function GameDetail() {
   const _cachedRoster = readRosterCache(id, user?.id);
   const [sbRoster, setSbRoster] = useState(_cachedRoster ?? []);
   const [rosterReady, setRosterReady] = useState(_cachedRoster != null);
+  const [spotsVerified, setSpotsVerified] = useState(false);
 
   const stateGame = location.state?.game ?? null;
   // sbGame (canonical DB fetch) wins for game data; stateGame contributes reservation extras only
@@ -1244,7 +1241,8 @@ export default function GameDetail() {
   const isFull = !infoMode && liveOpenSpots === 0;
   const openSpots = liveOpenSpots;
   const confirmed = g.totalSpots - openSpots;
-  const [inWaitlist, setInWaitlist] = useState(false);
+  const [inWaitlist,    setInWaitlist]    = useState(false);
+  const [waitlistReady, setWaitlistReady] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [modifyOpen, setModifyOpen] = useState(false);
   const [cancelOpen,  setCancelOpen]  = useState(false);
@@ -1282,6 +1280,7 @@ export default function GameDetail() {
     if (!user?.id || !gameId) return;
     getMyWaitlistGameIds(user.id).then(ids => {
       setInWaitlist(ids.includes(gameId));
+      setWaitlistReady(true);
     });
   }, [user?.id, gameId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1317,6 +1316,7 @@ export default function GameDetail() {
         }));
         setSbRoster(rows);
         setRosterReady(true);
+        setSpotsVerified(true);
         writeRosterCache(gameId, user?.id, rows);
       });
   }
@@ -1451,6 +1451,8 @@ export default function GameDetail() {
 
   function handleCancelDone() {
     try { sessionStorage.removeItem(`pg_player_rows_${user?.id}`); } catch {}
+    try { sessionStorage.removeItem(`pf_player_rows_${user?.id}`); } catch {}
+    try { sessionStorage.removeItem(_rosterCacheKey(gameId)); } catch {}
     setCancelOpen(false);
     fetchRoster();
     navigate(backPath);
@@ -1466,7 +1468,13 @@ export default function GameDetail() {
     const next = !inWaitlist;
     setInWaitlist(next);
     if (next) joinWaitlist(user.id, gameId);
-    else leaveWaitlist(user.id, gameId);
+    else {
+      leaveWaitlist(user.id, gameId);
+      try {
+        const wl = JSON.parse(localStorage.getItem('pichanga_waitlist')) || [];
+        if (Array.isArray(wl)) localStorage.setItem('pichanga_waitlist', JSON.stringify(wl.filter(g => g.id !== gameId)));
+      } catch {}
+    }
     try { sessionStorage.removeItem(`pg_waitlist_${user?.id}`); } catch {}
   }
 
@@ -1637,7 +1645,7 @@ export default function GameDetail() {
 
           <div style={{ height: 8 }} />
         </div>
-        {rosterReady && !infoMode && !isStarted && !isHost && (isFull || inWaitlist) && (
+        {rosterReady && waitlistReady && !infoMode && !isStarted && !isHost && (isFull || inWaitlist) && (
           <WaitlistRow inList={inWaitlist} openSpots={openSpots} onToggle={handleWaitlistToggle} />
         )}
         {isHost ? (
@@ -1686,7 +1694,7 @@ export default function GameDetail() {
             ))()}
             {!isStarted && <CTA
               price={g.price}
-              disabled={isFull}
+              disabled={isFull || !spotsVerified}
               hideTopBorder={isFull || isCanceledWithGuests}
               onPress={() => {
                 const checkoutGame = {

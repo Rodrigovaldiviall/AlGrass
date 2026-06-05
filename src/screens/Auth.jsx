@@ -597,7 +597,7 @@ export default function AuthScreen() {
                 onClick={() => { setStep(step === 'signup' ? 'login' : 'signup'); setAuthError(''); setPass(''); }}
                 style={{ padding: 0, background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', color: SUB, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                 {step === 'signup' ? '¿Ya tienes cuenta? ' : '¿No tienes cuenta? '}
-                <span style={{ color: ORANGE, fontWeight: 700, fontSize: 17 }}>
+                <span style={{ color: '#D4750A', fontWeight: 700, fontSize: 18, textDecoration: 'underline', textUnderlineOffset: '3px' }}>
                   {step === 'signup' ? 'Inicia sesión' : 'Crear cuenta'}
                 </span>
               </button>

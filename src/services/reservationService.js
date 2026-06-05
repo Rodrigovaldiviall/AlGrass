@@ -191,12 +191,14 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoDis
 
   if (source === 'rental' && gameId) {
     // Claim if published (normal) OR reserved-but-unclaimed (stuck state from pre-migration booking).
-    const { error: gameErr } = await supabase
+    const { data: claimed, error: gameErr } = await supabase
       .from('games')
       .update({ status: 'reserved', booked_by_user_id: session.user.id })
       .eq('id', gameId)
-      .or('status.eq.published,and(status.eq.reserved,booked_by_user_id.is.null)');
+      .or('status.eq.published,and(status.eq.reserved,booked_by_user_id.is.null)')
+      .select('id');
     if (gameErr) console.error('[createReservation] game status update failed:', gameErr);
+    if (!gameErr && (!claimed || claimed.length === 0)) return { data, error, rentalTaken: true };
   }
 
   return { data, error };

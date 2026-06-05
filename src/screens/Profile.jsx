@@ -14,7 +14,7 @@ import { GAMES } from '../data/games';
 import { deriveGameState, isGamePast, isGameStarted, gameStartDate } from '../utils/deriveGameState';
 import { GameMetaLine } from '../components/GameMetaLine';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
-import { saveRating, fetchMyRatings, getLocalRatings, setLocalRatings } from '../services/ratingService';
+import { saveRating, fetchMyRatings, upsertRatingRows, markPopupShown, getLocalRatings, setLocalRatings } from '../services/ratingService';
 import { getMyWaitlistGamesFull } from '../services/waitlistService';
 import { uploadAvatar, getAvatarUrl } from '../utils/avatar';
 
@@ -107,10 +107,12 @@ function detectPrefix(input) {
 
 const MONTH_LABELS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
-const PROFILE_KEY  = 'pichanga_profile';
-const STORAGE_KEY  = 'pichanga_reservations';
-const WAITLIST_KEY_P = 'pichanga_waitlist';
-const CREDIT_KEY   = 'pichanga_credit';
+const PROFILE_KEY      = 'pichanga_profile';
+const STORAGE_KEY      = 'pichanga_reservations';
+const RENTAL_GAMES_KEY = 'pichanga_rental_games';
+const HOSTED_GAMES_KEY = 'pichanga_hosted_games';
+const WAITLIST_KEY_P   = 'pichanga_waitlist';
+const CREDIT_KEY       = 'pichanga_credit';
 
 function waitlistGameToRow(gameId) {
   const g = GAMES.find(gm => gm.id === gameId);
@@ -118,7 +120,6 @@ function waitlistGameToRow(gameId) {
   return { id: g.id, dateKey: g.dateKey, time24: g.time24 ?? null, date: formatDateLabel(g.dateKey), time: g.time, ampm: g.ampm, field: g.field, format: g.format || '7v7', status: 'waitlist', type: 'game', price: g.price != null ? `S/. ${Number(g.price).toFixed(2)}` : null, openSpots: g.openSpots ?? 0 };
 }
 const SHOWN_KEY    = 'pichanga_shown_confirmations';
-const SKIPPED_KEY  = 'pichanga_skipped_ratings';
 const ROSTER_KEY   = 'pichanga_game_rosters';
 const PLAYED_KEY   = 'pichanga_played_games';
 
@@ -197,40 +198,63 @@ function deriveGuestGames(reservations) {
 }
 
 
-function deriveCanceledWithGuestsGames() {
-  try {
-    const rosters = JSON.parse(localStorage.getItem(ROSTER_KEY) || '{}');
-    const profile = JSON.parse(localStorage.getItem(PROFILE_KEY) || '{}');
-    const myCode  = (profile.userCode || '').trim().toUpperCase();
-    const rows = [];
-    for (const [gameId, roster] of Object.entries(rosters)) {
-      if (!roster?.titularCanceled || !roster.players?.length) continue;
-      if (myCode && (roster.titularCode || '').trim().toUpperCase() !== myCode) continue;
-      const g = GAMES.find(gm => gm.id === gameId);
-      if (!g) continue;
-      const breakdown = roster.paymentBreakdown ?? null;
-      const activeGuestCount = roster.players.length;
-      const livePrice = breakdown
-        ? `S/. ${(activeGuestCount * (breakdown.unitPrice || 0)).toFixed(2)}`
-        : null;
-      rows.push({
-        id: gameId,
-        dateKey: g.dateKey,
-        time24: g.time24 ?? null,
-        date: formatDateLabel(g.dateKey),
-        time: g.time,
-        ampm: g.ampm,
-        field: g.field,
-        format: g.format || '7v7',
-        status: 'canceled-with-guests',
-        type: 'game',
-        price: livePrice,
-        paymentBreakdown: breakdown,
-        activeGuestCount,
+function deriveMatchCards(myPlayerRows, payerNames, userId) {
+  if (!userId || !myPlayerRows.length) return [];
+  const byGame = {};
+  myPlayerRows.forEach(r => { (byGame[r.game_id] ??= []).push(r); });
+  const result = [];
+  for (const [gameId, rows] of Object.entries(byGame)) {
+    const state = deriveGameState(rows, userId);
+    if (!state.isVisible) continue;
+    const g = rows[0]?.games;
+    if (!g) continue;
+    const { time, ampm } = parseGameTime(g.time);
+    const totalSpots = g.total_spots ?? g.fields?.total_spots ?? 0;
+    const meta = {
+      id: gameId,
+      gameId,
+      dateKey:      g.date_key                                          ?? null,
+      time24:       g.time                                              ?? null,
+      durationMin:  g.duration_min ?? g.fields?.duration_min           ?? null,
+      date:         formatDateLabel(g.date_key),
+      time, ampm,
+      field:        g.fields?.venues?.name                              || '',
+      fieldName:    g.fields?.name                                      ?? '',
+      address:      g.fields?.venues?.address                          ?? '',
+      format:       g.format ?? g.fields?.format                       ?? '7v7',
+      totalSpots,
+      openSpots:    Math.max(0, totalSpots - (g.current_players        ?? 0)),
+      filmed:       g.game_amenities?.filmed                            ?? false,
+      womenOnly:    g.game_amenities?.women_only                        ?? false,
+      master45:     g.game_amenities?.master_45                         ?? false,
+      covered:      g.fields?.field_amenities?.covered                  ?? false,
+      parking:      g.fields?.venues?.venue_amenities?.parking          ?? false,
+      showers:      g.fields?.venues?.venue_amenities?.showers          ?? false,
+      venueCoverPath:    g.fields?.venues?.cover_image_path             ?? null,
+      venueCoverVersion: g.fields?.venues?.cover_updated_at
+        ? new Date(g.fields.venues.cover_updated_at).getTime() : null,
+      hostUserId:   g.host_user_id                                      ?? null,
+      type:         g.type                                              ?? 'match',
+    };
+    if (state.relationship === 'titular') {
+      result.push({ ...meta, status: 'reserved', activeGuestCount: state.activeGuestCount });
+    } else if (state.relationship === 'guest') {
+      const payer = payerNames[state.payerId];
+      result.push({
+        ...meta,
+        id:           `${gameId}_g_${userId}`,
+        status:       'guest',
+        guestId:      userId,
+        paidBy:       payer?.name || 'Usuario',
+        paidByCode:   payer?.code || null,
+        activeGuestCount: state.activeGuestCount,
+        price:        null,
       });
+    } else if (state.relationship === 'canceled-with-guests') {
+      result.push({ ...meta, status: 'canceled-with-guests', activeGuestCount: state.activeGuestCount });
     }
-    return rows;
-  } catch { return []; }
+  }
+  return result;
 }
 
 function calcAge(day, month, year) {
@@ -257,21 +281,31 @@ function parseGameTime(t) {
 function sbReservationToRow(r) {
   const g = r.games;
   const { time, ampm } = parseGameTime(g?.time);
+  const totalSpots = g?.total_spots ?? g?.fields?.total_spots ?? 0;
   return {
     id:      r.game_id,
-    dateKey:     g?.date_key    ?? null,
-    time24:      g?.time        ?? null,
-    durationMin: g?.duration_min ?? g?.fields?.duration_min ?? null,
-    date:        formatDateLabel(g?.date_key),
+    dateKey:      g?.date_key    ?? null,
+    time24:       g?.time        ?? null,
+    durationMin:  g?.duration_min ?? g?.fields?.duration_min ?? null,
+    date:         formatDateLabel(g?.date_key),
     time,
     ampm,
-    field:      g?.fields?.venues?.name  || '',
-    format:     g?.format ?? g?.fields?.format ?? '7v7',
-    totalSpots: g?.total_spots ?? g?.fields?.total_spots ?? 0,
-    womenOnly:  g?.game_amenities?.women_only ?? false,
-    covered:    g?.fields?.field_amenities?.covered ?? false,
-    parking:    g?.fields?.venues?.venue_amenities?.parking ?? false,
-    hostUserId: g?.host_user_id ?? null,
+    field:        g?.fields?.venues?.name  || '',
+    fieldName:    g?.fields?.name          ?? '',
+    address:      g?.fields?.venues?.address ?? '',
+    format:       g?.format ?? g?.fields?.format ?? '7v7',
+    totalSpots,
+    openSpots:    Math.max(0, totalSpots - (g?.current_players ?? 0)),
+    filmed:       g?.game_amenities?.filmed                     ?? false,
+    womenOnly:    g?.game_amenities?.women_only                 ?? false,
+    master45:     g?.game_amenities?.master_45                  ?? false,
+    covered:      g?.fields?.field_amenities?.covered           ?? false,
+    parking:      g?.fields?.venues?.venue_amenities?.parking   ?? false,
+    showers:      g?.fields?.venues?.venue_amenities?.showers   ?? false,
+    venueCoverPath:    g?.fields?.venues?.cover_image_path      ?? null,
+    venueCoverVersion: g?.fields?.venues?.cover_updated_at
+      ? new Date(g.fields.venues.cover_updated_at).getTime() : null,
+    hostUserId:   g?.host_user_id ?? null,
     status: 'reserved',
     type:   r.games?.type ?? (r.source === 'campo' ? 'campo' : 'match'),
     price:  r.total_amount != null ? `S/. ${Number(r.total_amount).toFixed(2)}` : null,
@@ -285,6 +319,48 @@ function sbReservationToRow(r) {
       total:         r.total_amount    || 0,
     } : null,
     activeGuestCount: 0,
+  };
+}
+
+function sbRentalFromGameRow(g, fin) {
+  const { time, ampm } = parseGameTime(g.time);
+  const field = g.fields;
+  const venue = field?.venues;
+  return {
+    id:          g.id,
+    gameId:      g.id,
+    dateKey:     g.date_key     ?? null,
+    time24:      g.time         ?? null,
+    durationMin: g.duration_min ?? field?.duration_min ?? null,
+    date:        formatDateLabel(g.date_key),
+    time, ampm,
+    field:             venue?.name                          || '',
+    fieldName:         field?.name                          ?? '',
+    address:           venue?.address                       ?? '',
+    format:            g.format ?? field?.format            ?? '7v7',
+    totalSpots:        g.total_spots ?? field?.total_spots  ?? 0,
+    filmed:            g.game_amenities?.filmed             ?? false,
+    womenOnly:         g.game_amenities?.women_only         ?? false,
+    covered:           field?.field_amenities?.covered      ?? false,
+    parking:           venue?.venue_amenities?.parking      ?? false,
+    showers:           venue?.venue_amenities?.showers      ?? false,
+    venueCoverPath:    venue?.cover_image_path              ?? null,
+    venueCoverVersion: venue?.cover_updated_at
+      ? new Date(venue.cover_updated_at).getTime() : null,
+    hostUserId:  g.host_user_id ?? null,
+    status:      'reserved',
+    type:        'rental',
+    activeGuestCount: 0,
+    price: fin?.total_amount != null ? `S/. ${Number(fin.total_amount).toFixed(2)}` : null,
+    paymentBreakdown: fin?.unit_price != null ? {
+      unitPrice:     fin.unit_price,
+      promoDiscount: fin.promo_discount || 0,
+      creditApplied: fin.credit_applied || 0,
+      discount:      (fin.promo_discount || 0) + (fin.credit_applied || 0),
+      guestsCount:   0,
+      guestsTotal:   0,
+      total:         fin.total_amount || 0,
+    } : null,
   };
 }
 
@@ -302,13 +378,21 @@ function sbHostedGameToRow(g) {
     date:        formatDateLabel(g.date_key),
     time,
     ampm,
-    field:       venue?.name || '',
-    format:      g.format ?? field?.format ?? '7v7',
+    field:             venue?.name                          || '',
+    fieldName:         field?.name                          ?? '',
+    address:           venue?.address                       ?? '',
+    format:            g.format ?? field?.format            ?? '7v7',
     totalSpots,
     openSpots,
-    womenOnly:   g.game_amenities?.women_only ?? false,
-    covered:     field?.field_amenities?.covered ?? false,
-    parking:     venue?.venue_amenities?.parking ?? false,
+    filmed:            g.game_amenities?.filmed             ?? false,
+    womenOnly:         g.game_amenities?.women_only         ?? false,
+    master45:          g.game_amenities?.master_45          ?? false,
+    covered:           field?.field_amenities?.covered      ?? false,
+    parking:           venue?.venue_amenities?.parking      ?? false,
+    showers:           venue?.venue_amenities?.showers      ?? false,
+    venueCoverPath:    venue?.cover_image_path              ?? null,
+    venueCoverVersion: venue?.cover_updated_at
+      ? new Date(venue.cover_updated_at).getTime() : null,
     hostUserId:  g.host_user_id ?? null,
     status:      g.status ?? 'published',
     type:        g.type ?? 'game',
@@ -1569,7 +1653,7 @@ function GameRow({ game, onPress, muted = false, userId = null, highlighted = fa
         cursor: 'pointer',
         opacity: muted ? 0.55 : 1,
       }}>
-      <div style={{ width: 44, flexShrink: 0, textAlign: 'right' }}>
+      <div style={{ width: 44, flexShrink: 0, textAlign: 'center' }}>
         <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, lineHeight: 1.1 }}>{game.time}</div>
         <div style={{ fontSize: 11, color: SUB, fontWeight: 500, lineHeight: 1.1 }}>{game.ampm}</div>
       </div>
@@ -1889,20 +1973,24 @@ export default function Profile() {
   const [creditBalance, setCreditBalance] = useState(() => {
     try { const c = JSON.parse(localStorage.getItem(CREDIT_KEY)); return (c?.balance || 0) > 0 ? c.balance : 0; } catch { return 0; }
   });
-  const [waitlistEntries, setWaitlistEntries] = useState([]);
-  const [ratings,        setRatings]        = useState(() => getLocalRatings());
-  const [skippedRatings, setSkippedRatings] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(SKIPPED_KEY)) || {}; } catch { return {}; }
+  const [waitlistEntries, setWaitlistEntries] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(WAITLIST_KEY_P)) || []; } catch { return []; }
   });
+  const [ratings,      setRatings]      = useState(() => getLocalRatings());
+  const [ratingsReady, setRatingsReady] = useState(false);
 
   const [sbProfile, setSbProfile] = useState(null);
   const _pf0 = user?.id ? _readPFCache(user.id) : null;
   const [myPlayerRows,      setMyPlayerRows]      = useState(_pf0?.rows ?? []);
   const [myPlayerRowsReady, setMyPlayerRowsReady] = useState(!!_pf0);
   const [sbGamesReady,      setSbGamesReady]      = useState(false);
-  const [hostedRows,        setHostedRows]        = useState([]);
-  const [hostedReady,       setHostedReady]       = useState(false);
-  const [hostedConfirmed,   setHostedConfirmed]   = useState({});
+  const [rentalCards,       setRentalCards]       = useState(() => {
+    try { return JSON.parse(localStorage.getItem(RENTAL_GAMES_KEY)) || []; } catch { return []; }
+  });
+  const _hostedCache = (() => { try { return JSON.parse(localStorage.getItem(HOSTED_GAMES_KEY)); } catch { return null; } })();
+  const [hostedRows,        setHostedRows]        = useState(_hostedCache?.rows ?? []);
+  const [hostedReady,       setHostedReady]       = useState(!!_hostedCache);
+  const [hostedConfirmed,   setHostedConfirmed]   = useState(_hostedCache?.confirmed ?? {});
   const [payerNames,        setPayerNames]        = useState({});
 
   useEffect(() => {
@@ -1913,12 +2001,12 @@ export default function Profile() {
 
       // Fetch real ratings from Supabase and merge with local cache
       fetchMyRatings(uid).then(sbRatings => {
-        if (!Object.keys(sbRatings).length) return;
         setRatings(prev => {
           const merged = { ...prev, ...sbRatings };
           setLocalRatings(merged);
           return merged;
         });
+        setRatingsReady(true);
       });
 
       supabase
@@ -1974,28 +2062,59 @@ export default function Profile() {
           }
         });
 
+      // V4: rentals from games.booked_by_user_id (operational SoT)
+      supabase
+        .from('games')
+        .select(`
+          id, date_key, time, type, status, duration_min, total_spots, host_user_id, format,
+          game_amenities:amenities,
+          fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, cover_image_path, cover_updated_at, venue_amenities:amenities ) )
+        `)
+        .eq('booked_by_user_id', uid)
+        .eq('type', 'rental')
+        .then(async ({ data: rentalGameData, error: rentalErr }) => {
+          if (rentalErr) { console.warn('[Profile] rental games:', rentalErr.message); return; }
+          if (!rentalGameData?.length) {
+            setRentalCards([]);
+            try { localStorage.setItem(RENTAL_GAMES_KEY, '[]'); } catch {}
+            return;
+          }
+          const rentalGameIds = rentalGameData.map(g => g.id);
+          const { data: finRows } = await supabase
+            .from('reservations')
+            .select('game_id, unit_price, promo_discount, credit_applied, total_amount')
+            .eq('user_id', uid).eq('status', 'spend')
+            .in('game_id', rentalGameIds);
+          const finMap = {};
+          (finRows ?? []).forEach(r => {
+            const prev = finMap[r.game_id];
+            if (!prev || (r.total_amount ?? 0) > (prev.total_amount ?? 0)) finMap[r.game_id] = r;
+          });
+          const cards = rentalGameData.map(g => sbRentalFromGameRow(g, finMap[g.id] ?? null));
+          setRentalCards(cards);
+          try { localStorage.setItem(RENTAL_GAMES_KEY, JSON.stringify(cards)); } catch {}
+        });
+
       supabase
         .from('reservations')
         .select(`
           game_id, source, unit_price, promo_discount, credit_applied, total_amount,
-          games:game_id ( type, date_key, time, format, total_spots, duration_min, host_user_id, booked_by_user_id, game_amenities:amenities, fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
+          games:game_id ( type, date_key, time, format, total_spots, current_players, duration_min, host_user_id, game_amenities:amenities, fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, cover_image_path, cover_updated_at, venue_amenities:amenities ) ) )
         `)
         .eq('user_id', uid)
         .eq('status', 'spend')
         .then(({ data, error }) => {
           if (error) { console.warn('[Profile] reservations:', error.message); setSbGamesReady(true); return; }
           if (!data?.length) { setExtraGames([]); setSbGamesReady(true); return; }
-          // Rentals: active if games.booked_by_user_id === uid (operational SoT).
           // Matches: active if no corresponding refund row exists in the ledger.
+          const matchData = data.filter(r => r.games?.type !== 'rental');
           supabase.from('reservations').select('game_id')
             .eq('user_id', uid).eq('status', 'refund')
-            .in('game_id', data.filter(r => r.games?.type !== 'rental').map(r => r.game_id))
+            .in('game_id', matchData.map(r => r.game_id))
             .then(({ data: refunds }) => {
               const refundedSet = new Set((refunds || []).map(r => r.game_id));
-              const activeRows = data
-                .filter(r => r.games?.type === 'rental'
-                  ? r.games?.booked_by_user_id === uid
-                  : !refundedSet.has(r.game_id))
+              const activeRows = matchData
+                .filter(r => !refundedSet.has(r.game_id))
                 .map(sbReservationToRow);
               setExtraGames(activeRows);
               try { localStorage.setItem(STORAGE_KEY, JSON.stringify(activeRows)); } catch {}
@@ -2008,7 +2127,7 @@ export default function Profile() {
         .from('game_players')
         .select(`
           game_id, user_id, payer_id, status, amount,
-          games:game_id ( date_key, time, format, total_spots, duration_min, host_user_id, game_amenities:amenities, fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
+          games:game_id ( date_key, time, format, total_spots, current_players, duration_min, host_user_id, type, game_amenities:amenities, fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, cover_image_path, cover_updated_at, venue_amenities:amenities ) ) )
         `)
         .or(`user_id.eq.${uid},payer_id.eq.${uid}`)
         .then(async ({ data, error }) => {
@@ -2032,7 +2151,7 @@ export default function Profile() {
         .select(`
           id, date_key, time, format, total_spots, current_players, duration_min, status, host_user_id, type,
           game_amenities:amenities,
-          fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) )
+          fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, cover_image_path, cover_updated_at, venue_amenities:amenities ) )
         `)
         .eq('host_user_id', uid)
         .in('type', ['match', 'rental'])
@@ -2050,6 +2169,9 @@ export default function Profile() {
             const map = {};
             (cpRows ?? []).forEach(r => { map[r.game_id] = (map[r.game_id] ?? 0) + 1; });
             setHostedConfirmed(map);
+            try { localStorage.setItem(HOSTED_GAMES_KEY, JSON.stringify({ rows: data, confirmed: map })); } catch {}
+          } else {
+            try { localStorage.setItem(HOSTED_GAMES_KEY, JSON.stringify({ rows: [], confirmed: {} })); } catch {}
           }
           setHostedReady(true);
         });
@@ -2072,25 +2194,35 @@ export default function Profile() {
           const openSpots  = Math.max(0, totalSpots - (confirmedMap.get(r.game_id) ?? 0));
           return {
             id: r.game_id,
-            dateKey:     g.date_key    ?? null,
-            time24:      g.time        ?? null,
-            durationMin: g.duration_min ?? g.fields?.duration_min ?? null,
-            date:        formatDateLabel(g.date_key),
+            dateKey:      g.date_key    ?? null,
+            time24:       g.time        ?? null,
+            durationMin:  g.duration_min ?? g.fields?.duration_min ?? null,
+            date:         formatDateLabel(g.date_key),
             time,
             ampm,
-            field:      g.fields?.venues?.name || '',
-            format:     g.format ?? g.fields?.format ?? '7v7',
+            field:        g.fields?.venues?.name                         || '',
+            fieldName:    g.fields?.name                                 ?? '',
+            address:      g.fields?.venues?.address                      ?? '',
+            format:       g.format ?? g.fields?.format                   ?? '7v7',
             totalSpots,
             openSpots,
-            womenOnly:  g.game_amenities?.women_only ?? false,
-            covered:    g.fields?.field_amenities?.covered ?? false,
-            parking:    g.fields?.venues?.venue_amenities?.parking ?? false,
+            filmed:       g.game_amenities?.filmed                       ?? false,
+            womenOnly:    g.game_amenities?.women_only                   ?? false,
+            master45:     g.game_amenities?.master_45                    ?? false,
+            covered:      g.fields?.field_amenities?.covered             ?? false,
+            parking:      g.fields?.venues?.venue_amenities?.parking     ?? false,
+            showers:      g.fields?.venues?.venue_amenities?.showers     ?? false,
+            venueCoverPath:    g.fields?.venues?.cover_image_path        ?? null,
+            venueCoverVersion: g.fields?.venues?.cover_updated_at
+              ? new Date(g.fields.venues.cover_updated_at).getTime() : null,
+            hostUserId:   g.host_user_id                                 ?? null,
             status: 'waitlist',
             type:   g.type ?? 'match',
             price:  null,
           };
         }).filter(Boolean);
         setWaitlistEntries(entries);
+        try { localStorage.setItem(WAITLIST_KEY_P, JSON.stringify(entries)); } catch {}
       });
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2100,25 +2232,56 @@ export default function Profile() {
     const uid = user?.id;
     if (!confirmedGame?.id || !supabase || !uid) return;
 
+    // V4: re-fetch rentals from games
+    supabase
+      .from('games')
+      .select(`
+        id, date_key, time, type, status, duration_min, total_spots, host_user_id, format,
+        game_amenities:amenities,
+        fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, cover_image_path, cover_updated_at, venue_amenities:amenities ) )
+      `)
+      .eq('booked_by_user_id', uid)
+      .eq('type', 'rental')
+      .then(async ({ data: rentalGameData, error: rentalErr }) => {
+        if (rentalErr || !rentalGameData?.length) {
+          setRentalCards([]);
+          try { localStorage.setItem(RENTAL_GAMES_KEY, '[]'); } catch {}
+          return;
+        }
+        const rentalGameIds = rentalGameData.map(g => g.id);
+        const { data: finRows } = await supabase
+          .from('reservations')
+          .select('game_id, unit_price, promo_discount, credit_applied, total_amount')
+          .eq('user_id', uid).eq('status', 'spend')
+          .in('game_id', rentalGameIds);
+        const finMap = {};
+        (finRows ?? []).forEach(r => {
+          const prev = finMap[r.game_id];
+          if (!prev || (r.total_amount ?? 0) > (prev.total_amount ?? 0)) finMap[r.game_id] = r;
+        });
+        const cards = rentalGameData.map(g => sbRentalFromGameRow(g, finMap[g.id] ?? null));
+        setRentalCards(cards);
+        try { localStorage.setItem(RENTAL_GAMES_KEY, JSON.stringify(cards)); } catch {}
+      });
+
     supabase
       .from('reservations')
       .select(`
         game_id, source, unit_price, promo_discount, credit_applied, total_amount,
-        games:game_id ( type, date_key, time, format, total_spots, duration_min, host_user_id, booked_by_user_id, game_amenities:amenities, fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
+        games:game_id ( type, date_key, time, format, total_spots, current_players, duration_min, host_user_id, game_amenities:amenities, fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, cover_image_path, cover_updated_at, venue_amenities:amenities ) ) )
       `)
       .eq('user_id', uid)
       .eq('status', 'spend')
       .then(({ data, error }) => {
         if (error || !data?.length) return;
+        const matchData = data.filter(r => r.games?.type !== 'rental');
         supabase.from('reservations').select('game_id')
           .eq('user_id', uid).eq('status', 'refund')
-          .in('game_id', data.filter(r => r.games?.type !== 'rental').map(r => r.game_id))
+          .in('game_id', matchData.map(r => r.game_id))
           .then(({ data: refunds }) => {
             const refundedSet = new Set((refunds || []).map(r => r.game_id));
-            const activeRows = data
-              .filter(r => r.games?.type === 'rental'
-                ? r.games?.booked_by_user_id === uid
-                : !refundedSet.has(r.game_id))
+            const activeRows = matchData
+              .filter(r => !refundedSet.has(r.game_id))
               .map(sbReservationToRow);
             setExtraGames(activeRows);
             try { localStorage.setItem(STORAGE_KEY, JSON.stringify(activeRows)); } catch {}
@@ -2129,13 +2292,14 @@ export default function Profile() {
       .from('game_players')
       .select(`
         game_id, user_id, payer_id, status, amount,
-        games:game_id ( date_key, time, format, total_spots, duration_min, host_user_id, game_amenities:amenities, fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
+        games:game_id ( date_key, time, format, total_spots, current_players, duration_min, host_user_id, type, game_amenities:amenities, fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, cover_image_path, cover_updated_at, venue_amenities:amenities ) ) )
       `)
       .or(`user_id.eq.${uid},payer_id.eq.${uid}`)
       .then(async ({ data, error }) => {
         if (error) return;
         const rows = data ?? [];
         setMyPlayerRows(rows);
+        try { sessionStorage.setItem(`pf_player_rows_${uid}`, JSON.stringify({ rows, ts: Date.now() })); } catch {}
         const payerIds = [...new Set(rows.filter(r => r.user_id === uid && r.payer_id !== uid).map(r => r.payer_id))];
         if (payerIds.length > 0) {
           const { data: pd } = await supabase.from('users').select('id, full_name, user_code').in('id', payerIds);
@@ -2149,87 +2313,6 @@ export default function Profile() {
   const [pastExpanded, setPastExpanded]         = useState(false);
   const [upcomingExpanded, setUpcomingExpanded] = useState(false);
 
-  const profileGameStateMap = useMemo(() => {
-    if (!user?.id) return new Map();
-    const byGame = {};
-    myPlayerRows.forEach(r => { (byGame[r.game_id] ??= []).push(r); });
-    const map = new Map();
-    Object.entries(byGame).forEach(([gameId, rows]) => {
-      map.set(gameId, deriveGameState(rows, user.id));
-    });
-    return map;
-  }, [myPlayerRows, user?.id]);
-
-  const guestGames = useMemo(() => {
-    if (!user?.id) return [];
-    return myPlayerRows
-      .filter(r => r.user_id === user.id && r.payer_id !== user.id && r.status === 'confirmed')
-      .map(r => {
-        const g = r.games;
-        const { time, ampm } = parseGameTime(g?.time);
-        const state = profileGameStateMap.get(r.game_id);
-        const payer = payerNames[r.payer_id];
-        return {
-          id:               `${r.game_id}_g_${r.user_id}`,
-          gameId:           r.game_id,
-          dateKey:          g?.date_key    ?? null,
-          time24:           g?.time        ?? null,
-          durationMin:      g?.duration_min ?? g?.fields?.duration_min ?? null,
-          date:             formatDateLabel(g?.date_key),
-          time,
-          ampm,
-          field:      g?.fields?.venues?.name || '',
-          format:     g?.format ?? g?.fields?.format ?? '7v7',
-          totalSpots: g?.total_spots ?? g?.fields?.total_spots ?? 0,
-          womenOnly:  g?.game_amenities?.women_only ?? false,
-          covered:    g?.fields?.field_amenities?.covered ?? false,
-          parking:    g?.fields?.venues?.venue_amenities?.parking ?? false,
-          hostUserId:       g?.host_user_id ?? null,
-          type:             'game',
-          price:            null,
-          status:           'guest',
-          guestId:          r.user_id,
-          paidBy:           payer?.name || 'Usuario',
-          paidByCode:       payer?.code || null,
-          activeGuestCount: state?.activeGuestCount ?? 0,
-        };
-      });
-  }, [myPlayerRows, user?.id, payerNames, profileGameStateMap]);
-
-  const canceledGames = useMemo(() => deriveCanceledWithGuestsGames(), [extraGames]);
-
-  // Games where user canceled their own slot but still has active guests.
-  // extraGames misses these because the refund record filters them out.
-  const canceledWithGuestsFromPlayerRows = useMemo(() => {
-    if (!user?.id || !myPlayerRowsReady) return [];
-    const byGame = {};
-    myPlayerRows.forEach(r => { (byGame[r.game_id] ??= []).push(r); });
-    const result = [];
-    for (const [gameId, rows] of Object.entries(byGame)) {
-      const state = deriveGameState(rows, user.id);
-      if (state.relationship !== 'canceled-with-guests') continue;
-      const g = rows[0]?.games;
-      if (!g) continue;
-      const { time, ampm } = parseGameTime(g.time);
-      result.push({
-        id:            gameId,
-        gameId,
-        dateKey:       g.date_key                           ?? null,
-        time24:        g.time                               ?? null,
-        durationMin:   g.duration_min ?? g.fields?.duration_min ?? null,
-        date:          formatDateLabel(g.date_key),
-        time,
-        ampm,
-        field:         g.fields?.venues?.name               || '',
-        format:        g.format ?? g.fields?.format         ?? '7v7',
-        type:          'game',
-        status:        'canceled-with-guests',
-        activeGuestCount: state.activeGuestCount,
-      });
-    }
-    return result;
-  }, [myPlayerRows, user?.id, myPlayerRowsReady]);
-
   const hostedGameRows = useMemo(
     () => hostedRows.map(g => {
       const row = sbHostedGameToRow(g);
@@ -2242,89 +2325,52 @@ export default function Profile() {
     [hostedRows, hostedConfirmed]
   );
 
-  // Fallback for games where a guest-refund record incorrectly removed the game from
-  // extraGames even though the titular slot is still confirmed in game_players.
-  const titularFallbackGames = useMemo(() => {
-    if (!user?.id || !myPlayerRowsReady) return [];
-    const extraIds = new Set(extraGames.map(g => g.id));
-    const byGame = {};
-    myPlayerRows.forEach(r => { (byGame[r.game_id] ??= []).push(r); });
-    const out = [];
-    for (const [gameId, rows] of Object.entries(byGame)) {
-      if (extraIds.has(gameId)) continue;
-      const state = deriveGameState(rows, user.id);
-      if (!state.isTitularConfirmed) continue;
-      const g = rows[0]?.games;
-      if (!g) continue;
-      const { time, ampm } = parseGameTime(g.time);
-      out.push({
-        id:           gameId,
-        dateKey:      g.date_key      ?? null,
-        time24:       g.time          ?? null,
-        durationMin:  g.duration_min  ?? g.fields?.duration_min  ?? null,
-        date:         formatDateLabel(g.date_key),
-        time, ampm,
-        field:        g.fields?.venues?.name ?? '',
-        format:       g.format ?? g.fields?.format ?? '7v7',
-        totalSpots:   g.total_spots   ?? g.fields?.total_spots   ?? 0,
-        womenOnly:    g.game_amenities?.women_only ?? false,
-        covered:      g.fields?.field_amenities?.covered ?? false,
-        parking:      g.fields?.venues?.venue_amenities?.parking ?? false,
-        hostUserId:   g.host_user_id  ?? null,
-        status:       'reserved',
-        type:         g.type ?? 'match',
-        activeGuestCount: state.activeGuestCount,
-      });
-    }
-    return out;
-  }, [myPlayerRows, extraGames, user?.id, myPlayerRowsReady]); // eslint-disable-line react-hooks/exhaustive-deps
+  const matchFinancialMap = new Map(
+    extraGames
+      .filter(g => g.type === 'match' && g.paymentBreakdown)
+      .map(g => [g.id, { paymentBreakdown: g.paymentBreakdown, price: g.price }])
+  );
+  const matchCards = deriveMatchCards(myPlayerRows, payerNames, user?.id).map(g => ({
+    ...g,
+    ...(matchFinancialMap.get(g.gameId) ?? {}),
+  }));
+  const activeRentalCards = rentalCards.map(g => g.paymentBreakdown ? { ...g, price: computeLivePrice(g) } : g);
 
-  // status priority: lower = wins dedup
-  const STATUS_PRIORITY = { reserved: 0, guest: 1, 'canceled-with-guests': 2, 'guest-canceled-with-sub-guests': 3, waitlist: 4 };
-
+  const rentalIds = new Set(activeRentalCards.map(g => g.id));
   const allGames = (() => {
     const raw = [
-      ...extraGames.map(g => {
-        if (g.status === 'reserved' && g.type === 'match' && myPlayerRowsReady) {
-          const state = profileGameStateMap.get(g.id);
-          if (state && !state.isVisible) return null;
-          if (state?.relationship === 'canceled-with-guests') {
-            return { ...g, status: 'canceled-with-guests', activeGuestCount: state.activeGuestCount };
-          }
-          if (state?.relationship === 'guest') return null; // guestGames handles this
-        }
-        let row = g.paymentBreakdown ? { ...g, price: computeLivePrice(g) } : g;
-        if (row.status === 'reserved' && row.type === 'match' && row.id) {
-          const state = profileGameStateMap.get(row.id);
-          row = { ...row, activeGuestCount: state?.activeGuestCount ?? 0 };
-        }
-        return row;
-      }).filter(Boolean),
-      ...titularFallbackGames,
+      ...matchCards,
+      ...activeRentalCards,
       ...waitlistEntries,
-      ...guestGames,
-      ...canceledGames,
-      ...canceledWithGuestsFromPlayerRows,
-      ...hostedGameRows, // fallback: makes hosted games visible when not in reservations/game_players
+      ...hostedGameRows.filter(g => g.type !== 'rental' || !rentalIds.has(g.id)),
     ];
-    // one card per game — keep highest-priority status row
     const seen = new Map();
     for (const g of raw) {
       const key = g.gameId || g.id;
-      if (!key) continue;
-      const prev = seen.get(key);
-      if (!prev || (STATUS_PRIORITY[g.status] ?? 99) < (STATUS_PRIORITY[prev.status] ?? 99)) {
-        seen.set(key, g);
-      }
+      if (!key || seen.has(key)) continue;
+      seen.set(key, g);
     }
     return [...seen.values()];
   })();
-  const dataReady = myPlayerRowsReady && sbGamesReady && hostedReady;
+  const dataReady = myPlayerRowsReady && hostedReady;
 
   useEffect(() => {
     if (!highlightedId || !dataReady) return;
     const raf = requestAnimationFrame(() => {
-      highlightedRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const el = highlightedRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const tabBar = document.querySelector('.tab-bar');
+      const visibleBottom = tabBar ? tabBar.getBoundingClientRect().top : window.innerHeight;
+      const overBottom = rect.bottom - visibleBottom;
+      const overTop = -rect.top;
+      if (overBottom > 0 || overTop > 0) {
+        const scrollEl = profileScrollRef.current;
+        if (scrollEl) {
+          const delta = overBottom > 0 ? overBottom + 12 : -(overTop + 12);
+          smoothScrollTo(scrollEl, scrollEl.scrollTop + delta, 250);
+        }
+      }
     });
     return () => cancelAnimationFrame(raf);
   }, [highlightedId, dataReady]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2345,12 +2391,22 @@ export default function Profile() {
     el.scrollTo({ top: initPfScrollRef.current, behavior: 'instant' });
   }, [dataReady]); // eslint-disable-line
   // Only classify games that have valid temporal data and whose player status is settled
-  const temporalGames = (dataReady ? allGames : extraGames).filter(g => g.dateKey && g.time24);
+  const temporalGames = (
+    dataReady         ? allGames :
+    myPlayerRowsReady ? [
+      ...matchCards,
+      ...activeRentalCards,
+      ...hostedGameRows.filter(g => g.type !== 'rental' || !rentalIds.has(g.id)),
+      ...waitlistEntries,
+    ] :
+                        [...extraGames, ...rentalCards]
+  ).filter(g => g.dateKey && g.time24);
   const upcoming      = sortByDt(temporalGames.filter(g => !isPast(g) && !(g.status === 'waitlist' && isStarted(g))), false);
   const past          = sortByDt(temporalGames.filter(g =>  isPast(g) && g.status !== 'waitlist'), true);
   const pastGameCount = dataReady ? past.length : (profileData.pastGameCount ?? null);
   // hasActivity: any confirmed inscription regardless of past/upcoming
   const hasActivity = extraGames.length > 0
+    || rentalCards.length > 0
     || myPlayerRows.some(r => r.user_id === user?.id && r.status === 'confirmed')
     || isGameHost;
   const visiblePast     = pastExpanded     ? past     : past.slice(0, 4);
@@ -2364,8 +2420,41 @@ export default function Profile() {
     } catch {}
   }, [dataReady]); // eslint-disable-line
 
-  const gameToRate = (dataReady && user)
-    ? past.find(g => (g.type === 'match' || g.type === 'rental') && !ratings[g.id] && !skippedRatings[g.id]) ?? null
+  // Create initial rating rows for past games that have none yet
+  useEffect(() => {
+    if (!dataReady || !ratingsReady || !user?.id) return;
+    const uid = user.id;
+    const missingGames = past.filter(g => {
+      const gId = g.gameId ?? g.id;
+      if (!(g.type === 'match' || g.type === 'rental')) return false;
+      if (ratings[gId]) return false;
+      const s = g.status;
+      if (s && (s.includes('cancel') || s === 'expired')) return false;
+      return true;
+    });
+    if (!missingGames.length) return;
+    upsertRatingRows(uid, missingGames).then(() => {
+      fetchMyRatings(uid).then(sbRatings => {
+        setRatings(prev => {
+          const merged = { ...prev, ...sbRatings };
+          setLocalRatings(merged);
+          return merged;
+        });
+      });
+    });
+  }, [dataReady, ratingsReady]); // eslint-disable-line
+
+  const gameToRate = (dataReady && user && ratingsReady)
+    ? past.find(g => {
+        if (!(g.type === 'match' || g.type === 'rental')) return false;
+        const gId = g.gameId ?? g.id;
+        const r = ratings[gId];
+        if (!r) return false;
+        const within14 = r.event_ended_at
+          ? Date.now() - new Date(r.event_ended_at).getTime() <= 14 * 24 * 60 * 60 * 1000
+          : false;
+        return r.stars == null && r.popup_shown_at == null && within14;
+      }) ?? null
     : null;
 
   async function handleSave(updated) {
@@ -2407,18 +2496,21 @@ export default function Profile() {
         localStorage.setItem(SHOWN_KEY, JSON.stringify(shown));
       } catch {}
       const newGame = confirmedGameToRow(confirmedGame);
-      setExtraGames(prev => {
-        const filtered = prev.filter(r => r.id !== newGame.id);
-        const next = [...filtered, newGame];
-        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch {}
-        return next;
-      });
+      if (newGame.type === 'rental' || newGame.type === 'campo') {
+        setRentalCards(prev => [...prev.filter(r => r.id !== newGame.id), newGame]);
+      } else {
+        setExtraGames(prev => {
+          const next = [...prev.filter(r => r.id !== newGame.id), newGame];
+          try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch {}
+          return next;
+        });
+      }
       if (confirmedGame.id) {
         try {
-          const wl = JSON.parse(localStorage.getItem(WAITLIST_KEY_P)) || {};
-          if (wl[confirmedGame.id]) {
-            delete wl[confirmedGame.id];
-            localStorage.setItem(WAITLIST_KEY_P, JSON.stringify(wl));
+          const wl = JSON.parse(localStorage.getItem(WAITLIST_KEY_P)) || [];
+          const filtered = Array.isArray(wl) ? wl.filter(g => g.id !== confirmedGame.id) : [];
+          if (!Array.isArray(wl) || filtered.length !== wl.length) {
+            localStorage.setItem(WAITLIST_KEY_P, JSON.stringify(filtered));
             setWaitlistEntries(prev => prev.filter(g => g.id !== confirmedGame.id));
           }
         } catch {}
@@ -2448,12 +2540,67 @@ export default function Profile() {
     const baseState  = { infoMode: isGuest || (!isWaitlist && !isCanceledWithGuests && !isGuestCanceledWithSub), isPast: past, rating: ratings[navId] ?? null, backPath: '/profile' };
     sessionStorage.setItem('pf_back', '1');
     if (g.type === 'rental') {
-      navigate(`/rental/${navId}`, { state: { isPast: past, rating: ratings[navId] ?? null, backPath: '/profile', field: { id: navId, dateKey: g.dateKey ?? null, time24: g.time24 ?? null, field: g.field, date: g.date, time: g.time, ampm: g.ampm, format: g.format || '7v7' } } });
+      navigate(`/rental/${navId}`, { state: { isPast: past, rating: ratings[navId] ?? null, backPath: '/profile', field: {
+        id:           navId,
+        gameId:       navId,
+        dateKey:      g.dateKey      ?? null,
+        time24:       g.time24       ?? null,
+        durationMin:  g.durationMin  ?? null,
+        time:         g.time,
+        ampm:         g.ampm,
+        field:        g.field,
+        fieldName:    g.fieldName    ?? '',
+        address:      g.address      ?? '',
+        format:       g.format       || '7v7',
+        totalSpots:   g.totalSpots   ?? 0,
+        filmed:       g.filmed       ?? false,
+        womenOnly:    g.womenOnly    ?? false,
+        covered:      g.covered      ?? false,
+        parking:      g.parking      ?? false,
+        showers:      g.showers      ?? false,
+        venueCoverPath:    g.venueCoverPath    ?? null,
+        venueCoverVersion: g.venueCoverVersion ?? null,
+        hostUserId:   g.hostUserId   ?? null,
+        type:         'rental',
+        status:       g.status       ?? 'reserved',
+        reserved:     g.status === 'reserved',
+        paymentBreakdown: g.paymentBreakdown ?? null,
+        price:        g.price        ?? null,
+      } } });
     } else if (g.type === 'campo') {
       navigate(`/field/${navId}`, { state: { ...baseState, field: { id: navId, dateKey: g.dateKey ?? null, time24: g.time24 ?? null, field: g.field, date: g.date, time: g.time, ampm: g.ampm, format: g.format || '7v7', price: g.price || '', address: '', paymentBreakdown: g.paymentBreakdown ?? null, paidBy: isGuest ? (g.paidBy ?? null) : null, paidByCode: isGuest ? (g.paidByCode ?? null) : null } } });
     } else {
       // Only pass reservation-specific extras — GameDetail fetches canonical game data via getGameById
-      navigate(`/game/${navId}`, { state: { ...baseState, guestCanceledView: isGuestCanceledWithSub, game: { id: navId, dateKey: g.dateKey ?? null, time24: g.time24 ?? null, durationMin: g.durationMin ?? null, field: g.field, date: g.date, time: g.time, ampm: g.ampm, format: g.format || '7v7', paymentBreakdown: g.paymentBreakdown ?? null, paidBy: isGuest ? (g.paidBy ?? null) : null, paidByCode: isGuest ? (g.paidByCode ?? null) : null, guestId: isGuest ? (g.guestId ?? null) : null, guestSubBreakdown: (isGuest || isGuestCanceledWithSub) ? (g.guestSubBreakdown ?? null) : null, guestCanceledView: isGuestCanceledWithSub } } });
+      navigate(`/game/${navId}`, { state: { ...baseState, guestCanceledView: isGuestCanceledWithSub, game: {
+        id:           navId,
+        dateKey:      g.dateKey      ?? null,
+        time24:       g.time24       ?? null,
+        durationMin:  g.durationMin  ?? null,
+        time:         g.time,
+        ampm:         g.ampm,
+        field:        g.field,
+        fieldName:    g.fieldName    ?? '',
+        address:      g.address      ?? '',
+        format:       g.format       || '7v7',
+        totalSpots:   g.totalSpots   ?? 0,
+        openSpots:    g.openSpots    ?? 0,
+        filmed:       g.filmed       ?? false,
+        womenOnly:    g.womenOnly    ?? false,
+        master45:     g.master45     ?? false,
+        covered:      g.covered      ?? false,
+        parking:      g.parking      ?? false,
+        showers:      g.showers      ?? false,
+        venueCoverPath:    g.venueCoverPath    ?? null,
+        venueCoverVersion: g.venueCoverVersion ?? null,
+        hostUserId:   g.hostUserId   ?? null,
+        type:         g.type         ?? 'match',
+        paymentBreakdown:  g.paymentBreakdown  ?? null,
+        paidBy:       isGuest ? (g.paidBy    ?? null) : null,
+        paidByCode:   isGuest ? (g.paidByCode ?? null) : null,
+        guestId:      isGuest ? (g.guestId   ?? null) : null,
+        guestSubBreakdown: (isGuest || isGuestCanceledWithSub) ? (g.guestSubBreakdown ?? null) : null,
+        guestCanceledView: isGuestCanceledWithSub,
+      } } });
     }
   }
 
@@ -2461,20 +2608,23 @@ export default function Profile() {
     if (!gameToRate) return;
     const cleanComment = comment?.trim() || null;
     const gId = gameToRate.gameId ?? gameToRate.id;
-    const updated = {
-      ...ratings,
-      [gId]: { stars, comment: cleanComment, ratedAt: new Date().toISOString(), field: gameToRate.field, date: gameToRate.date },
-    };
-    setRatings(updated);
-    setLocalRatings(updated);
+    const ratedAt = new Date().toISOString();
+    setRatings(prev => ({
+      ...prev,
+      [gId]: { ...(prev[gId] ?? {}), stars, comment: cleanComment, rated_at: ratedAt, popup_shown_at: ratedAt },
+    }));
+    const local = getLocalRatings();
+    local[gId] = { ...(local[gId] ?? {}), stars, comment: cleanComment, rated_at: ratedAt, popup_shown_at: ratedAt };
+    setLocalRatings(local);
     savePlayedGame(gId);
     if (user?.id) saveRating({
-      userId:      user.id,
-      gameType:    gameToRate.type === 'rental' ? 'rental' : 'match',
-      gameId:      gId,
-      hostUserId:  gameToRate.hostUserId ?? null,
+      userId:       user.id,
+      gameType:     gameToRate.type === 'rental' ? 'rental' : 'match',
+      gameId:       gId,
+      hostUserId:   gameToRate.hostUserId ?? null,
       stars,
-      comment:     cleanComment,
+      comment:      cleanComment,
+      popupShownAt: ratedAt,
     });
   }
 
@@ -2589,22 +2739,25 @@ export default function Profile() {
             <>
               {(() => {
                 const byDate = {};
-                visibleUpcoming.forEach(g => { const k = g.date || ''; (byDate[k] = byDate[k] || []).push(g); });
-                return Object.entries(byDate).map(([date, games]) => (
-                  <div key={date || '_'}>
-                    {date && date !== 'Próximo partido' && (
-                      <div style={{ padding: '4px 16px 8px', fontSize: 13.5, fontWeight: 500, color: SUB }}>{date}</div>
-                    )}
-                    {games.map(g => (
-                      <div
-                        key={g.id}
-                        ref={g.id === highlightedId ? highlightedRef : null}
-                      >
-                        <GameRow game={g} onPress={() => openGameDetail(g)} userId={user?.id} highlighted={g.id === highlightedId} />
-                      </div>
-                    ))}
-                  </div>
-                ));
+                visibleUpcoming.forEach(g => { const k = g.dateKey || '_'; (byDate[k] = byDate[k] || []).push(g); });
+                return Object.entries(byDate).map(([dk, games]) => {
+                  const dateLabel = games[0]?.date || '';
+                  return (
+                    <div key={dk}>
+                      {dateLabel && dateLabel !== 'Próximo partido' && (
+                        <div style={{ padding: '4px 16px 8px', fontSize: 13.5, fontWeight: 500, color: SUB }}>{dateLabel}</div>
+                      )}
+                      {games.map(g => (
+                        <div
+                          key={g.id}
+                          ref={g.id === highlightedId ? highlightedRef : null}
+                        >
+                          <GameRow game={g} onPress={() => openGameDetail(g)} userId={user?.id} highlighted={g.id === highlightedId} />
+                        </div>
+                      ))}
+                    </div>
+                  );
+                });
               })()}
               {!upcomingExpanded && upcoming.length > 10 && (
                 <button onClick={() => setUpcomingExpanded(true)} style={{
@@ -2627,15 +2780,18 @@ export default function Profile() {
             <>
               {(() => {
                 const byDate = {};
-                visiblePast.forEach(g => { const k = g.date || ''; (byDate[k] = byDate[k] || []).push(g); });
-                return Object.entries(byDate).map(([date, games]) => (
-                  <div key={date || '_'}>
-                    {date && date !== 'Próximo partido' && (
-                      <div style={{ padding: '4px 16px 8px', fontSize: 13.5, fontWeight: 500, color: SUB }}>{date}</div>
-                    )}
-                    {games.map(g => <GameRow key={g.id} game={g} onPress={() => openGameDetail(g)} muted userId={user?.id} />)}
-                  </div>
-                ));
+                visiblePast.forEach(g => { const k = g.dateKey || '_'; (byDate[k] = byDate[k] || []).push(g); });
+                return Object.entries(byDate).map(([dk, games]) => {
+                  const dateLabel = games[0]?.date || '';
+                  return (
+                    <div key={dk}>
+                      {dateLabel && dateLabel !== 'Próximo partido' && (
+                        <div style={{ padding: '4px 16px 8px', fontSize: 13.5, fontWeight: 500, color: SUB }}>{dateLabel}</div>
+                      )}
+                      {games.map(g => <GameRow key={g.id} game={g} onPress={() => openGameDetail(g)} muted userId={user?.id} />)}
+                    </div>
+                  );
+                });
               })()}
               {!pastExpanded && past.length > 4 && (
                 <button onClick={() => setPastExpanded(true)} style={{
@@ -2684,10 +2840,13 @@ export default function Profile() {
       {confirmedGame && <ConfirmedOverlay game={confirmedGame} onOK={handleOK} />}
       {!confirmedGame && gameToRate && (
         <RatingModal key={gameToRate.id} game={gameToRate} onRate={handleRate} onSkip={() => {
-          const updated = { ...skippedRatings, [gameToRate.id]: true };
-          setSkippedRatings(updated);
-          try { localStorage.setItem(SKIPPED_KEY, JSON.stringify(updated)); } catch {}
-          savePlayedGame(gameToRate.id);
+          const gId = gameToRate.gameId ?? gameToRate.id;
+          setRatings(prev => ({
+            ...prev,
+            [gId]: { ...(prev[gId] ?? {}), popup_shown_at: new Date().toISOString() },
+          }));
+          if (user?.id) markPopupShown(user.id, gId);
+          savePlayedGame(gId);
         }} />
       )}
       {editOpen && (

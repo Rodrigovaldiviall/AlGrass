@@ -25,7 +25,7 @@ function getUpcomingBadge() {
 function tabFromPath(pathname, backPath) {
   if (pathname.startsWith('/profile')) return 'perfil';
   if (pathname.startsWith('/notifications')) return 'notificaciones';
-  if ((pathname.startsWith('/game/') || pathname.startsWith('/field/')) && backPath === '/profile') return 'perfil';
+  if ((pathname.startsWith('/game/') || pathname.startsWith('/field/') || pathname.startsWith('/rental/')) && backPath === '/profile') return 'perfil';
   if (pathname.startsWith('/fields') || pathname.startsWith('/field/') || pathname.startsWith('/rental/')) return 'campos';
   return 'partidos';
 }

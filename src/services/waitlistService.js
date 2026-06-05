@@ -107,7 +107,7 @@ export async function getMyWaitlistGamesFull(userId) {
       game_id, joined_at,
       games:game_id ( id, date_key, time, format, total_spots, current_players, duration_min, type,
         game_amenities:amenities,
-        fields:field_id ( format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, venue_amenities:amenities ) ) )
+        fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, cover_image_path, cover_updated_at, venue_amenities:amenities ) ) )
     `)
     .eq('user_id', userId)
     .eq('status', 'waiting');
