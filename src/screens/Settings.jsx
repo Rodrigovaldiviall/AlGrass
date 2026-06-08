@@ -9,6 +9,7 @@ import { supabase } from '../lib/supabase';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faHeadset } from '@fortawesome/free-solid-svg-icons';
 import { SupportMenu } from '../components/SupportMenu';
+import { validateDeleteAccount, executeDeleteAccount } from '../services/deleteAccountService';
 import pkg from '../../package.json';
 
 const PROFILE_KEY = 'pichanga_profile';
@@ -245,14 +246,14 @@ function LegalModal({ type, onClose }) {
   );
 }
 
-// ── DeleteModal ─────────────────────────────────────────────────────────────
+// ── DeleteModal (paso 1) ────────────────────────────────────────────────────
 
-function DeleteModal({ onConfirm, onCancel }) {
+function DeleteModal({ onContinue, onCancel }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
 
-  function confirm() { setOpen(false); setTimeout(onConfirm, 220); }
-  function cancel()  { setOpen(false); setTimeout(onCancel,  220); }
+  function cont()   { setOpen(false); setTimeout(onContinue, 220); }
+  function cancel() { setOpen(false); setTimeout(onCancel,   220); }
 
   return (
     <div
@@ -281,12 +282,91 @@ function DeleteModal({ onConfirm, onCancel }) {
           </div>
         </div>
         <button
-          onClick={confirm}
+          onClick={cont}
           style={{
             height: 52, borderRadius: 16, border: 'none', cursor: 'pointer',
-            background: DANGER, color: '#fff',
+            background: SOFT, color: TEXT,
+            fontSize: 15, fontWeight: 600, fontFamily: 'inherit',
+            WebkitTapHighlightColor: 'transparent', outline: 'none',
+          }}>
+          Continuar
+        </button>
+        <button
+          onClick={cancel}
+          style={{
+            height: 52, borderRadius: 16, border: 'none', cursor: 'pointer',
+            background: BLUE, color: '#fff',
             fontSize: 15, fontWeight: 700, fontFamily: 'inherit',
             WebkitTapHighlightColor: 'transparent', outline: 'none',
+          }}>
+          Cancelar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── ConfirmDeleteModal (paso 2b) ────────────────────────────────────────────
+
+function ConfirmDeleteModal({ onConfirm, onCancel }) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState('');
+  useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
+
+  function confirm() { setOpen(false); setTimeout(onConfirm, 220); }
+  function cancel()  { setOpen(false); setTimeout(onCancel,  220); }
+
+  const canConfirm = value === 'ELIMINAR';
+
+  return (
+    <div
+      onClick={cancel}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9000,
+        background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)',
+        transition: 'background .22s ease',
+        display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
+      }}>
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: '#fff',
+          borderTopLeftRadius: 24, borderTopRightRadius: 24,
+          padding: '24px 20px calc(32px + env(safe-area-inset-bottom))',
+          display: 'flex', flexDirection: 'column', gap: 12,
+          boxShadow: '0 -8px 32px rgba(0,0,0,0.12)',
+          transform: open ? 'translateY(0)' : 'translateY(100%)',
+          transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)',
+        }}>
+        <div style={{ marginBottom: 4 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, letterSpacing: -0.3 }}>Confirmar eliminación</div>
+          <div style={{ fontSize: 14, color: SUB, marginTop: 8, lineHeight: 1.5 }}>
+            Escribe <span style={{ fontWeight: 700, color: TEXT, letterSpacing: 0.5 }}>ELIMINAR</span> para continuar.
+          </div>
+        </div>
+        <input
+          autoFocus
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          placeholder="ELIMINAR"
+          style={{
+            height: 48, borderRadius: 12, border: `1.5px solid ${canConfirm ? DANGER : HAIR}`,
+            padding: '0 14px', fontSize: 15, fontFamily: 'inherit', color: TEXT,
+            outline: 'none', background: SOFT, boxSizing: 'border-box', width: '100%',
+            letterSpacing: 1, transition: 'border-color .15s ease',
+          }}
+        />
+        <button
+          onClick={confirm}
+          disabled={!canConfirm}
+          style={{
+            height: 52, borderRadius: 16, border: 'none',
+            cursor: canConfirm ? 'pointer' : 'default',
+            background: canConfirm ? DANGER : '#E5E5EA',
+            color: canConfirm ? '#fff' : '#AEAEB2',
+            fontSize: 15, fontWeight: 700, fontFamily: 'inherit',
+            WebkitTapHighlightColor: 'transparent', outline: 'none',
+            transition: 'background .15s ease, color .15s ease',
           }}>
           Eliminar cuenta
         </button>
@@ -299,6 +379,73 @@ function DeleteModal({ onConfirm, onCancel }) {
             WebkitTapHighlightColor: 'transparent', outline: 'none',
           }}>
           Cancelar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── BlockedModal ───────────────────────────────────────────────────────────
+
+const ISSUE_MESSAGES = {
+  future_player:  'Tienes partidos futuros confirmados.',
+  active_guests:  'Tienes invitados activos en partidos futuros.',
+  future_rental:  'Tienes reservas de cancha activas.',
+  credit_balance: 'Tienes crédito disponible en tu billetera. Utilízalo o contacta con soporte.',
+  venue_owner:    'Administras un complejo deportivo.',
+};
+
+function BlockedModal({ issues, onClose }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
+
+  function close() { setOpen(false); setTimeout(onClose, 220); }
+
+  return (
+    <div
+      onClick={close}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 9000,
+        background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)',
+        transition: 'background .22s ease',
+        display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
+      }}>
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: '#fff',
+          borderTopLeftRadius: 24, borderTopRightRadius: 24,
+          padding: '24px 20px calc(32px + env(safe-area-inset-bottom))',
+          display: 'flex', flexDirection: 'column', gap: 12,
+          boxShadow: '0 -8px 32px rgba(0,0,0,0.12)',
+          transform: open ? 'translateY(0)' : 'translateY(100%)',
+          transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)',
+        }}>
+        <div style={{ marginBottom: 4 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, letterSpacing: -0.3 }}>No puedes eliminar tu cuenta</div>
+          <div style={{ fontSize: 14, color: SUB, marginTop: 6, lineHeight: 1.5 }}>
+            Debes resolver lo siguiente antes de continuar:
+          </div>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {(issues || []).map(key => (
+            <div key={key} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+              <div style={{ width: 6, height: 6, borderRadius: '50%', background: DANGER, marginTop: 6, flexShrink: 0 }} />
+              <span style={{ fontSize: 13.5, color: TEXT, lineHeight: 1.5 }}>
+                {ISSUE_MESSAGES[key] ?? key}
+              </span>
+            </div>
+          ))}
+        </div>
+        <button
+          onClick={close}
+          style={{
+            height: 52, borderRadius: 16, border: 'none', cursor: 'pointer', marginTop: 4,
+            background: SOFT, color: TEXT,
+            fontSize: 15, fontWeight: 600, fontFamily: 'inherit',
+            WebkitTapHighlightColor: 'transparent', outline: 'none',
+          }}>
+          Entendido
         </button>
       </div>
     </div>
@@ -413,7 +560,12 @@ export default function Settings() {
   const [openQuestion, setOpenQuestion] = useState(null);
   const [legalModal, setLegalModal] = useState(null);
   const [showSecurity, setShowSecurity] = useState(false);
-  const [showDelete, setShowDelete] = useState(false);
+  const [showDelete, setShowDelete]     = useState(false);
+  const [showConfirm, setShowConfirm]   = useState(false);
+  const [checking, setChecking]         = useState(false);
+  const [deleting, setDeleting]         = useState(false);
+  const [deleteIssues, setDeleteIssues] = useState([]);
+  const [showBlocked, setShowBlocked]   = useState(false);
 
   const shellRef = useRef(null);
 
@@ -466,7 +618,35 @@ export default function Settings() {
     setOpenQuestion(prev => prev === key ? null : key);
   }
 
-  function deleteAccount() {
+  function handleDeleteRequest() {
+    setShowDelete(true);
+  }
+
+  async function handleContinue() {
+    if (!user?.id) return;
+    setChecking(true);
+    try {
+      const issues = await validateDeleteAccount(user.id);
+      if (issues.length) {
+        setDeleteIssues(issues);
+        setShowBlocked(true);
+      } else {
+        setShowConfirm(true);
+      }
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!user?.id) return;
+    setShowDelete(false);
+    setDeleting(true);
+    try {
+      await executeDeleteAccount(user.id);
+    } catch (e) {
+      console.error('[deleteAccount]', e);
+    }
     [
       'pichanga_user', 'pichanga_profile', 'pichanga_ratings',
       'pichanga_shown_confirmations', 'pichanga_skipped_ratings',
@@ -669,11 +849,13 @@ export default function Settings() {
       {showSecurity && (
         <SecuritySheet
           onClose={() => setShowSecurity(false)}
-          onDeleteRequest={() => { setShowSecurity(false); setShowDelete(true); }}
+          onDeleteRequest={() => { setShowSecurity(false); handleDeleteRequest(); }}
         />
       )}
-      {showDelete && <DeleteModal onConfirm={deleteAccount} onCancel={() => setShowDelete(false)} />}
-      {loggingOut && (
+      {showDelete && <DeleteModal onContinue={() => { setShowDelete(false); handleContinue(); }} onCancel={() => setShowDelete(false)} />}
+      {showConfirm && <ConfirmDeleteModal onConfirm={confirmDelete} onCancel={() => setShowConfirm(false)} />}
+      {showBlocked && <BlockedModal issues={deleteIssues} onClose={() => setShowBlocked(false)} />}
+      {(loggingOut || deleting || checking) && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 99999,
           background: 'rgba(255,255,255,0.94)',
@@ -685,7 +867,9 @@ export default function Settings() {
             border: `3px solid ${SOFT}`, borderTopColor: BLUE,
             animation: 'spin 0.7s linear infinite',
           }} />
-          <div style={{ fontSize: 14, color: SUB, fontWeight: 500 }}>Cerrando sesión...</div>
+          <div style={{ fontSize: 14, color: SUB, fontWeight: 500 }}>
+            {deleting ? 'Eliminando cuenta...' : checking ? 'Verificando...' : 'Cerrando sesión...'}
+          </div>
         </div>
       )}
 

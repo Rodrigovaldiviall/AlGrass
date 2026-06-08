@@ -472,9 +472,9 @@ const SwapIcon = () => (
 );
 
 const GearIcon = ({ color = SUB }) => (
-  <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-    <circle cx="11" cy="11" r="3" stroke={color} strokeWidth="1.6"/>
-    <path d="M11 2.5v1.8M11 17.7v1.8M2.5 11h1.8M17.7 11h1.8M4.9 4.9l1.3 1.3M15.8 15.8l1.3 1.3M4.9 17.1l1.3-1.3M15.8 6.2l1.3-1.3" stroke={color} strokeWidth="1.6" strokeLinecap="round"/>
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+    <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
   </svg>
 );
 
@@ -1983,6 +1983,7 @@ export default function Profile() {
   const _pf0 = user?.id ? _readPFCache(user.id) : null;
   const [myPlayerRows,      setMyPlayerRows]      = useState(_pf0?.rows ?? []);
   const [myPlayerRowsReady, setMyPlayerRowsReady] = useState(!!_pf0);
+  const [playerDataVersion, setPlayerDataVersion] = useState(0);
   const [sbGamesReady,      setSbGamesReady]      = useState(false);
   const [rentalCards,       setRentalCards]       = useState(() => {
     try { return JSON.parse(localStorage.getItem(RENTAL_GAMES_KEY)) || []; } catch { return []; }
@@ -2135,6 +2136,7 @@ export default function Profile() {
           const rows = data ?? [];
           setMyPlayerRows(rows);
           setMyPlayerRowsReady(true);
+          setPlayerDataVersion(v => v + 1);
           try { sessionStorage.setItem(`pf_player_rows_${uid}`, JSON.stringify({ rows, ts: Date.now() })); } catch {}
           const payerIds = [...new Set(rows.filter(r => r.user_id === uid && r.payer_id !== uid).map(r => r.payer_id))];
           if (payerIds.length > 0) {
@@ -2299,6 +2301,7 @@ export default function Profile() {
         if (error) return;
         const rows = data ?? [];
         setMyPlayerRows(rows);
+        setPlayerDataVersion(v => v + 1);
         try { sessionStorage.setItem(`pf_player_rows_${uid}`, JSON.stringify({ rows, ts: Date.now() })); } catch {}
         const payerIds = [...new Set(rows.filter(r => r.user_id === uid && r.payer_id !== uid).map(r => r.payer_id))];
         if (payerIds.length > 0) {
@@ -2368,7 +2371,7 @@ export default function Profile() {
         const scrollEl = profileScrollRef.current;
         if (scrollEl) {
           const delta = overBottom > 0 ? overBottom + 12 : -(overTop + 12);
-          smoothScrollTo(scrollEl, scrollEl.scrollTop + delta, 250);
+          smoothScrollTo(scrollEl, scrollEl.scrollTop + delta, 480);
         }
       }
     });
@@ -2380,6 +2383,16 @@ export default function Profile() {
     const t = setTimeout(() => setHighlightedId(null), 4500);
     return () => clearTimeout(t);
   }, [highlightedId]);
+
+  useEffect(() => {
+    const gId = location.state?.highlightGame;
+    if (!gId || !dataReady) return;
+    const allGames = [...past, ...upcoming];
+    const match = allGames.find(g => (g.gameId ?? g.id) === gId);
+    if (!match) return;
+    if (past.some(g => g.id === match.id)) setPastExpanded(true);
+    setHighlightedId(match.id);
+  }, [location.key, dataReady, playerDataVersion]); // eslint-disable-line
 
   // useLayoutEffect fires before the browser paints, so scroll is set before the user sees
   // the new content — eliminating the flash-to-top that useEffect + rAF would cause.
@@ -2654,7 +2667,7 @@ export default function Profile() {
 
   const isOrganizerProfile = isVenueStaff || isVenueManager;
   // Complete profile: position + birth date + phone + nationality + occupation
-  const isProfileComplete = hasPosition && hasBirthDate && !!cardUser.phone && !!cardUser.nationality && !!cardUser.occupation;
+  const isProfileComplete = hasPosition && hasBirthDate && !!cardUser.phone && !!cardUser.nationality && !!cardUser.occupation && !!(cardUser.avatarPath || cardUser.photoDataUrl);
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden', position: 'relative' }}>
@@ -2747,14 +2760,17 @@ export default function Profile() {
                       {dateLabel && dateLabel !== 'Próximo partido' && (
                         <div style={{ padding: '4px 16px 8px', fontSize: 13.5, fontWeight: 500, color: SUB }}>{dateLabel}</div>
                       )}
-                      {games.map(g => (
+                      {games.map(g => {
+                        const isHighlighted = g.id === highlightedId || g.gameId === highlightedId;
+                        return (
                         <div
                           key={g.id}
-                          ref={g.id === highlightedId ? highlightedRef : null}
+                          ref={isHighlighted ? highlightedRef : null}
                         >
-                          <GameRow game={g} onPress={() => openGameDetail(g)} userId={user?.id} highlighted={g.id === highlightedId} />
+                          <GameRow game={g} onPress={() => openGameDetail(g)} userId={user?.id} highlighted={isHighlighted} />
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   );
                 });
@@ -2788,7 +2804,14 @@ export default function Profile() {
                       {dateLabel && dateLabel !== 'Próximo partido' && (
                         <div style={{ padding: '4px 16px 8px', fontSize: 13.5, fontWeight: 500, color: SUB }}>{dateLabel}</div>
                       )}
-                      {games.map(g => <GameRow key={g.id} game={g} onPress={() => openGameDetail(g)} muted userId={user?.id} />)}
+                      {games.map(g => {
+                        const isHighlighted = g.id === highlightedId || g.gameId === highlightedId;
+                        return (
+                        <div key={g.id} ref={isHighlighted ? highlightedRef : null}>
+                          <GameRow game={g} onPress={() => openGameDetail(g)} muted userId={user?.id} highlighted={isHighlighted} />
+                        </div>
+                        );
+                      })}
                     </div>
                   );
                 });

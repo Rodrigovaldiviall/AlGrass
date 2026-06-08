@@ -62,8 +62,8 @@ export const notificationTemplates = {
   },
 
   reservation_cancelled_credit_owner: {
-    title:       'Reserva cancelada',
-    body:        'Tu reserva fue cancelada. El crédito fue devuelto al titular.',
+    title:       'Cancelaste tu invitación',
+    body:        'Cancelaste la reserva. El crédito fue devuelto al titular.',
     sourceLabel: 'Tu partido',
     imageType:   'venue_image',
   },
@@ -154,12 +154,21 @@ export const notificationTemplates = {
   },
 };
 
+function fmtTime(t) {
+  if (!t) return null;
+  const [h, m] = (t || '').split(':').map(Number);
+  if (isNaN(h)) return null;
+  return `${h % 12 || 12}:${String(m ?? 0).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
+}
+
 // Renderer central — único punto de cambio cuando llegue interpolación v2.
 // Uso: renderNotification(row) → { title, body, sourceLabel, imageType }
 export function renderNotification(row) {
   const tpl = notificationTemplates[row.template_key];
   if (!tpl) return null;
-  const body = row.custom_text ?? tpl.body;
+  const body      = row.custom_text ?? tpl.body;
   const venueName = row.games?.fields?.venues?.name ?? null;
-  return { ...tpl, body: venueName ? `${venueName}. ${body}` : body };
+  const gameTime  = fmtTime(row.games?.time);
+  const prefix    = [gameTime, venueName].filter(Boolean).join(' · ');
+  return { ...tpl, body: prefix ? `${prefix}. ${body}` : body };
 }

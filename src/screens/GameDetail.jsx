@@ -1393,7 +1393,7 @@ export default function GameDetail() {
   // true when my own slot is canceled (Rule 3: show titular-cancelado, hide paidBy)
   const livePaidBy     = mySlotCanceled ? null : g.paidBy;
 
-  const isCanceledWithGuests = (titularCanceled || guestCanceledView)
+  const isCanceledWithGuests = (titularCanceled || guestCanceledView || (mySlotCanceled && guestsInRoster.length > 0))
     && (guestCanceledView ? guestOwnGuests.length : guestsInRoster.length) > 0
     && !isBooked;
 

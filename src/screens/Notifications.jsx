@@ -9,10 +9,11 @@ import { useStaff } from '../context/StaffContext';
 import { supabase } from '../lib/supabase';
 import { renderNotification } from '../data/notificationTemplates';
 import { setNotifBadge, getNotifCount } from '../utils/notifBadge';
+import { isGamePast } from '../utils/deriveGameState';
 
 const LONG_MSG  = 100;
 const PAGE_SIZE = 20;
-const NOTIF_SELECT = 'id, template_key, custom_text, game_id, read_at, created_at, games:game_id(date_key, fields:field_id(venues:venue_id(name)))';
+const NOTIF_SELECT = 'id, template_key, custom_text, game_id, read_at, created_at, games:game_id(date_key, time, duration_min, fields:field_id(venues:venue_id(name)))';
 
 const _DOW = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const _MON = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -33,7 +34,9 @@ function mapRow(row) {
     type:        rendered.imageType === 'venue_image' ? 'reservation' : 'app',
     title:       rendered.title,
     message:     rendered.body,
-    gameDate:    row.games?.date_key ?? null,
+    gameDate:        row.games?.date_key    ?? null,
+    gameTime:        row.games?.time        ?? null,
+    gameDurationMin: row.games?.duration_min ?? null,
     time:        `${pad2(d.getHours())}:${pad2(d.getMinutes())}`,
     dateKey:     ymd(d.getTime()),
     read:        row.read_at != null,
@@ -101,7 +104,7 @@ function AppIcon({ read }) {
 }
 
 // ── Row — cada notificación en su propio card
-function NotificationRow({ n, expanded, onPress }) {
+function NotificationRow({ n, expanded, onPress, highlighted = false }) {
   const isLong     = n.message.length > LONG_MSG;
   const isExpanded = expanded || !isLong;
   const titleColor = TEXT;
@@ -110,6 +113,7 @@ function NotificationRow({ n, expanded, onPress }) {
   return (
     <button
       onClick={onPress}
+      className={highlighted ? 'game-row-highlighted' : ''}
       style={{
         width: '100%', display: 'flex', alignItems: 'center', gap: 0,
         padding: '9px 12px 9px 7px',
@@ -253,8 +257,10 @@ export default function Notifications() {
   const [hasMore, setHasMore]             = useState(false);
   const [expandedIds, setExpandedIds]     = useState(() => new Set());
   const [unreadCount, setUnreadCount]     = useState(getNotifCount);
-  const notifScrollRef = useRef(null);
-  const cursorRef      = useRef(null);
+  const notifScrollRef         = useRef(null);
+  const cursorRef              = useRef(null);
+  const highlightedNotifRef    = useRef(null);
+  const [highlightedNotifId, setHighlightedNotifId] = useState(null);
 
   useEffect(() => {
     function onTabScrollTop(e) {
@@ -290,6 +296,30 @@ export default function Notifications() {
       });
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!highlightedNotifId) return;
+    const raf = requestAnimationFrame(() => {
+      const el = highlightedNotifRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const tabBar = document.querySelector('.tab-bar');
+      const visibleBottom = tabBar ? tabBar.getBoundingClientRect().top : window.innerHeight;
+      const overBottom = rect.bottom - visibleBottom;
+      const overTop    = 80 - rect.top;
+      if (overBottom > 0 || overTop > 0) {
+        const container = notifScrollRef.current;
+        if (container) container.scrollBy({ top: overBottom > 0 ? overBottom + 12 : -(overTop + 12), behavior: 'smooth' });
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [highlightedNotifId]);
+
+  useEffect(() => {
+    if (!highlightedNotifId) return;
+    const t = setTimeout(() => setHighlightedNotifId(null), 4500);
+    return () => clearTimeout(t);
+  }, [highlightedNotifId]);
+
   function loadMore() {
     if (!user?.id || loadingMore || !cursorRef.current) return;
     setLoadingMore(true);
@@ -314,7 +344,7 @@ export default function Notifications() {
   const groups    = useMemo(() => groupAndSort(notifications), [notifications]);
   const hasUnread = unreadCount > 0;
 
-  function handlePress(id) {
+  async function handlePress(id) {
     const notif = notifications.find(n => n.id === id);
     const wasUnread = notif && !notif.read;
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
@@ -331,6 +361,37 @@ export default function Notifications() {
       });
     if (notif?.templateKey === 'waitlist_spot_available' && notif?.gameId) {
       navigate(`/game/${notif.gameId}`);
+      return;
+    }
+    if (notif?.templateKey === 'invited_by_player' && notif?.gameId) {
+      // Paso 1: buscar cancelación asociada a esta invitación (datos ya en memoria)
+      const candidates = notifications.filter(n =>
+        (n.templateKey === 'guest_invitation_cancelled_by_owner' ||
+         n.templateKey === 'reservation_cancelled_credit_owner') &&
+        n.gameId === notif.gameId &&
+        n.createdAt > notif.createdAt
+      );
+      const related = candidates.reduce(
+        (closest, n) => !closest || n.createdAt < closest.createdAt ? n : closest,
+        null
+      );
+      if (related) {
+        setHighlightedNotifId(related.id);
+        return;
+      }
+      // Paso 2: sin cancelación → consultar Supabase para slot confirmado + partido vivo
+      if (!supabase || !user?.id) return;
+      const { data: gpRow } = await supabase
+        .from('game_players')
+        .select('games:game_id(date_key, time, duration_min)')
+        .eq('game_id', notif.gameId)
+        .eq('user_id', user.id)
+        .eq('status', 'confirmed')
+        .maybeSingle();
+      if (gpRow && !isGamePast(gpRow.games?.date_key, gpRow.games?.time, gpRow.games?.duration_min)) {
+        navigate('/profile', { state: { highlightGame: notif.gameId } });
+      }
+      // Paso 4: partido terminado o sin slot activo → no hacer nada
       return;
     }
     setExpandedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
@@ -412,12 +473,14 @@ export default function Notifications() {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingLeft: 12, paddingRight: 12 }}>
                   {items.map(n => (
-                    <NotificationRow
-                      key={n.id}
-                      n={n}
-                      expanded={expandedIds.has(n.id)}
-                      onPress={() => handlePress(n.id)}
-                    />
+                    <div key={n.id} ref={n.id === highlightedNotifId ? highlightedNotifRef : null}>
+                      <NotificationRow
+                        n={n}
+                        expanded={expandedIds.has(n.id)}
+                        onPress={() => handlePress(n.id)}
+                        highlighted={n.id === highlightedNotifId}
+                      />
+                    </div>
                   ))}
                 </div>
               </div>

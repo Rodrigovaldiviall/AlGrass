@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { StaffProvider, useStaff } from './context/StaffContext';
 import StaffInviteModal from './components/StaffInviteModal';
@@ -14,15 +14,17 @@ const INTRO_KEY = 'algrass_intro_seen';
 
 function NotifBadgeSync() {
   const { user } = useAuth();
+  const { pathname } = useLocation();
   useEffect(() => {
     if (!user?.id) { setNotifBadge(0); return; }
+    if (pathname === '/notifications') return;
     supabase
       .from('notifications')
       .select('id', { count: 'exact', head: true })
       .eq('recipient_user_id', user.id)
       .is('read_at', null)
       .then(({ count }) => setNotifBadge(count ?? 0));
-  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user?.id, pathname]); // eslint-disable-line react-hooks/exhaustive-deps
   return null;
 }
 

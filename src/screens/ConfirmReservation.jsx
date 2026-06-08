@@ -245,7 +245,7 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
     : dirty ? 'Actualizar selección' : 'Agregar jugadores';
 
   return (
-    <div className="add-players-screen" style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
+    <div className="add-players-screen" style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
       <TopBar title="Agregar jugadores" onCancel={onCancel} rightNode={
         gameId ? (
           <button
@@ -683,7 +683,7 @@ export default function ConfirmReservation() {
     if (!authUser?.id || !supabase) return;
     supabase
       .from('game_players')
-      .select('user_id, users:user_id(id, full_name, user_code, avatar_hue, avatar_path, avatar_updated_at)')
+      .select('user_id, users:user_id(id, full_name, user_code, avatar_hue, avatar_path, avatar_updated_at, deleted_at)')
       .eq('payer_id', authUser.id)
       .neq('user_id', authUser.id)
       .then(({ data }) => {
@@ -692,7 +692,7 @@ export default function ConfirmReservation() {
         const result = [];
         for (const row of data) {
           const u = row.users;
-          if (!u || seen.has(u.id)) continue;
+          if (!u || u.deleted_at || seen.has(u.id)) continue;
           seen.add(u.id);
           result.push({
             id:            u.id,
@@ -818,6 +818,7 @@ export default function ConfirmReservation() {
             recipient_user_id: authUser?.id,
             source_type: 'venue', delivery_type: 'automatic', category: 'reservation',
             template_key: 'reservation_confirmed_with_guests',
+            custom_text: 'Tu reserva incluye invitados. Recuérdales la hora y lugar.',
             game_id: gameId, venue_id: game?.venueId ?? null,
             sent_at: new Date().toISOString(),
           }).then(({ error }) => {
@@ -842,7 +843,18 @@ export default function ConfirmReservation() {
         }
       }
       setFreeConfirming(false);
-      setShowConfirmed(true);
+      navigate('/profile', { state: { confirmedGame: {
+        id:       gameId,
+        field:    game?.field,
+        date:     game?.date,
+        dateKey:  game?.dateKey  ?? null,
+        time:     game?.time,
+        ampm:     game?.ampm     ?? null,
+        time24:   game?.time24   ?? null,
+        source:   game?.source,
+        gameType: game?.type     ?? null,
+        amount:   null,
+      }}});
       return;
     }
     if (addGuestsMode) {
@@ -957,10 +969,14 @@ export default function ConfirmReservation() {
         await Promise.all(guests.map(guest => createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice, hostUserId: _hostId })));
       }
       const _tpl = guests.length > 0 ? 'reservation_confirmed_with_guests' : 'reservation_confirmed';
+      const _tplText = guests.length > 0
+        ? 'Tu reserva incluye invitados. Recuérdales la hora y lugar.'
+        : 'Tu reserva ha sido confirmada. ¡Hasta la cancha!';
       supabase?.from('notifications').insert({
         recipient_user_id: authUser?.id,
         source_type: 'venue', delivery_type: 'automatic', category: 'reservation',
         template_key: _tpl,
+        custom_text:  _tplText,
         game_id: game?.id, venue_id: game?.venueId ?? null,
         sent_at: new Date().toISOString(),
       }).then(({ error }) => {
@@ -1018,7 +1034,7 @@ export default function ConfirmReservation() {
 
   if (subView === 'addplayers') {
     return (
-      <div className="screen-shell" style={{ position: 'relative', overflow: 'hidden', background: '#fff' }}>
+      <div className="screen-shell" style={{ position: 'relative', overflow: 'hidden', background: '#fff', display: 'flex', flexDirection: 'column' }}>
         <AddPlayersScreen
           alreadySelected={guests}
           onCancel={() => setSubView('confirm')}

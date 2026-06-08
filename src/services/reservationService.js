@@ -106,6 +106,7 @@ export async function searchUsers(query, { limit = 20, excludeIds = [] } = {}) {
     .from('users')
     .select('id, full_name, user_code, avatar_hue, avatar_path, avatar_updated_at, preferred_position, birth_date')
     .or(`full_name_search.ilike.%${qDb}%,user_code.ilike.%${qDb}%`)
+    .is('deleted_at', null)
     .limit(limit);
   if (allExclude.length) req = req.not('id', 'in', `(${allExclude.join(',')})`);
   const { data, error } = await req;
@@ -348,7 +349,7 @@ export async function cancelGamePlayer(gameId, { skipNotification = false } = {}
             delivery_type:     'automatic',
             category:          'refund',
             template_key:      'reservation_cancelled_credit_owner',
-            custom_text:       `Cancelaste la reserva a la que te invitaron. El crédito fue devuelto a ${payerFirst}.`,
+            custom_text:       `Cancelaste la reserva. El crédito fue devuelto a ${payerFirst}.`,
             game_id:           gameId,
             created_by:        session.user.id,
             sent_at:           new Date().toISOString(),

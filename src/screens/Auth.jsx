@@ -170,34 +170,21 @@ function normalizeForCode(s) {
 }
 
 function generateUserCode(fullName) {
-  const parts = (fullName || '').trim().split(/\s+/);
-  const first = normalizeForCode(parts[0] || '');
-  const last  = normalizeForCode(parts.slice(1).join(''));
+  const parts  = (fullName || '').trim().split(/\s+/);
+  const first  = normalizeForCode(parts[0] || '');
+  const second = normalizeForCode(parts[1] || '').slice(0, 3);
   let existing = {};
   try { existing = JSON.parse(localStorage.getItem(USERCODES_KEY)) || {}; } catch {}
-  const mk = (f, l, sfx = '') => '@' + f + l + sfx;
-  for (let fLen = Math.min(6, first.length || 1); fLen >= Math.max(1, first.length - 1); fLen--) {
-    const lLen = Math.min(last.length, Math.max(0, 10 - fLen));
-    const code = mk(first.slice(0, fLen), last.slice(0, lLen));
+  for (let i = 0; i < 20; i++) {
+    const digits = String(Math.floor(Math.random() * 900) + 100);
+    const code = first + second + digits;
     if (!existing[code]) {
       existing[code] = true;
       try { localStorage.setItem(USERCODES_KEY, JSON.stringify(existing)); } catch {}
       return code;
     }
   }
-  for (let attempt = 0; attempt < 50; attempt++) {
-    const sfx  = String(Math.floor(Math.random() * 90) + 10);
-    const fLen = Math.min(6, first.length || 1);
-    for (let lLen = Math.min(4, last.length); lLen >= 0; lLen--) {
-      const code = mk(first.slice(0, fLen), last.slice(0, lLen), sfx);
-      if (code.length <= 16 && !existing[code]) {
-        existing[code] = true;
-        try { localStorage.setItem(USERCODES_KEY, JSON.stringify(existing)); } catch {}
-        return code;
-      }
-    }
-  }
-  return '@' + normalizeForCode(fullName).slice(0, 12);
+  return first + second + String(Math.floor(Math.random() * 900) + 100);
 }
 
 const MOCK_CODE = '112233';
