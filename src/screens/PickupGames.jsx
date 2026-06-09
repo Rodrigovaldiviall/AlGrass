@@ -465,14 +465,14 @@ function DateStrip({ dates, selectedKey, onSelect, scrollerRef, cellRefs, eventD
 
 // ── List rows ──────────────────────────────────────────────────────────────
 
-function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount = 0, isHost = false, totalSpots = 0 }) {
+function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount = 0, isHost = false, totalSpots = 0, countsReady = false }) {
   const PILL_MIN = 64;
   if (isHost) {
     const confirmed = totalSpots - openSpots;
     return (
       <div className="game-status-pill" style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', minWidth: PILL_MIN, padding: '4px 8px', borderRadius: 999, background: ORANGE, flexShrink: 0 }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: '#1B1B1F', lineHeight: 1.2 }}>Organiza</span>
-        {totalSpots > 0 && (
+        {countsReady && totalSpots > 0 && (
           <span style={{ fontSize: 10, fontWeight: 600, color: BLUE, lineHeight: 1.2 }}>{confirmed}/{totalSpots}</span>
         )}
       </div>
@@ -561,7 +561,18 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
   );
 }
 
-function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount, liveOpenSpots, isHost = false }) {
+function SkeletonPill() {
+  return (
+    <div className="game-status-pill" style={{
+      height: 22, minWidth: 64, borderRadius: 999,
+      background: '#E8E8EC',
+      animation: 'pulse 1.4s ease-in-out infinite',
+      flexShrink: 0,
+    }} />
+  );
+}
+
+function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount, liveOpenSpots, isHost = false, pillReady = true, confirmedCountReady = true }) {
   const [pressed, setPressed] = useState(false);
   return (
     <div role="button" tabIndex={0}
@@ -596,7 +607,11 @@ function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount
           )}
         </div>
       </div>
-      <StatusPill openSpots={liveOpenSpots ?? g.openSpots} booked={booked} inWaitlist={inWaitlist} guestInfo={guestInfo} canceledCount={canceledCount} activeGuestCount={activeGuestCount} isHost={isHost} totalSpots={g.totalSpots ?? 0} />
+      {(!pillReady && !isHost) ? (
+        <SkeletonPill />
+      ) : (
+        <StatusPill openSpots={liveOpenSpots ?? g.openSpots} booked={booked} inWaitlist={inWaitlist} guestInfo={guestInfo} canceledCount={canceledCount} activeGuestCount={activeGuestCount} isHost={isHost} totalSpots={g.totalSpots ?? 0} countsReady={confirmedCountReady} />
+      )}
       <div style={{ pointerEvents: 'none', marginLeft: 6 }}>{I.chev()}</div>
     </div>
   );
@@ -853,6 +868,14 @@ export default function PickupGames() {
   const [confirmedCountReady, setConfirmedCountReady] = useState(!!_cc0);
   const [waitlistReady,     setWaitlistReady]     = useState(!!_wl0);
 
+  const [playerRowsFresh,     setPlayerRowsFresh]     = useState(false);
+  const [confirmedCountFresh, setConfirmedCountFresh] = useState(false);
+  const [waitlistFresh,       setWaitlistFresh]       = useState(false);
+
+  const pillReady = !user?.id
+    ? confirmedCountFresh
+    : playerRowsFresh && confirmedCountFresh && waitlistFresh;
+
   useEffect(() => {
     if (!supabase || !user?.id) return;
     supabase
@@ -872,6 +895,7 @@ export default function PickupGames() {
         setMyPlayerRows(rows);
         setPayerNames(names);
         setMyPlayerRowsReady(true);
+        setPlayerRowsFresh(true);
         try { sessionStorage.setItem(_PR_KEY(user.id), JSON.stringify({ rows, names, ts: Date.now() })); } catch {}
       });
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -889,6 +913,7 @@ export default function PickupGames() {
         data.forEach(r => { map.set(r.game_id, (map.get(r.game_id) ?? 0) + 1); });
         setConfirmedCountMap(map);
         setConfirmedCountReady(true);
+        setConfirmedCountFresh(true);
         try { sessionStorage.setItem(_CC_KEY, JSON.stringify({ entries: [...map.entries()], ts: Date.now() })); } catch {}
       });
   }, [games]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -900,6 +925,11 @@ export default function PickupGames() {
   const [userCity, setUserCity] = useState(() => {
     try { return JSON.parse(localStorage.getItem('pichanga_profile'))?.city || ''; } catch { return ''; }
   });
+  const [cityReady, setCityReady] = useState(() => {
+    try { return !!JSON.parse(localStorage.getItem('pichanga_profile'))?.city; } catch { return false; }
+  });
+  const hasGamesCache = useRef(_gamesCache.length > 0).current;
+  const listReady = cityReady && (hasGamesCache || (!loading && pillReady));
   const [citySheetOpen, setCitySheetOpen] = useState(!!location.state?.showCitySheet);
   const [availableCities, setAvailableCities] = useState([]);
   useEffect(() => {
@@ -907,6 +937,9 @@ export default function PickupGames() {
       const cities = [...new Set((data ?? []).map(r => r.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
       setAvailableCities(cities);
       if (!userCity && cities.length > 0) setUserCity(cities[0]);
+      setCityReady(true);
+    }).catch(() => {
+      setCityReady(true);
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   function handleCityChange(c) {
@@ -943,6 +976,7 @@ export default function PickupGames() {
     getMyWaitlistGameIds(user.id).then(ids => {
       setWaitlistGameIds(new Set(ids));
       setWaitlistReady(true);
+      setWaitlistFresh(true);
       try { sessionStorage.setItem(_WL_KEY(user.id), JSON.stringify({ ids, ts: Date.now() })); } catch {}
     });
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1165,7 +1199,7 @@ export default function PickupGames() {
       />
       <div ref={listRef} onScroll={onListScroll} className="no-sb"
         style={{ flex: 1, overflowY: 'auto', paddingBottom: 8, scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', background: '#fff' }}>
-        {loading && games.length === 0 ? (
+        {!listReady ? (
           <SkeletonRows />
         ) : filteredGames.length === 0 ? (
           <div style={{ padding: '40px 24px', textAlign: 'center', color: SUB, fontSize: 14 }}>
@@ -1193,6 +1227,8 @@ export default function PickupGames() {
                   activeGuestCount={myPlayerRowsReady ? (st?.activeGuestCount ?? 0) : 0}
                   liveOpenSpots={confirmedCountReady ? liveOpenSpotsMap.get(g.id) : g.openSpots}
                   isHost={isHost}
+                  pillReady={pillReady}
+                  confirmedCountReady={confirmedCountReady}
                   onOpen={() => {
                     if (st?.isGuestConfirmed) {
                       navigate(`/game/${g.id}`, { state: { game: { ...g, paidBy: st.paidBy, paidByCode: st.payerCode, guestId: st.guestId }, infoMode: true, backPath: '/games' } });

@@ -633,7 +633,7 @@ export default function RentalDetail() {
           refundAmount={myReservation?.amount ?? 0}
           onClose={() => setCancelOpen(false)}
           onConfirm={handleCancel}
-          onDone={() => navigate('/profile')}
+          onDone={() => navigate(location.state?.backPath ?? '/fields')}
         />
       )}
 

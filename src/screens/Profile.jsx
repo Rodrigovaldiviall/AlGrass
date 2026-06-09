@@ -1986,9 +1986,19 @@ export default function Profile() {
   const [playerDataVersion, setPlayerDataVersion] = useState(0);
   const [sbGamesReady,      setSbGamesReady]      = useState(false);
   const [rentalCards,       setRentalCards]       = useState(() => {
-    try { return JSON.parse(localStorage.getItem(RENTAL_GAMES_KEY)) || []; } catch { return []; }
+    try {
+      const stored = JSON.parse(localStorage.getItem(RENTAL_GAMES_KEY));
+      if (stored?.userId && stored.userId !== user?.id) return [];
+      return stored?.data ?? (Array.isArray(stored) ? stored : []);
+    } catch { return []; }
   });
-  const _hostedCache = (() => { try { return JSON.parse(localStorage.getItem(HOSTED_GAMES_KEY)); } catch { return null; } })();
+  const _hostedCache = (() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(HOSTED_GAMES_KEY));
+      if (stored?.userId && stored.userId !== user?.id) return null;
+      return stored;
+    } catch { return null; }
+  })();
   const [hostedRows,        setHostedRows]        = useState(_hostedCache?.rows ?? []);
   const [hostedReady,       setHostedReady]       = useState(!!_hostedCache);
   const [hostedConfirmed,   setHostedConfirmed]   = useState(_hostedCache?.confirmed ?? {});
@@ -2077,7 +2087,7 @@ export default function Profile() {
           if (rentalErr) { console.warn('[Profile] rental games:', rentalErr.message); return; }
           if (!rentalGameData?.length) {
             setRentalCards([]);
-            try { localStorage.setItem(RENTAL_GAMES_KEY, '[]'); } catch {}
+            try { localStorage.setItem(RENTAL_GAMES_KEY, JSON.stringify({ userId: uid, data: [] })); } catch {}
             return;
           }
           const rentalGameIds = rentalGameData.map(g => g.id);
@@ -2093,7 +2103,7 @@ export default function Profile() {
           });
           const cards = rentalGameData.map(g => sbRentalFromGameRow(g, finMap[g.id] ?? null));
           setRentalCards(cards);
-          try { localStorage.setItem(RENTAL_GAMES_KEY, JSON.stringify(cards)); } catch {}
+          try { localStorage.setItem(RENTAL_GAMES_KEY, JSON.stringify({ userId: uid, data: cards })); } catch {}
         });
 
       supabase
@@ -2171,9 +2181,9 @@ export default function Profile() {
             const map = {};
             (cpRows ?? []).forEach(r => { map[r.game_id] = (map[r.game_id] ?? 0) + 1; });
             setHostedConfirmed(map);
-            try { localStorage.setItem(HOSTED_GAMES_KEY, JSON.stringify({ rows: data, confirmed: map })); } catch {}
+            try { localStorage.setItem(HOSTED_GAMES_KEY, JSON.stringify({ userId: uid, rows: data, confirmed: map })); } catch {}
           } else {
-            try { localStorage.setItem(HOSTED_GAMES_KEY, JSON.stringify({ rows: [], confirmed: {} })); } catch {}
+            try { localStorage.setItem(HOSTED_GAMES_KEY, JSON.stringify({ userId: uid, rows: [], confirmed: {} })); } catch {}
           }
           setHostedReady(true);
         });
@@ -2247,7 +2257,7 @@ export default function Profile() {
       .then(async ({ data: rentalGameData, error: rentalErr }) => {
         if (rentalErr || !rentalGameData?.length) {
           setRentalCards([]);
-          try { localStorage.setItem(RENTAL_GAMES_KEY, '[]'); } catch {}
+          try { localStorage.setItem(RENTAL_GAMES_KEY, JSON.stringify({ userId: uid, data: [] })); } catch {}
           return;
         }
         const rentalGameIds = rentalGameData.map(g => g.id);
@@ -2263,7 +2273,7 @@ export default function Profile() {
         });
         const cards = rentalGameData.map(g => sbRentalFromGameRow(g, finMap[g.id] ?? null));
         setRentalCards(cards);
-        try { localStorage.setItem(RENTAL_GAMES_KEY, JSON.stringify(cards)); } catch {}
+        try { localStorage.setItem(RENTAL_GAMES_KEY, JSON.stringify({ userId: uid, data: cards })); } catch {}
       });
 
     supabase

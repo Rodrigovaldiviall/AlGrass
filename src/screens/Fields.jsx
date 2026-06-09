@@ -418,8 +418,26 @@ function DateStrip({ dates, selectedKey, onSelect, scrollerRef, cellRefs, eventD
   );
 }
 
+// ── Skeleton
+function SkeletonFieldRows() {
+  const S = { background: '#E8E8EC', borderRadius: 6 };
+  return Array.from({ length: 5 }, (_, i) => (
+    <div key={i} style={{ display: 'flex', alignItems: 'center', padding: '14px 16px 14px 10px', borderBottom: '1px solid #E5E5EA', animation: 'pulse 1.4s ease-in-out infinite', animationDelay: `${i * 0.08}s` }}>
+      <div style={{ width: 44, flexShrink: 0, textAlign: 'center', borderRight: '1px solid #E5E5EA', marginRight: 6 }}>
+        <div style={{ ...S, width: 28, height: 14, margin: '0 auto' }} />
+        <div style={{ ...S, width: 18, height: 10, margin: '4px auto 0' }} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ ...S, width: '55%', height: 15, marginBottom: 8 }} />
+        <div style={{ ...S, width: '35%', height: 11 }} />
+      </div>
+      <div style={{ width: 88, height: 56, borderRadius: 10, background: '#E8E8EC', flexShrink: 0 }} />
+    </div>
+  ));
+}
+
 // ── Field row
-function FieldThumbnail({ price, reserved, userBooked, isHost, coverPath, coverVersion }) {
+function FieldThumbnail({ price, reserved, userBooked, isHost, coverPath, coverVersion, badgeReady = true }) {
   const src         = coverPath ? getVenueCoverUrl(supabase, coverPath, coverVersion) : null;
   const unavailable = reserved && !userBooked && !isHost;
   const bgStyle     = (asset) => ({ position: 'absolute', inset: 0, backgroundImage: `url(${asset})`, backgroundSize: '120%', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', display: 'flex', alignItems: 'center', justifyContent: 'center' });
@@ -433,6 +451,10 @@ function FieldThumbnail({ price, reserved, userBooked, isHost, coverPath, coverV
             <span style={{ fontSize: 11, fontWeight: 700, lineHeight: 1.2 }}>Organiza</span>
             <span style={{ fontSize: 10, fontWeight: 600, lineHeight: 1.2, opacity: 0.75 }}>Cancha</span>
           </div>
+        </div>
+      ) : !badgeReady ? (
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: 64, height: 22, borderRadius: 999, background: 'rgba(232,232,236,0.9)', animation: 'pulse 1.4s ease-in-out infinite' }} />
         </div>
       ) : userBooked ? (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -453,7 +475,7 @@ function FieldThumbnail({ price, reserved, userBooked, isHost, coverPath, coverV
   );
 }
 
-function FieldRow({ f, last, onPress, userBooked, isHost, coverPath, coverVersion }) {
+function FieldRow({ f, last, onPress, userBooked, isHost, coverPath, coverVersion, badgeReady = true }) {
   const [pressed, setPressed] = useState(false);
   return (
     <div
@@ -486,7 +508,7 @@ function FieldRow({ f, last, onPress, userBooked, isHost, coverPath, coverVersio
           <GameMetaLine format={f.format} durationMin={f.durationMin} parking={f.parking} covered={f.covered} womenOnly={false} />
         </div>
       </div>
-      <FieldThumbnail price={isHost ? null : f.price} reserved={f.reserved} userBooked={userBooked} isHost={isHost} coverPath={coverPath} coverVersion={coverVersion} />
+      <FieldThumbnail price={isHost ? null : f.price} reserved={f.reserved} userBooked={userBooked} isHost={isHost} coverPath={coverPath} coverVersion={coverVersion} badgeReady={badgeReady} />
       <div style={{ pointerEvents: 'none', marginLeft: 6 }}>{I.chev()}</div>
     </div>
   );
@@ -516,6 +538,9 @@ export default function Fields() {
   const [userCity, setUserCity] = useState(() => {
     try { return JSON.parse(localStorage.getItem('pichanga_profile'))?.city || ''; } catch { return ''; }
   });
+  const [cityReady, setCityReady] = useState(() => {
+    try { return !!JSON.parse(localStorage.getItem('pichanga_profile'))?.city; } catch { return false; }
+  });
   const [citySheetOpen, setCitySheetOpen] = useState(false);
   const [availableCities, setAvailableCities] = useState([]);
   useEffect(() => {
@@ -523,6 +548,9 @@ export default function Fields() {
       const cities = [...new Set((data ?? []).map(r => r.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
       setAvailableCities(cities);
       if (!userCity && cities.length > 0) setUserCity(cities[0]);
+      setCityReady(true);
+    }).catch(() => {
+      setCityReady(true);
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   function handleCityChange(c) {
@@ -551,16 +579,23 @@ export default function Fields() {
   const stripCellRefs      = useRef({});
   const programmaticScroll = useRef(false);
 
-  const [myBookedIds, setMyBookedIds]   = useState(() => _myBookedCache);
-  const [rentalGames, setRentalGames]   = useState(() => _rentalCache);
-  const [loading, setLoading]           = useState(_rentalCache.length === 0);
+  const [myBookedFresh, setMyBookedFresh] = useState(false);
+  const [myBookedIds, setMyBookedIds]     = useState(() => _myBookedCache);
+  const [rentalGames, setRentalGames]     = useState(() => _rentalCache);
+  const [loading, setLoading]             = useState(_rentalCache.length === 0);
+  const hasFieldsCache = useRef(_rentalCache.length > 0).current;
+  const listReady = cityReady && (hasFieldsCache || (!loading && myBookedFresh));
   useEffect(() => {
     getRentalGames().then(data => {
       _rentalCache = data;
       setRentalGames(data);
       setLoading(false);
       if (user?.id && data.length) {
-        getMyBookedGameIds(data.map(f => f.id)).then(ids => { _myBookedCache = ids; setMyBookedIds(ids); });
+        getMyBookedGameIds(data.map(f => f.id))
+          .then(ids => { _myBookedCache = ids; setMyBookedIds(ids); })
+          .finally(() => setMyBookedFresh(true));
+      } else {
+        setMyBookedFresh(true);
       }
     });
   }, []); // eslint-disable-line
@@ -744,10 +779,8 @@ export default function Fields() {
         />
         <div ref={listRef} onScroll={onListScroll} className="no-sb"
           style={{ flex: 1, overflowY: 'auto', paddingBottom: 8, overscrollBehavior: 'contain' }}>
-          {loading ? (
-            <div style={{ padding: '40px 24px', textAlign: 'center', color: SUB, fontSize: 14 }}>
-              Cargando canchas...
-            </div>
+          {!listReady ? (
+            <SkeletonFieldRows />
           ) : filteredFields.length === 0 ? (
             <div style={{ padding: '40px 24px', textAlign: 'center', color: SUB, fontSize: 14 }}>
               No hay campos con esos filtros.
@@ -763,10 +796,11 @@ export default function Fields() {
                   </div>
                 ) : fields.map((f, i) => (
                   <FieldRow key={f.id} f={f} last={i === fields.length - 1 && isLast}
-                    userBooked={myBookedIds.has(f.id)}
+                    userBooked={myBookedFresh && myBookedIds.has(f.id)}
                     isHost={!!user?.id && !!f.hostUserId && f.hostUserId === user.id}
                     coverPath={f.venueCoverPath ?? null}
                     coverVersion={f.venueCoverVersion ?? null}
+                    badgeReady={myBookedFresh}
                     onPress={() => navigate(`/rental/${f.id}`, { state: { field: f } })} />
                 ))}
                 {isLast && dateKey === maxEventKey && fields.length > 0 && (
