@@ -5,6 +5,40 @@ import { ensureUserCode } from '../utils/format';
 
 const AuthContext = createContext(null);
 
+// Keys that belong to the device, not the user — preserved across logout.
+const _DEVICE_KEYS = new Set(['algrass_intro_seen', 'pichanga_welcome_seen', 'pichanga_coach_seen']);
+// Dynamic key prefixes (uid / gameId suffixes) scrubbed by scan.
+const _USER_PREFIXES = ['pf_player_rows_', 'pg_player_rows_', 'pg_waitlist_', 'gd_roster_'];
+// Static user-scoped localStorage keys.
+const _USER_STATIC = [
+  'pichanga_user', 'pichanga_profile', 'pichanga_reservations', 'pichanga_rental_games',
+  'pichanga_hosted_games', 'pichanga_waitlist', 'pichanga_credit', 'pichanga_ratings',
+  'pichanga_skipped_ratings', 'pichanga_shown_confirmations', 'pichanga_played_games',
+  'pichanga_game_rosters', 'pichanga_self_cancelled_guests', 'pichanga_usercodes',
+  'pichanga_users', 'pichanga_role', 'pichanga_privacy', 'pichanga_notif',
+  'pichanga_notif_unread', 'staff_invites_last_dismissed_at',
+];
+// Static user-scoped sessionStorage keys.
+const _SESSION_STATIC = ['pg_confirmed_counts', 'profile_dirty', 'pf_scroll', 'pf_back', 'algr_sidebar_ctx'];
+
+// Remove every user-scoped cache (static + dynamic-prefix) from both storages,
+// preserving only device-level onboarding flags. Prevents user B from seeing user A's data.
+function clearUserScopedCache() {
+  try {
+    _USER_STATIC.forEach(k => localStorage.removeItem(k));
+    for (const k of Object.keys(localStorage)) {
+      if (_DEVICE_KEYS.has(k)) continue;
+      if (_USER_PREFIXES.some(p => k.startsWith(p))) localStorage.removeItem(k);
+    }
+  } catch {}
+  try {
+    _SESSION_STATIC.forEach(k => sessionStorage.removeItem(k));
+    for (const k of Object.keys(sessionStorage)) {
+      if (_USER_PREFIXES.some(p => k.startsWith(p))) sessionStorage.removeItem(k);
+    }
+  } catch {}
+}
+
 export function AuthProvider({ children }) {
   const [user, setUserState] = useState(() => getUser());
 
@@ -16,7 +50,8 @@ export function AuthProvider({ children }) {
   function logout() {
     setUserState(null);
     removeUser();
-    try { localStorage.removeItem('pichanga_profile'); } catch {}
+    clearUserScopedCache();
+    try { sessionStorage.setItem('auth_prefer_login', '1'); } catch {}
     supabase?.auth.signOut();
   }
 
@@ -147,7 +182,7 @@ export function AuthProvider({ children }) {
       if (event === 'SIGNED_OUT') {
         setUserState(null);
         removeUser();
-        try { localStorage.removeItem('pichanga_profile'); } catch {}
+        clearUserScopedCache();   // safety net: signout from another tab / token expiry
       }
     });
 

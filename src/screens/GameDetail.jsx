@@ -1450,6 +1450,7 @@ export default function GameDetail() {
   }
 
   function handleCancelDone() {
+    try { sessionStorage.setItem('profile_dirty', '1'); } catch {}
     try { sessionStorage.removeItem(`pg_player_rows_${user?.id}`); } catch {}
     try { sessionStorage.removeItem(`pf_player_rows_${user?.id}`); } catch {}
     try { sessionStorage.removeItem(_rosterCacheKey(gameId)); } catch {}
@@ -1476,6 +1477,7 @@ export default function GameDetail() {
       } catch {}
     }
     try { sessionStorage.removeItem(`pg_waitlist_${user?.id}`); } catch {}
+    try { sessionStorage.setItem('profile_dirty', '1'); } catch {}
   }
 
   return (

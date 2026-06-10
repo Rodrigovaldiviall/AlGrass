@@ -129,6 +129,7 @@ export default function IntroScreen({ onStart, onDone }) {
     // Restore theme-color BEFORE navigate so the /welcome→/games URL change
     // triggers Chrome to re-evaluate the meta and see the correct blue value.
     if (metaRef.current) metaRef.current.content = '#3F5FE0';
+    document.documentElement.classList.add('app-ready');
     setPhase('out');
     try { localStorage.setItem(INTRO_KEY, '1'); } catch {}
     onStart?.();                        // navigate /welcome → /games (real URL change)

@@ -6,7 +6,7 @@ html {
   margin: 0;
   padding: 0;
   height: 100%;
-  background: #3F5FE0;
+  background: #000;
   /* overflow:hidden here (not on body) avoids the iOS Safari quirk where
      overflow on body causes position:fixed children to anchor to the body
      scroll offset instead of the viewport. */
@@ -17,7 +17,7 @@ body {
   margin: 0;
   padding: 0;
   font-family: -apple-system, "SF Pro Text", "SF Pro", system-ui, sans-serif;
-  background: #3F5FE0;
+  background: #000;
   -webkit-font-smoothing: antialiased;
   height: 100%;
 }
@@ -41,8 +41,14 @@ body::before {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #3F5FE0;
+  background: #000;
 }
+
+/* Once past the intro: blue behind safe areas (status bar / bottom inset).
+   Until then html/body/#root stay #000 to avoid the white/blue arrival flash. */
+html.app-ready,
+html.app-ready body,
+html.app-ready #root { background: #3F5FE0 !important; }
 
 .no-sb::-webkit-scrollbar { display: none; }
 .no-sb { scrollbar-width: none; }

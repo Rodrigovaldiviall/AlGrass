@@ -547,7 +547,13 @@ export default function Fields() {
     supabase.from('venues').select('city').not('city', 'is', null).then(({ data }) => {
       const cities = [...new Set((data ?? []).map(r => r.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
       setAvailableCities(cities);
-      if (!userCity && cities.length > 0) setUserCity(cities[0]);
+      if (!userCity && cities.length > 0) {
+        setUserCity(cities[0]);
+        try {
+          const p = JSON.parse(localStorage.getItem('pichanga_profile')) || {};
+          localStorage.setItem('pichanga_profile', JSON.stringify({ ...p, city: cities[0] }));
+        } catch {}
+      }
       setCityReady(true);
     }).catch(() => {
       setCityReady(true);

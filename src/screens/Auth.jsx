@@ -369,7 +369,15 @@ export default function AuthScreen() {
   const game = state?.game;
 
   // 'signup' | 'login'
-  const [step, setStep]             = useState('signup');
+  const [step, setStep]             = useState(() => {
+    try {
+      if (sessionStorage.getItem('auth_prefer_login') === '1') {
+        sessionStorage.removeItem('auth_prefer_login');
+        return 'login';
+      }
+    } catch {}
+    return 'signup';
+  });
   const [email, setEmail]           = useState('');
   const [pass, setPass]             = useState('');
   const [name, setName]             = useState('');

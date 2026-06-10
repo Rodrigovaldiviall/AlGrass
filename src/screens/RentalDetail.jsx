@@ -464,6 +464,7 @@ export default function RentalDetail() {
   async function handleCancel() {
     const result = await cancelRental(game.id);
     if (!result?.error && !result?.skipped) {
+      try { sessionStorage.setItem('profile_dirty', '1'); } catch {}
       try {
         const res = JSON.parse(localStorage.getItem('pichanga_reservations') || '[]');
         localStorage.setItem('pichanga_reservations', JSON.stringify(res.filter(r => r.id !== game.id)));

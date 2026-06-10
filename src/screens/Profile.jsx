@@ -1754,6 +1754,59 @@ function SectionHeader({ title, count }) {
   );
 }
 
+// ── Skeletons (cache-first loading) ──────────────────────────────────────────
+const _SK = '#E8E8EC';
+function SkeletonRow({ delay = 0 }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', animation: `pulse 1.4s ease-in-out ${delay}s infinite` }}>
+      <div style={{ width: 44, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+        <div style={{ background: _SK, borderRadius: 6, width: 28, height: 14 }} />
+        <div style={{ background: _SK, borderRadius: 6, width: 18, height: 10 }} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ background: _SK, borderRadius: 6, width: '60%', height: 15 }} />
+        <div style={{ background: _SK, borderRadius: 6, width: '38%', height: 11 }} />
+      </div>
+      <div style={{ background: _SK, borderRadius: 13, width: 76, height: 26 }} />
+    </div>
+  );
+}
+function SkeletonProfileCard() {
+  return (
+    <div style={{ margin: '0 16px', background: '#fff', borderRadius: 20, boxShadow: '0 2px 14px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04)', padding: 16, animation: 'pulse 1.4s ease-in-out infinite' }}>
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: '0 0 40%', gap: 8 }}>
+          <div style={{ width: 84, height: 84, borderRadius: '50%', background: _SK }} />
+          <div style={{ width: '70%', height: 16, borderRadius: 6, background: _SK }} />
+          <div style={{ width: '40%', height: 12, borderRadius: 6, background: _SK }} />
+        </div>
+        <div style={{ flex: '0 0 60%', display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 4 }}>
+          <div style={{ width: '80%', height: 18, borderRadius: 6, background: _SK }} />
+          <div style={{ height: 1, background: HAIR }} />
+          <div style={{ width: '60%', height: 18, borderRadius: 6, background: _SK }} />
+          <div style={{ height: 1, background: HAIR }} />
+          <div style={{ width: '70%', height: 18, borderRadius: 6, background: _SK }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+function SkeletonProfileContent({ creditEl = null }) {
+  return (
+    <div>
+      {creditEl}
+      <div style={{ padding: '20px 16px 10px' }}>
+        <div style={{ width: 150, height: 20, borderRadius: 6, background: _SK, animation: 'pulse 1.4s ease-in-out infinite' }} />
+      </div>
+      {[0, 0.08, 0.16, 0.24].map((d, i) => <SkeletonRow key={i} delay={d} />)}
+      <div style={{ padding: '20px 16px 10px', marginTop: 8 }}>
+        <div style={{ width: 120, height: 20, borderRadius: 6, background: _SK, animation: 'pulse 1.4s ease-in-out infinite' }} />
+      </div>
+      {[0.32, 0.4].map((d, i) => <SkeletonRow key={i} delay={d} />)}
+    </div>
+  );
+}
+
 // ── RatingModal ────────────────────────────────────────────────────────────
 
 function StarIcon({ filled, size = 30 }) {
@@ -2004,10 +2057,30 @@ export default function Profile() {
   const [hostedConfirmed,   setHostedConfirmed]   = useState(_hostedCache?.confirmed ?? {});
   const [payerNames,        setPayerNames]        = useState({});
 
+  // ── Cache-first skeleton orchestration ─────────────────────────────────────
+  // _hasCache: usable Profile cache exists. Frozen at mount.
+  // Signal = real content cache OR "Profile completed a real load before" (pastGameCount).
+  // NOT identity (fullName/userCode): login re-seeds those into pichanga_profile before Profile
+  // mounts, so they'd be true on cold start and wrongly suppress the full skeleton. pastGameCount
+  // is written only after a successful dataReady load, and neither AuthContext nor Auth touch it.
+  const [_hasCache] = useState(() => {
+    const hasContent      = !!_pf0 || !!_hostedCache || rentalCards.length > 0 || extraGames.length > 0;
+    const hasLoadedBefore = profileData?.pastGameCount != null;
+    return hasContent || hasLoadedBefore;
+  });
+  // isDirty: a mutation (reserve/cancel/waitlist/add-players) flagged Profile stale.
+  const [isDirty] = useState(() => { try { return sessionStorage.getItem('profile_dirty') === '1'; } catch { return false; } });
+  // Fresh flags — start false regardless of cache; flip only when Supabase resolves.
+  // creditFresh intentionally excluded: credit shows from cache and must never block content.
+  const [myPlayerRowsFresh, setMyPlayerRowsFresh] = useState(false);
+  const [hostedFresh,       setHostedFresh]       = useState(false);
+  const [rentalFresh,       setRentalFresh]       = useState(false);
+  const [userProfileFresh,  setUserProfileFresh]  = useState(false);
+
   useEffect(() => {
-    if (!supabase) { setMyPlayerRowsReady(true); setSbGamesReady(true); setHostedReady(true); return; }
+    if (!supabase) { setMyPlayerRowsReady(true); setSbGamesReady(true); setHostedReady(true); setMyPlayerRowsFresh(true); setHostedFresh(true); setRentalFresh(true); setUserProfileFresh(true); return; }
     supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!session?.user?.id) { setMyPlayerRowsReady(true); setSbGamesReady(true); setHostedReady(true); return; }
+      if (!session?.user?.id) { setMyPlayerRowsReady(true); setSbGamesReady(true); setHostedReady(true); setMyPlayerRowsFresh(true); setHostedFresh(true); setRentalFresh(true); setUserProfileFresh(true); return; }
       const uid = session.user.id;
 
       // Fetch real ratings from Supabase and merge with local cache
@@ -2026,6 +2099,7 @@ export default function Profile() {
         .eq('id', uid)
         .single()
         .then(async ({ data, error }) => {
+          setUserProfileFresh(true);
           if (error) { console.warn('[Profile] public.users:', error.message); return; }
           if (data) {
             let userCode = data.user_code || null;
@@ -2084,6 +2158,7 @@ export default function Profile() {
         .eq('booked_by_user_id', uid)
         .eq('type', 'rental')
         .then(async ({ data: rentalGameData, error: rentalErr }) => {
+          setRentalFresh(true);
           if (rentalErr) { console.warn('[Profile] rental games:', rentalErr.message); return; }
           if (!rentalGameData?.length) {
             setRentalCards([]);
@@ -2142,6 +2217,7 @@ export default function Profile() {
         `)
         .or(`user_id.eq.${uid},payer_id.eq.${uid}`)
         .then(async ({ data, error }) => {
+          setMyPlayerRowsFresh(true);
           if (error) { console.warn('[Profile] player rows:', error.message); setMyPlayerRowsReady(true); return; }
           const rows = data ?? [];
           setMyPlayerRows(rows);
@@ -2169,6 +2245,7 @@ export default function Profile() {
         .in('type', ['match', 'rental'])
         .in('status', ['published', 'reserved', 'completed', 'expired'])
         .then(async ({ data, error }) => {
+          setHostedFresh(true);
           if (error) { console.warn('[Profile] hosted games:', error.message); }
           else if (data?.length) {
             setHostedRows(data);
@@ -2367,8 +2444,20 @@ export default function Profile() {
   })();
   const dataReady = myPlayerRowsReady && hostedReady;
 
+  // Single unified transition: every gated section reveals together when allFresh flips.
+  const allFresh = myPlayerRowsFresh && hostedFresh && rentalFresh && sbGamesReady && userProfileFresh;
+  const showFullSkeleton    = !_hasCache && !allFresh;        // Regla 1: no cache → full skeleton incl. ProfileCard
+  const showContentSkeleton = _hasCache && isDirty && !allFresh; // Regla 3: cache + dirty → ProfileCard+crédito, resto skeleton
+  const contentVisible      = !showFullSkeleton && !showContentSkeleton;
+
   useEffect(() => {
-    if (!highlightedId || !dataReady) return;
+    if ((!_hasCache || isDirty) && allFresh) {
+      try { sessionStorage.removeItem('profile_dirty'); } catch {}
+    }
+  }, [allFresh]); // eslint-disable-line
+
+  useEffect(() => {
+    if (!highlightedId || !dataReady || !contentVisible) return;
     const raf = requestAnimationFrame(() => {
       const el = highlightedRef.current;
       if (!el) return;
@@ -2386,7 +2475,7 @@ export default function Profile() {
       }
     });
     return () => cancelAnimationFrame(raf);
-  }, [highlightedId, dataReady]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [highlightedId, dataReady, contentVisible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!highlightedId) return;
@@ -2396,23 +2485,23 @@ export default function Profile() {
 
   useEffect(() => {
     const gId = location.state?.highlightGame;
-    if (!gId || !dataReady) return;
+    if (!gId || !dataReady || !contentVisible) return;
     const allGames = [...past, ...upcoming];
     const match = allGames.find(g => (g.gameId ?? g.id) === gId);
     if (!match) return;
     if (past.some(g => g.id === match.id)) setPastExpanded(true);
     setHighlightedId(match.id);
-  }, [location.key, dataReady, playerDataVersion]); // eslint-disable-line
+  }, [location.key, dataReady, playerDataVersion, contentVisible]); // eslint-disable-line
 
   // useLayoutEffect fires before the browser paints, so scroll is set before the user sees
   // the new content — eliminating the flash-to-top that useEffect + rAF would cause.
   useLayoutEffect(() => {
-    if (!dataReady || pfScrollRestoredRef.current || initPfScrollRef.current == null) return;
+    if (!dataReady || !contentVisible || pfScrollRestoredRef.current || initPfScrollRef.current == null) return;
     const el = profileScrollRef.current;
     if (!el) return;
     pfScrollRestoredRef.current = true;
     el.scrollTo({ top: initPfScrollRef.current, behavior: 'instant' });
-  }, [dataReady]); // eslint-disable-line
+  }, [dataReady, contentVisible]); // eslint-disable-line
   // Only classify games that have valid temporal data and whose player status is settled
   const temporalGames = (
     dataReady         ? allGames :
@@ -2679,6 +2768,19 @@ export default function Profile() {
   // Complete profile: position + birth date + phone + nationality + occupation
   const isProfileComplete = hasPosition && hasBirthDate && !!cardUser.phone && !!cardUser.nationality && !!cardUser.occupation && !!(cardUser.avatarPath || cardUser.photoDataUrl);
 
+  const creditEl = creditBalance > 0 ? (
+    <div style={{ margin: '4px 16px 0', padding: '14px 16px', borderRadius: 14, background: '#fff', border: `1px solid ${HAIR}`, boxShadow: '0 1px 6px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: 14 }}>
+      <div style={{ width: 42, height: 42, borderRadius: 21, background: '#F0FBF4', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <FontAwesomeIcon icon={faCoins} style={{ fontSize: 18, color: GREEN }} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 500, color: SUB, marginBottom: 1 }}>Crédito disponible</div>
+        <div style={{ fontSize: 12, color: SUB, opacity: 0.75 }}>Se aplica en tu próxima reserva</div>
+      </div>
+      <div style={{ fontSize: 20, fontWeight: 800, color: TEXT, letterSpacing: -0.5, flexShrink: 0 }}>S/. {Number(creditBalance).toFixed(2)}</div>
+    </div>
+  ) : null;
+
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden', position: 'relative' }}>
       {/* Floating top bar */}
@@ -2720,8 +2822,19 @@ export default function Profile() {
           <div style={{ minHeight: 'calc(100% + 1px)', display: 'flex', flexDirection: 'column' }}>
           <div style={{ height: 'calc(env(safe-area-inset-top) + 58px)' }} />
 
+          {showFullSkeleton ? (
+            <>
+              <SkeletonProfileCard />
+              <SkeletonProfileContent />
+            </>
+          ) : (
+          <>
           <ProfileCard user={cardUser} gamesPlayedCount={pastGameCount} onEdit={() => setEditOpen(true)} isProfileComplete={isProfileComplete} isHostOrStaff={isVenueStaff || isVenueManager || isGameHost} hasActivity={hasActivity} />
 
+          {showContentSkeleton ? (
+            <SkeletonProfileContent creditEl={creditEl} />
+          ) : (
+          <>
 {!isProfileComplete && (
             <div style={{ padding: '16px 16px 0', textAlign: 'center' }}>
               <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, letterSpacing: -0.1 }}>
@@ -2742,18 +2855,7 @@ export default function Profile() {
             </div>
           )}
 
-          {creditBalance > 0 && (
-            <div style={{ margin: '4px 16px 0', padding: '14px 16px', borderRadius: 14, background: '#fff', border: `1px solid ${HAIR}`, boxShadow: '0 1px 6px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: 14 }}>
-              <div style={{ width: 42, height: 42, borderRadius: 21, background: '#F0FBF4', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <FontAwesomeIcon icon={faCoins} style={{ fontSize: 18, color: GREEN }} />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 500, color: SUB, marginBottom: 1 }}>Crédito disponible</div>
-                <div style={{ fontSize: 12, color: SUB, opacity: 0.75 }}>Se aplica en tu próxima reserva</div>
-              </div>
-              <div style={{ fontSize: 20, fontWeight: 800, color: TEXT, letterSpacing: -0.5, flexShrink: 0 }}>S/. {Number(creditBalance).toFixed(2)}</div>
-            </div>
-          )}
+          {creditEl}
 
           <SectionHeader title="Próximos eventos" count={upcoming.length} />
           {upcoming.length === 0 ? (
@@ -2838,6 +2940,10 @@ export default function Profile() {
                 </button>
               )}
             </>
+          )}
+          </>
+          )}
+          </>
           )}
 
           <div style={{ height: 8 }} />

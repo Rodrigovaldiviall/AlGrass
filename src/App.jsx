@@ -4,7 +4,6 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { StaffProvider, useStaff } from './context/StaffContext';
 import StaffInviteModal from './components/StaffInviteModal';
 import Sidebar from './components/Sidebar';
-import logo from './assets/logo.webp';
 import IntroScreen from './screens/IntroScreen';
 import { supabase } from './lib/supabase';
 import { setNotifBadge } from './utils/notifBadge';
@@ -61,10 +60,13 @@ function Placeholder({ title }) {
 }
 
 function RouteShell() {
+  let seen = false;
+  try { seen = !!localStorage.getItem(INTRO_KEY); } catch {}
   return (
-    <div className="screen-shell" style={{ background: '#3F5FE0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <img src={logo} alt="Algrass" style={{ width: 130, height: 'auto', objectFit: 'contain', animation: 'logo-spin 1.6s ease-in-out forwards' }} />
-    </div>
+    <div
+      className="screen-shell"
+      style={{ background: seen ? '#fff' : '#000' }}
+    />
   );
 }
 
@@ -79,6 +81,7 @@ function IntroGate() {
       if (done) {
         const m = document.querySelector('meta[name="theme-color"]');
         if (m) m.content = '#3F5FE0';
+        document.documentElement.classList.add('app-ready');
       }
       return done;
     } catch { return true; }

@@ -292,30 +292,38 @@ export async function cancelGamePlayer(gameId, { skipNotification = false } = {}
     return { skipped: true };
   }
   const row = rows[0];
-  const refundTo = row.payer_id; // refund always goes to the payer, not the canceler
 
-  const { error: cancelErr } = await supabase
+  // Atomic claim: only the call that flips confirmed→canceled proceeds to refund.
+  const { data: claimed, error: cancelErr } = await supabase
     .from('game_players')
     .update({ status: 'canceled', canceled_at: new Date().toISOString() })
-    .eq('id', row.id);
+    .eq('id', row.id)
+    .eq('status', 'confirmed')
+    .select('id, amount, payer_id');
   if (cancelErr) { console.error('[cancelGamePlayer] update failed:', cancelErr); return { error: cancelErr }; }
+  if (!claimed?.length) {
+    console.warn('[cancelGamePlayer] slot not confirmed at update — skipping refund');
+    return { skipped: true };
+  }
+  const claimedRow = claimed[0];
+  const refundTo   = claimedRow.payer_id; // refund always goes to the payer, not the canceler
   await setMatchPublishedIfEmpty(gameId);
   notifyWaitlistUsers(gameId);
 
-  if (row.amount > 0) {
+  if (claimedRow.amount > 0) {
     const { error: ledgerErr } = await supabase.from('reservations').insert({
       game_id:         gameId,
       user_id:         refundTo,
       canceled_by:     session.user.id,
       status:          'refund',
-      unit_price:      row.amount,
-      subtotal_amount: row.amount,
+      unit_price:      claimedRow.amount,
+      subtotal_amount: claimedRow.amount,
       players_count:   1,
       guest_total:     0,
       canceled_at:     new Date().toISOString(),
     });
     if (ledgerErr) console.error('[cancelGamePlayer] refund ledger insert failed:', ledgerErr);
-    await applyRefund(refundTo, row.amount);
+    await applyRefund(refundTo, claimedRow.amount);
 
     if (refundTo === session.user.id) {
       // Self-paid slot: credit goes back to the canceler.
@@ -400,24 +408,31 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
   }
 
   const ids = rows.map(r => r.id);
-  const { error: cancelErr } = await supabase
+  // Atomic per-slot claim: refund only the slots this call actually transitioned.
+  const { data: claimed, error: cancelErr } = await supabase
     .from('game_players')
     .update({ status: 'canceled', canceled_at: new Date().toISOString() })
-    .in('id', ids);
+    .in('id', ids)
+    .eq('status', 'confirmed')
+    .select('id, user_id, amount');
   if (cancelErr) { console.error('[cancelGuestPlayers] update failed:', cancelErr); return { error: cancelErr }; }
+  if (!claimed?.length) {
+    console.warn('[cancelGuestPlayers] no slots transitioned — skipping refund');
+    return { skipped: true };
+  }
   await setMatchPublishedIfEmpty(gameId);
-  notifyWaitlistUsers(gameId, rows.length);
+  notifyWaitlistUsers(gameId, claimed.length);
 
-  const refundTotal = rows.reduce((s, r) => s + (r.amount || 0), 0);
+  const refundTotal = claimed.reduce((s, r) => s + (r.amount || 0), 0);
   if (refundTotal > 0) {
     const { error: ledgerErr } = await supabase.from('reservations').insert({
       game_id:         gameId,
       user_id:         session.user.id,
       canceled_by:     session.user.id,
       status:          'refund',
-      unit_price:      rows[0]?.amount ?? 0,
+      unit_price:      claimed[0]?.amount ?? 0,
       subtotal_amount: refundTotal,
-      players_count:   rows.length,
+      players_count:   claimed.length,
       guest_total:     refundTotal,
       canceled_at:     new Date().toISOString(),
     });
@@ -426,7 +441,7 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
   }
 
   // Fetch payer + all guest names in one query for all notification types
-  const guestRows = rows.filter(r => r.user_id);
+  const guestRows = claimed.filter(r => r.user_id);
   const allIds = [session.user.id, ...guestRows.map(r => r.user_id)];
   supabase.from('users').select('id, full_name').in('id', allIds)
     .then(({ data: users }) => {
@@ -551,6 +566,7 @@ export async function cancelRental(gameId) {
     guest_total:     0,
     source:          'rental',
     canceled_at:     new Date().toISOString(),
+    refund_of_reservation_id: row.id,
   });
   if (ledgerErr) { console.error('[cancelRental] ledger insert failed:', ledgerErr); return { error: ledgerErr }; }
 

@@ -843,6 +843,7 @@ export default function ConfirmReservation() {
         }
       }
       setFreeConfirming(false);
+      try { sessionStorage.setItem('profile_dirty', '1'); } catch {}
       navigate('/profile', { state: { confirmedGame: {
         id:       gameId,
         field:    game?.field,
@@ -917,6 +918,7 @@ export default function ConfirmReservation() {
             delete shown[gameId];
             localStorage.setItem('pichanga_shown_confirmations', JSON.stringify(shown));
           } catch {}
+          try { sessionStorage.setItem('profile_dirty', '1'); } catch {}
           navigate('/profile', { state: { confirmedGame: {
             id:       gameId,
             field:    game?.field,
@@ -1008,6 +1010,7 @@ export default function ConfirmReservation() {
           localStorage.setItem('pichanga_shown_confirmations', JSON.stringify(shown));
         } catch {}
       }
+      try { sessionStorage.setItem('profile_dirty', '1'); } catch {}
       navigate('/profile', { state: { confirmedGame: {
         id:           game?.id,
         field:        game?.field,
