@@ -31,7 +31,7 @@ function tabFromPath(pathname, backPath) {
 }
 
 function TabItem({ icon, label, active, badge, onClick }) {
-  const color = active ? BLUE : TAB_INACTIVE;
+  const color = label === 'Partidos' ? '#FF0000' : (active ? BLUE : TAB_INACTIVE);
   const [pressed, setPressed] = useState(false);
   return (
     <button
