@@ -180,19 +180,9 @@ input:-webkit-autofill:hover {
 /* PWA instalada: pinta de blanco el spacer del home-indicator para que no
    aparezca la banda azul (#root) bajo el TabBar. En navegador (no standalone)
    no se aplica → comportamiento idéntico al actual. */
-#diag-bottom { display: none; }
-
+/* PWA instalada: pinta de blanco el spacer del home-indicator para que no
+   aparezca la banda azul bajo el TabBar. En navegador (no standalone) no se
+   aplica → comportamiento idéntico al actual. */
 @media all and (display-mode: standalone) {
-  .tab-sab { background: red !important; }
-  /* PRUEBA temporal/reversible: aislar #root como único origen del azul
-     inferior. Solo #root → blanco; html/body quedan en su azul original. */
-  html.app-ready #root { background: #fff !important; }
-  /* TEMP diagnóstico: cubre los últimos 100px para ver si el azul está dentro
-     del viewport (lo tapa) o fuera (sigue visible bajo el verde). */
-  #diag-bottom {
-    display: block;
-    position: fixed; bottom: 0; left: 0; right: 0;
-    height: 100px; background: lime;
-    z-index: 2147483647; pointer-events: none;
-  }
+  .tab-sab { background: #fff; }
 }
