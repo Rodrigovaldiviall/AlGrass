@@ -177,18 +177,11 @@ input:-webkit-autofill:hover {
   .game-status-pill { width: 96px !important; min-width: 96px !important; }
 }
 
-/* PWA instalada: pinta de blanco el spacer del home-indicator para que no
-   aparezca la banda azul (#root) bajo el TabBar. En navegador (no standalone)
-   no se aplica → comportamiento idéntico al actual. */
-/* PWA instalada: pinta de blanco el spacer del home-indicator para que no
-   aparezca la banda azul bajo el TabBar. En navegador (no standalone) no se
-   aplica → comportamiento idéntico al actual. */
+/* PWA instalada: el layout interno es 100dvh (excluye el inset inferior), pero
+   html/body/fixed llegan al ICB (pantalla física). Extendemos #root al ICB para
+   que el TabBar/tab-sab cubran el inset real; el spacer va blanco. Solo en
+   standalone → Safari navegador queda intacto (#root sigue 100dvh). */
 @media all and (display-mode: standalone) {
+  #root { height: 100%; }
   .tab-sab { background: #fff; }
-  /* TEMP diagnóstico: html/body/#root de BLUE → lime SOLO en standalone.
-     !important + orden posterior vencen la regla global 49-51 y el style
-     inline background:#000 del <body>. */
-  html.app-ready,
-  html.app-ready body,
-  html.app-ready #root { background: #00ff00 !important; }
 }

@@ -4,7 +4,6 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { StaffProvider, useStaff } from './context/StaffContext';
 import StaffInviteModal from './components/StaffInviteModal';
 import Sidebar from './components/Sidebar';
-import DiagMeasure from './components/DiagMeasure';
 import IntroScreen from './screens/IntroScreen';
 import { supabase } from './lib/supabase';
 import { setNotifBadge } from './utils/notifBadge';
@@ -133,7 +132,6 @@ export default function App() {
       <NotifBadgeSync />
       <StaffModalBridge />
       <IntroGate />
-      <DiagMeasure />
     </BrowserRouter>
     </StaffProvider>
     </AuthProvider>
