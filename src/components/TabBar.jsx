@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TAB_INACTIVE, RED } from '../constants';
 import I from '../icons';
@@ -83,21 +83,6 @@ export default function TabBar({ activeTab: activeProp }) {
     return () => window.removeEventListener('notif-badge', onBadge);
   }, []);
 
-  // TEMP diagnóstico geométrico de tab-sab — borrar tras la prueba.
-  const sabRef = useRef(null);
-  useEffect(() => {
-    const log = () => {
-      const r = sabRef.current?.getBoundingClientRect();
-      if (r) console.log('[SAB-DIAG]', {
-        height: Math.round(r.height), top: Math.round(r.top),
-        bottom: Math.round(r.bottom), innerHeight: window.innerHeight,
-      });
-    };
-    log();
-    const id = setInterval(log, 500);
-    return () => clearInterval(id);
-  }, []);
-
   const badges = { notificaciones: notifBadge, perfil: getUpcomingBadge() };
 
   return (
@@ -128,11 +113,7 @@ export default function TabBar({ activeTab: activeProp }) {
         />
       ))}
     </div>
-    <div ref={sabRef} className="tab-sab" style={{ height: 'env(safe-area-inset-bottom)', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
-      <div style={{ flex: 1, background: '#00ff00' }} />
-      <div style={{ flex: 1, background: '#0000ff' }} />
-    </div>
-    <div style={{ height: 20, background: '#ff0000', flexShrink: 0 }} />
+    <div className="tab-sab" style={{ height: 'env(safe-area-inset-bottom)', flexShrink: 0 }} />
     </>
   );
 }

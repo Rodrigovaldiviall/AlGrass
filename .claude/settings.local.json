@@ -61,7 +61,13 @@
       "Bash(git commit -m '@ *)",
       "Bash(git commit *)",
       "Bash(git --no-pager log --oneline -1)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(git --no-pager diff --stat)",
+      "Bash(git --no-pager diff -- src/index.css)",
+      "Bash(git --no-pager diff -- src/components/TabBar.jsx src/screens/IntroScreen.jsx)",
+      "Bash(git --no-pager log --oneline -3)",
+      "Bash(git --no-pager show HEAD:src/components/TabBar.jsx)",
+      "Bash(git --no-pager show HEAD:src/screens/IntroScreen.jsx)"
     ],
     "additionalDirectories": [
       "c:\\Users\\rodri\\.claude\\projects\\c--Claude-Code-AlGrass\\memory"
