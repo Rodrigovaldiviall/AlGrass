@@ -80,7 +80,7 @@ function IntroGate() {
       const done = !!localStorage.getItem(INTRO_KEY);
       if (done) {
         const m = document.querySelector('meta[name="theme-color"]');
-        if (m) m.content = '#3F5FE0';
+        if (m) m.content = '#ffffff';
         document.documentElement.classList.add('app-ready');
       }
       return done;
