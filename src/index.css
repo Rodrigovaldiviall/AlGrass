@@ -96,7 +96,7 @@ input:-webkit-autofill:hover {
 .sidebar    { display: none; }
 
 /* Screen fills full viewport on mobile */
-.screen-shell { height: 100%; }
+.screen-shell { height: 100dvh; }
 
 /* ── Desktop ≥ 1024 px ─────────────────────────────────── */
 @media (min-width: 1024px) {
@@ -177,11 +177,9 @@ input:-webkit-autofill:hover {
   .game-status-pill { width: 96px !important; min-width: 96px !important; }
 }
 
-/* PWA instalada: el layout interno es 100dvh (excluye el inset inferior), pero
-   html/body/fixed llegan al ICB (pantalla física). Extendemos #root al ICB para
-   que el TabBar/tab-sab cubran el inset real; el spacer va blanco. Solo en
-   standalone → Safari navegador queda intacto (#root sigue 100dvh). */
+/* PWA instalada: pinta de blanco el spacer del home-indicator para que no
+   aparezca la banda azul (#root) bajo el TabBar. En navegador (no standalone)
+   no se aplica → comportamiento idéntico al actual. */
 @media all and (display-mode: standalone) {
-  #root { height: 100%; }
   .tab-sab { background: #fff; }
 }
