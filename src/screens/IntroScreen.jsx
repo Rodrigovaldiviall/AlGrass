@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import logo from '../assets/logo.webp';
 import desktopHero from '../assets/desktop-hero.webp';
 
@@ -172,10 +172,54 @@ function DesktopLanding({ onStart }) {
 }
 
 // ── Screen ─────────────────────────────────────────────────────────────────
+// TEMP diagnóstico Intro — mide dentro del overlay durante el video.
+// Reversible: borrar este componente, su <IntroDiag/> y el ref.
+function IntroDiag({ rootRef }) {
+  const [m, setM] = useState(null);
+  useEffect(() => {
+    const R = (x) => (x == null ? '—' : Math.round(x));
+    const measure = () => {
+      const r = rootRef.current?.getBoundingClientRect();
+      const data = {
+        innerHeight: window.innerHeight,
+        visualVH:    window.visualViewport ? R(window.visualViewport.height) : '—',
+        docClientH:  document.documentElement.clientHeight,
+        bodyClientH: document.body.clientHeight,
+        overlayH:    R(r?.height),
+        overlayBottom: R(r?.bottom),
+      };
+      setM(data);
+      console.log('[INTRO-DIAG]', data);
+    };
+    measure();
+    const id = setInterval(measure, 500);
+    window.addEventListener('resize', measure);
+    return () => { clearInterval(id); window.removeEventListener('resize', measure); };
+  }, [rootRef]);
+  if (!m) return null;
+  return (
+    <div style={{
+      position: 'absolute', top: 60, left: 8, right: 8, zIndex: 10,
+      background: 'rgba(0,0,0,0.85)', color: '#0f0',
+      font: '12px/1.45 monospace', padding: '10px 12px', borderRadius: 8,
+      whiteSpace: 'pre-wrap', pointerEvents: 'none',
+    }}>
+{`INTRO-DIAG
+innerHeight    = ${m.innerHeight}
+visualVP.h     = ${m.visualVH}
+docClientH     = ${m.docClientH}
+bodyClientH    = ${m.bodyClientH}
+overlay.h      = ${m.overlayH}
+overlay.bottom = ${m.overlayBottom}`}
+    </div>
+  );
+}
+
 export default function IntroScreen({ onStart, onDone }) {
   const [phase, setPhase]     = useState('loading'); // loading | playing | ended | error | out
   const [isDesktop] = useState(() => window.innerWidth >= 1024);
   const metaRef = useRef(document.querySelector('meta[name="theme-color"]'));
+  const rootRef = useRef(null);
 
   const isEnded = phase === 'ended' || phase === 'error';
 
@@ -191,12 +235,13 @@ export default function IntroScreen({ onStart, onDone }) {
   }
 
   return (
-    <div style={{
+    <div ref={rootRef} style={{
       position: 'fixed', inset: 0, zIndex: 100000,
       background: '#000',
       opacity: phase === 'out' ? 0 : 1,
       transition: phase === 'out' ? 'opacity 0.48s ease' : 'opacity 0.4s ease',
     }}>
+      <IntroDiag rootRef={rootRef} />
 
       {isDesktop ? (
         /* Desktop (≥1024): no video — visual landing instead */
