@@ -176,3 +176,10 @@ input:-webkit-autofill:hover {
   /* Game status pills: same width regardless of label */
   .game-status-pill { width: 96px !important; min-width: 96px !important; }
 }
+
+/* PWA instalada: pinta de blanco el spacer del home-indicator para que no
+   aparezca la banda azul (#root) bajo el TabBar. En navegador (no standalone)
+   no se aplica → comportamiento idéntico al actual. */
+@media all and (display-mode: standalone) {
+  .tab-sab { background: #fff; }
+}

@@ -113,7 +113,7 @@ export default function TabBar({ activeTab: activeProp }) {
         />
       ))}
     </div>
-    <div style={{ height: 'env(safe-area-inset-bottom)', flexShrink: 0 }} />
+    <div className="tab-sab" style={{ height: 'env(safe-area-inset-bottom)', flexShrink: 0 }} />
     </>
   );
 }
