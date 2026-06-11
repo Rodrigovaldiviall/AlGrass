@@ -101,7 +101,27 @@ function IntroGate() {
   );
 }
 
+// TEMP test de safe-area — pantalla verde previa al Intro, overlay fixed inset:0
+// sin usar ningún layout de la app. Reversible: borrar este componente, su estado
+// y su render.
+function SafeAreaTest({ onContinue }) {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: '#00ff00', zIndex: 2147483647,
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 24,
+    }}>
+      <div style={{ fontSize: 28, fontWeight: 800, color: '#000', letterSpacing: -0.5 }}>SAFE AREA TEST</div>
+      <button onClick={onContinue} style={{
+        padding: '14px 28px', borderRadius: 999, border: 'none',
+        background: '#000', color: '#fff', fontSize: 16, fontWeight: 700,
+        cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent',
+      }}>Continuar</button>
+    </div>
+  );
+}
+
 export default function App() {
+  const [safeTestDone, setSafeTestDone] = useState(false);
   return (
     <AuthProvider>
     <StaffProvider>
@@ -132,6 +152,7 @@ export default function App() {
       <NotifBadgeSync />
       <StaffModalBridge />
       <IntroGate />
+      {!safeTestDone && <SafeAreaTest onContinue={() => setSafeTestDone(true)} />}
     </BrowserRouter>
     </StaffProvider>
     </AuthProvider>
