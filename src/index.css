@@ -46,9 +46,10 @@ body::before {
 
 /* Once past the intro: blue behind safe areas (status bar / bottom inset).
    Until then html/body/#root stay #000 to avoid the white/blue arrival flash. */
+/* TEMP test visual: blanco (era #3F5FE0) para evaluar continuidad con el TabBar. */
 html.app-ready,
 html.app-ready body,
-html.app-ready #root { background: #3F5FE0 !important; }
+html.app-ready #root { background: #ffffff !important; }
 
 .no-sb::-webkit-scrollbar { display: none; }
 .no-sb { scrollbar-width: none; }
