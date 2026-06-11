@@ -73,7 +73,10 @@
       "Bash(git --no-pager show 48a45f6)",
       "Bash(git --no-pager show 48a45f6 --format=\"\")",
       "Bash(git --no-pager show HEAD:src/index.css)",
-      "Bash(git --no-pager log --oneline -S \"#ff0000\" -- src/index.css)"
+      "Bash(git --no-pager log --oneline -S \"#ff0000\" -- src/index.css)",
+      "Bash(cat dist/manifest.webmanifest)",
+      "Bash(cat dist/manifest.json)",
+      "Bash(ls dist/*.webmanifest dist/*.json)"
     ],
     "additionalDirectories": [
       "c:\\Users\\rodri\\.claude\\projects\\c--Claude-Code-AlGrass\\memory"

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useEffect } from 'react';
+import { lazy, Suspense, useState, useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { StaffProvider, useStaff } from './context/StaffContext';
@@ -120,6 +120,56 @@ function SafeAreaTest({ onContinue }) {
   );
 }
 
+// TEMP diagnóstico de modo de ejecución PWA. Reversible: borrar componente + render.
+function ModeDiag() {
+  const probeRef = useRef(null);
+  const [m, setM] = useState(null);
+  useEffect(() => {
+    const read = () => {
+      const sab = probeRef.current ? Math.round(probeRef.current.getBoundingClientRect().height) : null;
+      const data = {
+        navStandalone: window.navigator.standalone,
+        mqStandalone:  window.matchMedia('(display-mode: standalone)').matches,
+        referrer:      document.referrer || '(vacío)',
+        href:          window.location.href,
+        visualVH:      window.visualViewport ? Math.round(window.visualViewport.height) : null,
+        innerHeight:   window.innerHeight,
+        safeBottom:    sab,
+      };
+      setM(data);
+      console.log('[MODE-DIAG]', data);
+    };
+    read();
+    const id = setInterval(read, 1000);
+    window.addEventListener('resize', read);
+    return () => { clearInterval(id); window.removeEventListener('resize', read); };
+  }, []);
+  const isStandalone = m && (m.navStandalone === true || m.mqStandalone === true);
+  return (
+    <>
+      <div ref={probeRef} style={{ position: 'fixed', bottom: 0, left: 0, width: 1, height: 'env(safe-area-inset-bottom)', opacity: 0, pointerEvents: 'none' }} />
+      {m && (
+        <div style={{
+          position: 'fixed', top: 'calc(env(safe-area-inset-top) + 8px)', left: 8, right: 8,
+          zIndex: 2147483647, background: 'rgba(0,0,0,0.9)', color: '#0f0',
+          font: '11px/1.5 monospace', padding: '10px 12px', borderRadius: 8,
+          whiteSpace: 'pre-wrap', pointerEvents: 'none',
+        }}>
+{`MODE-DIAG
+navigator.standalone        = ${m.navStandalone}
+matchMedia standalone       = ${m.mqStandalone}
+document.referrer           = ${m.referrer}
+location.href               = ${m.href}
+visualViewport.height       = ${m.visualVH}
+window.innerHeight          = ${m.innerHeight}
+env(safe-area-inset-bottom) = ${m.safeBottom}px
+→ ¿standalone real?         = ${isStandalone ? 'SÍ' : 'NO (Safari/embebido)'}`}
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function App() {
   const [safeTestDone, setSafeTestDone] = useState(false);
   return (
@@ -153,6 +203,7 @@ export default function App() {
       <StaffModalBridge />
       <IntroGate />
       {!safeTestDone && <SafeAreaTest onContinue={() => setSafeTestDone(true)} />}
+      <ModeDiag />
     </BrowserRouter>
     </StaffProvider>
     </AuthProvider>
