@@ -67,7 +67,13 @@
       "Bash(git --no-pager diff -- src/components/TabBar.jsx src/screens/IntroScreen.jsx)",
       "Bash(git --no-pager log --oneline -3)",
       "Bash(git --no-pager show HEAD:src/components/TabBar.jsx)",
-      "Bash(git --no-pager show HEAD:src/screens/IntroScreen.jsx)"
+      "Bash(git --no-pager show HEAD:src/screens/IntroScreen.jsx)",
+      "Bash(git --no-pager show -s --format='%h  parent:%p  %s' 48a45f6)",
+      "Bash(git --no-pager show --stat --format=\"\" 48a45f6)",
+      "Bash(git --no-pager show 48a45f6)",
+      "Bash(git --no-pager show 48a45f6 --format=\"\")",
+      "Bash(git --no-pager show HEAD:src/index.css)",
+      "Bash(git --no-pager log --oneline -S \"#ff0000\" -- src/index.css)"
     ],
     "additionalDirectories": [
       "c:\\Users\\rodri\\.claude\\projects\\c--Claude-Code-AlGrass\\memory"
