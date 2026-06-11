@@ -185,4 +185,8 @@ input:-webkit-autofill:hover {
    aplica → comportamiento idéntico al actual. */
 @media all and (display-mode: standalone) {
   .tab-sab { background: #fff; }
+  /* TEMP diagnóstico: .screen-shell de BLUE → lime para ver si la franja azul
+     inferior es el fondo de la raíz de pantalla. !important vence el background
+     inline de cada pantalla. */
+  .screen-shell { background: #00ff00 !important; }
 }
