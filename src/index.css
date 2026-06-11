@@ -181,7 +181,7 @@ input:-webkit-autofill:hover {
    aparezca la banda azul (#root) bajo el TabBar. En navegador (no standalone)
    no se aplica → comportamiento idéntico al actual. */
 @media all and (display-mode: standalone) {
-  .tab-sab { background: #fff; }
+  .tab-sab { background: red !important; }
   /* PRUEBA temporal/reversible: aislar #root como único origen del azul
      inferior. Solo #root → blanco; html/body quedan en su azul original. */
   html.app-ready #root { background: #fff !important; }
