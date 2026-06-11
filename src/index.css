@@ -185,4 +185,10 @@ input:-webkit-autofill:hover {
    aplica → comportamiento idéntico al actual. */
 @media all and (display-mode: standalone) {
   .tab-sab { background: #fff; }
+  /* TEMP diagnóstico: html/body/#root de BLUE → lime SOLO en standalone.
+     !important + orden posterior vencen la regla global 49-51 y el style
+     inline background:#000 del <body>. */
+  html.app-ready,
+  html.app-ready body,
+  html.app-ready #root { background: #00ff00 !important; }
 }
