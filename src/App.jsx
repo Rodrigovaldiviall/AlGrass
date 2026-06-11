@@ -11,32 +11,6 @@ import { setNotifBadge } from './utils/notifBadge';
 const INTRO_KEY = 'algrass_intro_seen';
 
 
-// TEMP regla de medición — marcas cada 5px desde el borde físico inferior hacia
-// arriba, para medir la altura visible de la banda roja. Solo standalone.
-// Reversible: borrar este componente y su <BandRuler/>.
-function BandRuler() {
-  const standalone = window.matchMedia('(display-mode: standalone)').matches
-    || window.navigator.standalone === true;
-  if (!standalone) return null;
-  const ticks = [];
-  for (let px = 0; px <= 70; px += 5) {
-    ticks.push(
-      <div key={px} style={{ position: 'absolute', bottom: px, left: 0, right: 0, height: 1, background: '#fff' }}>
-        <span style={{
-          position: 'absolute', left: 4, bottom: 1,
-          fontSize: 9, lineHeight: '9px', fontFamily: 'monospace',
-          color: '#fff', textShadow: '0 0 2px #000, 0 0 2px #000',
-        }}>{px}px</span>
-      </div>
-    );
-  }
-  return (
-    <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, height: 80, zIndex: 2147483647, pointerEvents: 'none' }}>
-      {ticks}
-    </div>
-  );
-}
-
 function NotifBadgeSync() {
   const { user } = useAuth();
   const { pathname } = useLocation();
@@ -158,7 +132,6 @@ export default function App() {
       <NotifBadgeSync />
       <StaffModalBridge />
       <IntroGate />
-      <BandRuler />
     </BrowserRouter>
     </StaffProvider>
     </AuthProvider>

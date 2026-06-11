@@ -184,8 +184,4 @@ input:-webkit-autofill:hover {
 @media all and (display-mode: standalone) {
   #root { height: 100%; }
   .tab-sab { background: #fff; }
-  /* TEMP test: ¿la banda azul inferior original pasa a roja? */
-  html.app-ready,
-  html.app-ready body,
-  html.app-ready #root { background: #ff0000 !important; }
 }
