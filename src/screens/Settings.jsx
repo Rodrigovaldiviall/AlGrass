@@ -751,7 +751,7 @@ export default function Settings() {
           <Sep />
           <Row
             label="Privacidad del perfil"
-            sublabel="Edad, sexo y posición visibles para otros"
+            sublabel="Edad y sexo visibles para otros"
             right={<Toggle on={privacyOn} onChange={togglePrivacy} />}
           />
           <Sep />

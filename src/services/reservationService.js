@@ -103,23 +103,15 @@ export async function searchUsers(query, { limit = 20, excludeIds = [] } = {}) {
   const qDb    = deaccent(q).toLowerCase();
   const allExclude = currentId ? [...excludeIds, currentId] : excludeIds;
   let req = supabase
-    .from('users')
-    .select('id, full_name, user_code, avatar_hue, avatar_path, avatar_updated_at, preferred_position, birth_date')
-    .or(`full_name_search.ilike.%${qDb}%,user_code.ilike.%${qDb}%`)
-    .is('deleted_at', null)
+    .from('users_public')
+    .select('id, full_name, user_code, avatar_hue, avatar_path, avatar_updated_at, preferred_position, age')
+    .or(`full_name.ilike.%${qDb}%,user_code.ilike.%${qDb}%`)
     .limit(limit);
   if (allExclude.length) req = req.not('id', 'in', `(${allExclude.join(',')})`);
   const { data, error } = await req;
   console.debug('[searchUsers] query:', qDb, '| error:', error, '| rows:', data?.length ?? 'null');
   if (error) { console.error('[searchUsers] FULL ERROR:', error); return []; }
   const players = (data || []).map(u => {
-    let age = null;
-    if (u.birth_date) {
-      const bd  = new Date(u.birth_date);
-      const now = new Date();
-      age = now.getFullYear() - bd.getFullYear();
-      if (now.getMonth() < bd.getMonth() || (now.getMonth() === bd.getMonth() && now.getDate() < bd.getDate())) age--;
-    }
     return {
       id:            u.id,
       name:          u.full_name || '',
@@ -128,7 +120,7 @@ export async function searchUsers(query, { limit = 20, excludeIds = [] } = {}) {
       avatarPath:    u.avatar_path    ?? null,
       avatarVersion: u.avatar_updated_at ? new Date(u.avatar_updated_at).getTime() : null,
       position:      u.preferred_position || null,
-      age,
+      age:           u.age ?? null,
     };
   });
   return rankPlayers(players, qDb);
@@ -345,7 +337,7 @@ export async function cancelGamePlayer(gameId, { skipNotification = false } = {}
       }
     } else {
       // Guest slot paid by someone else: fetch both names in one query
-      supabase.from('users').select('id, full_name').in('id', [session.user.id, refundTo])
+      supabase.from('users_public').select('id, full_name').in('id', [session.user.id, refundTo])
         .then(({ data: users }) => {
           const byId = Object.fromEntries((users ?? []).map(u => [u.id, u.full_name]));
           const cancelerFirst = (byId[session.user.id] ?? '').split(' ')[0] || 'Un jugador';
@@ -443,7 +435,7 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
   // Fetch payer + all guest names in one query for all notification types
   const guestRows = claimed.filter(r => r.user_id);
   const allIds = [session.user.id, ...guestRows.map(r => r.user_id)];
-  supabase.from('users').select('id, full_name').in('id', allIds)
+  supabase.from('users_public').select('id, full_name').in('id', allIds)
     .then(({ data: users }) => {
       const byId = Object.fromEntries((users ?? []).map(u => [u.id, u.full_name]));
       const payerFirst = (byId[session.user.id] ?? '').split(' ')[0] || 'El titular';

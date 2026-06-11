@@ -49,7 +49,12 @@
       "Bash(npx eslint *)",
       "WebFetch(domain:supabase.com)",
       "WebFetch(domain:postgrest.org)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(npm install *)",
+      "Bash(convert -density 1200 -background white public/favicon.svg -resize 340x340 -gravity center -extent 512x512 public/pwa-512x512.png)",
+      "Bash(echo \"exit:$?\")",
+      "Bash(identify public/pwa-512x512.png)",
+      "Bash(grep -ivE \"from\\\\\\('users'\\\\\\)|//|user_id\\\\.eq|eq\\\\\\('user_id|\\\\.eq\\\\\\(\\\\`user_id|user\\\\?\\\\.id|user\\\\.id|session\\\\.user|setUser|getUser|removeUser|userId|user_code|users\\\\}\\\\\\)|users \\\\?\\\\?|\\\\\\(users\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\rodri\\.claude\\projects\\c--Claude-Code-AlGrass\\memory"

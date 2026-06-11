@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, RED, GREEN, ORANGE } from '../constants';
@@ -639,18 +639,58 @@ const COACH_STEPS = [
     title: 'Partidos',
     body: 'Únete a partidos organizados, invita a tus amigos y solo preocúpate por jugar.',
     cta: 'Siguiente',
-    tabIndex: 0,
+    coach: 'partidos',
   },
   {
     title: 'Canchas',
     body: 'Reserva tu propia cancha en segundos, sin llamadas ni coordinaciones.',
     cta: 'Empezar',
-    tabIndex: 1,
+    coach: 'campos',
   },
 ];
 
 function CoachOverlay({ step, onAdvance }) {
   const mark = COACH_STEPS[step];
+  const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
+  const [rect, setRect] = useState(null);
+  useLayoutEffect(() => {
+    if (!isDesktop) return;
+    // Measure the real element (icon + label) tagged with data-coach — no indices, no heuristics.
+    const target  = document.querySelector(`[data-coach="${mark.coach}"]`);
+    const sidebar = document.querySelector('.sidebar');
+    if (!target) return;
+    const t  = target.getBoundingClientRect();
+    const sb = sidebar ? sidebar.getBoundingClientRect() : null;
+    setRect({ top: t.top, left: t.left, width: t.width, height: t.height, cardLeft: sb ? sb.right : t.right });
+  }, [step, isDesktop, mark.coach]);
+
+  // ── Desktop: spotlight the left-sidebar item; card to its right, arrow pointing left ──
+  if (isDesktop) {
+    const pad = 6;
+    return (
+      <div onClick={onAdvance} style={{ position: 'fixed', inset: 0, zIndex: 950 }}>
+        {rect && <div style={{ position: 'fixed', top: rect.top - pad, left: rect.left - pad, width: rect.width + pad * 2, height: rect.height + pad * 2, borderRadius: 16, boxShadow: '0 0 0 200vmax rgba(0,0,0,0.46)', pointerEvents: 'none' }} />}
+        {rect && (
+          <div onClick={e => e.stopPropagation()} style={{ position: 'fixed', left: rect.cardLeft + 20, top: rect.top + rect.height / 2, transform: 'translateY(-50%)', width: 320, background: '#fff', borderRadius: 18, padding: '18px 18px 14px', boxShadow: '0 8px 32px rgba(0,0,0,0.22)' }}>
+            <div style={{ position: 'absolute', left: -7, top: '50%', transform: 'translateY(-50%) rotate(45deg)', width: 14, height: 14, background: '#fff', borderRadius: 2 }} />
+            <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 6 }}>{mark.title}</div>
+            <div style={{ fontSize: 14, color: SUB, lineHeight: 1.52, marginBottom: 16 }}>{mark.body}</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', gap: 5 }}>
+                {COACH_STEPS.map((_, i) => (
+                  <div key={i} style={{ width: i === step ? 16 : 6, height: 6, borderRadius: 999, background: i === step ? BLUE : '#D1D1D6', transition: 'width .2s ease' }} />
+                ))}
+              </div>
+              <button onClick={onAdvance} style={{ height: 38, padding: '0 20px', borderRadius: 999, background: BLUE, color: '#fff', border: 'none', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                {mark.cta}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div
       onClick={onAdvance}
@@ -889,7 +929,7 @@ export default function PickupGames() {
         let names = {};
         if (guestRows.length > 0) {
           const ids = [...new Set(guestRows.map(r => r.payer_id))];
-          const { data: pd } = await supabase.from('users').select('id, full_name, user_code').in('id', ids);
+          const { data: pd } = await supabase.from('users_public').select('id, full_name, user_code').in('id', ids);
           (pd || []).forEach(u => { names[u.id] = { name: u.full_name || '', code: u.user_code || '' }; });
         }
         setMyPlayerRows(rows);
@@ -1310,7 +1350,7 @@ export default function PickupGames() {
           required={cityOnboarding}
         />
       )}
-      {coachStep !== null && <CoachOverlay step={coachStep} onAdvance={advanceCoach} />}
+      {coachStep !== null && createPortal(<CoachOverlay step={coachStep} onAdvance={advanceCoach} />, document.body)}
     </div>
   );
 }

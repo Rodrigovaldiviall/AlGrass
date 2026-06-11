@@ -86,6 +86,7 @@ export default function Sidebar() {
           return (
             <button
               key={t.id}
+              data-coach={t.id}
               onClick={() => {
                 haptic();
                 if (isActive) {

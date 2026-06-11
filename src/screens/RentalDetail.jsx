@@ -432,7 +432,7 @@ export default function RentalDetail() {
     const hostId = game?.hostUserId;
     if (!hostId || !supabase) return;
     supabase
-      .from('users')
+      .from('users_public')
       .select('full_name, user_code, avatar_hue, avatar_path, avatar_updated_at')
       .eq('id', hostId)
       .maybeSingle()

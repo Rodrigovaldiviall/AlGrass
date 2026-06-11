@@ -548,8 +548,8 @@ function PlayerModal({ player, onClose, isHost = false }) {
   useEffect(() => {
     if (!player.user_id || !supabase) return;
     supabase
-      .from('users')
-      .select('full_name, user_code, avatar_hue, avatar_path, avatar_updated_at, sex, birth_date, preferred_position, city, phone, nationality, occupation, profile_private')
+      .from('users_public')
+      .select('full_name, user_code, avatar_hue, avatar_path, avatar_updated_at, sex, age, preferred_position, city, profile_private, profile_complete')
       .eq('id', player.user_id)
       .maybeSingle()
       .then(({ data, error }) => {
@@ -600,14 +600,13 @@ function PlayerModal({ player, onClose, isHost = false }) {
   const initials = name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase() || '·';
   const code     = profile?.user_code ? '@' + profile.user_code : deterministicCode(name);
   const sex      = profile?.sex || null;
-  const age      = profile ? ageFromIso(profile.birth_date) : (player.age ?? null);
+  const age      = profile ? (profile.age ?? null) : (player.age ?? null);
   const position = profile
     ? (Array.isArray(profile.preferred_position) ? profile.preferred_position.join(' · ') : (profile.preferred_position || null))
     : (player.position || null);
   const city = profile?.city ?? null;
 
-  const hasPos        = profile ? (Array.isArray(profile.preferred_position) ? profile.preferred_position.length > 0 : !!profile.preferred_position) : !!player.position;
-  const isProfileComplete = !!(profile && hasPos && profile.birth_date && profile.phone && profile.nationality && profile.occupation);
+  const isProfileComplete = !!(profile && profile.profile_complete);
 
   const stat = (v, l) => (
     <div>
@@ -716,7 +715,7 @@ function PlayerModal({ player, onClose, isHost = false }) {
               <div style={{ flex: 1 }}>{stat(isPrivate ? null : (age != null ? String(age) : null), 'Edad')}</div>
             </div>
             <div style={{ height: 1, background: HAIR, marginBottom: 10 }} />
-            {stat(isPrivate ? null : position, 'Posición')}
+            {stat(position, 'Posición')}
           </div>
         </div>
       </div>
@@ -895,11 +894,13 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
     ? (guestSubBreakdown?.unitPrice || breakdown?.unitPrice || parsedPrice)
     : (breakdown?.unitPrice || parsedPrice);
   const isSimple = !isGuest && !titularAlreadyCanceled && guestList.length === 0;
+  const isGuestSimple = isGuest && guestList.length === 0;
   const effectiveTitularChecked = isSimple || titularChecked;
+  const effectiveSelfChecked = isGuestSimple || selfChecked;
   const totalRefund = isGuest
     ? checkedGuests.size * guestRefund
     : (effectiveTitularChecked ? titularRefund : 0) + checkedGuests.size * guestRefund;
-  const canConfirm = isGuest ? (selfChecked || checkedGuests.size > 0) : totalRefund > 0;
+  const canConfirm = isGuest ? (effectiveSelfChecked || checkedGuests.size > 0) : totalRefund > 0;
   const fmt = n => `S/. ${Number(n).toFixed(2)}`;
 
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
@@ -915,8 +916,8 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
     setStep('processing');
     setTimeout(async () => {
       if (isGuest) {
-        removePlayers(gameId, [...checkedGuests, ...(selfChecked ? [guestId] : [])]);
-        if (selfChecked) {
+        removePlayers(gameId, [...checkedGuests, ...(effectiveSelfChecked ? [guestId] : [])]);
+        if (effectiveSelfChecked) {
           try {
             const _sc = JSON.parse(localStorage.getItem('pichanga_self_cancelled_guests') || '{}');
             _sc[gameId] = true;
@@ -996,8 +997,8 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
             {isGuest ? (
               <>
                 {/* Self row: checkable, refund goes to payer */}
-                <button onClick={() => setSelfChecked(v => !v)} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, borderBottom: `1px solid ${HAIR}`, fontFamily: 'inherit', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-                  <span style={checkboxStyle(selfChecked)}>{selfChecked && checkMark}</span>
+                <button onClick={isGuestSimple ? undefined : () => setSelfChecked(v => !v)} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', cursor: isGuestSimple ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 12, borderBottom: `1px solid ${HAIR}`, fontFamily: 'inherit', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                  {!isGuestSimple && <span style={checkboxStyle(selfChecked)}>{selfChecked && checkMark}</span>}
                   <div style={{ flex: 1 }}>
                     <span style={{ fontSize: 14.5, fontWeight: 600, color: BLUE }}>{guestSelfName} (Tú)</span>
                     {payerName && <div style={{ fontSize: 11.5, color: SUB, marginTop: 2, lineHeight: 1.3 }}>El reembolso se acreditará a {payerName}</div>}
@@ -1287,7 +1288,7 @@ export default function GameDetail() {
   useEffect(() => {
     if (!g.hostUserId || !supabase) return;
     supabase
-      .from('users')
+      .from('users_public')
       .select('full_name, user_code, avatar_hue, avatar_path, avatar_updated_at')
       .eq('id', g.hostUserId)
       .maybeSingle()

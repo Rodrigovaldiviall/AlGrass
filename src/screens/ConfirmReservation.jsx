@@ -525,11 +525,11 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
             </div>
             <div style={{ display: 'flex', gap: 10, marginBottom: 8 }}>
               <div style={{ flex: 1, padding: 4, borderRadius: 12, background: `${YAPE}18`, border: `1px solid ${YAPE}40`, textAlign: 'center', position: 'relative', overflow: 'hidden' }}>
-                <img src={aprobarComprasYape} alt="Aprobar compras Yape" style={{ width: '100%', height: 'auto', maxHeight: 130, objectFit: 'cover', objectPosition: 'top', display: 'block', borderRadius: 9 }} />
+                <img src={aprobarComprasYape} alt="Aprobar compras Yape" style={{ width: '100%', height: 'auto', maxHeight: 200, objectFit: 'contain', objectPosition: 'top', display: 'block', borderRadius: 9 }} />
                 <span style={{ position: 'absolute', bottom: '18%', left: '84%', transform: 'translateX(-50%)', fontSize: 18, animation: 'yape-tap 2s ease-in-out infinite', pointerEvents: 'none', userSelect: 'none' }}>👆</span>
               </div>
               <div style={{ flex: 1, padding: 4, borderRadius: 12, background: `${YAPE}18`, border: `1px solid ${YAPE}40`, textAlign: 'center', position: 'relative', overflow: 'hidden' }}>
-                <img src={codigoYape} alt="Código Yape" style={{ width: '100%', height: 'auto', maxHeight: 130, objectFit: 'cover', objectPosition: 'top', display: 'block', borderRadius: 9 }} />
+                <img src={codigoYape} alt="Código Yape" style={{ width: '100%', height: 'auto', maxHeight: 200, objectFit: 'contain', objectPosition: 'top', display: 'block', borderRadius: 9 }} />
                 <span style={{ position: 'absolute', bottom: '10%', left: '43%', transform: 'translateX(-50%)', fontSize: 18, animation: 'yape-tap 2s ease-in-out 0.4s infinite', pointerEvents: 'none', userSelect: 'none' }}>👆</span>
               </div>
             </div>

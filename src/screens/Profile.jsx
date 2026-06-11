@@ -2226,7 +2226,7 @@ export default function Profile() {
           try { sessionStorage.setItem(`pf_player_rows_${uid}`, JSON.stringify({ rows, ts: Date.now() })); } catch {}
           const payerIds = [...new Set(rows.filter(r => r.user_id === uid && r.payer_id !== uid).map(r => r.payer_id))];
           if (payerIds.length > 0) {
-            const { data: pd } = await supabase.from('users').select('id, full_name, user_code').in('id', payerIds);
+            const { data: pd } = await supabase.from('users_public').select('id, full_name, user_code').in('id', payerIds);
             const map = {};
             (pd || []).forEach(u => { map[u.id] = { name: u.full_name || '', code: u.user_code || '' }; });
             setPayerNames(map);
@@ -2392,7 +2392,7 @@ export default function Profile() {
         try { sessionStorage.setItem(`pf_player_rows_${uid}`, JSON.stringify({ rows, ts: Date.now() })); } catch {}
         const payerIds = [...new Set(rows.filter(r => r.user_id === uid && r.payer_id !== uid).map(r => r.payer_id))];
         if (payerIds.length > 0) {
-          const { data: pd } = await supabase.from('users').select('id, full_name, user_code').in('id', payerIds);
+          const { data: pd } = await supabase.from('users_public').select('id, full_name, user_code').in('id', payerIds);
           const map = {};
           (pd || []).forEach(u => { map[u.id] = { name: u.full_name || '', code: u.user_code || '' }; });
           setPayerNames(map);
