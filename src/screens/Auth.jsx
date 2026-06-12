@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT } from '../constants';
 import I from '../icons';
 import ConfirmReservation from './ConfirmReservation';
+import { deriveGameState } from '../utils/deriveGameState';
 
 // ── Shared primitives ──────────────────────────────────────────────────────
 
@@ -259,6 +260,27 @@ export function AuthGate() {
   const game = state?.game;
   const waitlistMode = state?.waitlistMode ?? false;
 
+  // Post-login: revalidar que el usuario no tenga ya relación con el partido
+  // (host / inscrito / invitado / cancelado-con-invitados). Reutiliza
+  // deriveGameState.isVisible. Solo aplica al "Únete" puro (no add-guests/waitlist/rental).
+  const [relStatus, setRelStatus] = useState('checking'); // checking | allowed | blocked
+  useEffect(() => {
+    if (!user?.id) return; // sin login → se muestra la UI de login
+    if (!game?.id || waitlistMode || game.invitedMode || game.type === 'rental') { setRelStatus('allowed'); return; }
+    setRelStatus('checking');
+    if (game.hostUserId === user.id) { setRelStatus('blocked'); return; }
+    let cancelled = false;
+    supabase.from('game_players')
+      .select('user_id, payer_id, status')
+      .eq('game_id', game.id)
+      .or(`user_id.eq.${user.id},payer_id.eq.${user.id}`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        setRelStatus(deriveGameState(data ?? [], user.id).isVisible ? 'blocked' : 'allowed');
+      });
+    return () => { cancelled = true; };
+  }, [user?.id, game?.id, game?.hostUserId, game?.type, game?.invitedMode, waitlistMode]);
+
   if (!game && !waitlistMode && !state?.gateCleared) return <Navigate to="/games" replace />;
 
   if (user && waitlistMode) return <Navigate to={state?.backPath || '/games'} replace />;
@@ -266,7 +288,13 @@ export function AuthGate() {
   if (user && !state?.gateCleared) {
     return <Navigate to="/checkout" state={{ ...state, user, gateCleared: true }} replace />;
   }
-  if (user) return <ConfirmReservation />;
+  if (user) {
+    if (relStatus === 'checking') return <div className="screen-shell" style={{ background: BLUE }} />;
+    if (relStatus === 'blocked') {
+      return <Navigate to={`/game/${game.id}`} state={{ game, infoMode: true, backPath: game.gameDetailBackPath ?? '/games' }} replace />;
+    }
+    return <ConfirmReservation />;
+  }
 
   const navTitle = waitlistMode ? 'Lista de espera' : 'Confirmar reserva';
   const bodyMsg  = waitlistMode
