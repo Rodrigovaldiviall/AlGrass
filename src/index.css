@@ -48,7 +48,7 @@ body::before {
    Until then html/body/#root stay #000 to avoid the white/blue arrival flash. */
 html.app-ready,
 html.app-ready body,
-html.app-ready #root { background: #3F5FE0 !important; }
+html.app-ready #root { background: #ffffff !important; }
 
 .no-sb::-webkit-scrollbar { display: none; }
 .no-sb { scrollbar-width: none; }
