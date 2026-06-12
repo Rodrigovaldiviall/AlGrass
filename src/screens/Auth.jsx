@@ -289,7 +289,12 @@ export function AuthGate() {
     return <Navigate to="/checkout" state={{ ...state, user, gateCleared: true }} replace />;
   }
   if (user) {
-    if (relStatus === 'checking') return <div className="screen-shell" style={{ background: BLUE }} />;
+    if (relStatus === 'checking') return (
+      <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#fff', gap: 14 }}>
+        <div style={{ width: 28, height: 28, border: `3px solid ${SOFT}`, borderTopColor: BLUE, borderRadius: '50%', animation: 'spin .8s linear infinite' }} />
+        <div style={{ fontSize: 14, color: SUB, fontWeight: 500 }}>Verificando tu reserva...</div>
+      </div>
+    );
     if (relStatus === 'blocked') {
       return <Navigate to={`/game/${game.id}`} state={{ game, infoMode: true, backPath: game.gameDetailBackPath ?? '/games' }} replace />;
     }
