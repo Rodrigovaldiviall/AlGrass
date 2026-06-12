@@ -181,3 +181,8 @@ input:-webkit-autofill:hover {
 @media all and (display-mode: standalone) {
   .tab-sab { /* sin estilos visuales temporales */ }
 }
+
+/* TEMP identificación safe-area superior: #sab=ROJO, body::before=VERDE.
+   Solo color (override del fondo); sin tamaño/posición/z-index/opacidad. */
+#sab { background: #ff0000 !important; }
+body::before { background: #00ff00 !important; }
