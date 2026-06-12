@@ -190,3 +190,8 @@ input:-webkit-autofill:hover {
    el scrim cubra toda la pantalla. Se restaura al cerrar (se quita la clase). */
 html.city-sheet-open #sab,
 html.city-sheet-open body::before { display: none !important; }
+
+/* TEMP verificación: si la clase city-sheet-open está activa, fondo AMARILLO.
+   Va al final → gana al test blanco del @media standalone cuando ambos aplican. */
+html.city-sheet-open,
+html.city-sheet-open body { background: #ffff00 !important; }
