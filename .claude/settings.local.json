@@ -79,7 +79,10 @@
       "Bash(ls dist/*.webmanifest dist/*.json)",
       "Bash(git --no-pager diff v4 -- src/index.css)",
       "Bash(git --no-pager log origin/main..HEAD --oneline)",
-      "Bash(git --no-pager show origin/main:src/index.css)"
+      "Bash(git --no-pager show origin/main:src/index.css)",
+      "Bash(git --no-pager diff v4 --stat)",
+      "Bash(git --no-pager diff v4 -- src/components/TabBar.jsx)",
+      "Bash(git --no-pager diff v4 -- src/screens/PickupGames.jsx)"
     ],
     "additionalDirectories": [
       "c:\\Users\\rodri\\.claude\\projects\\c--Claude-Code-AlGrass\\memory"

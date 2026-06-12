@@ -180,22 +180,9 @@ input:-webkit-autofill:hover {
 /* PWA instalada (prueba): banda eliminada — .tab-sab sin altura ni estilos. */
 @media all and (display-mode: standalone) {
   .tab-sab { /* sin estilos visuales temporales */ }
-  /* TEMP test: canvas global en blanco SOLO en standalone (navegador sigue #3F5FE0). */
-  html.app-ready,
-  html.app-ready body,
-  html.app-ready #root { background: #ffffff !important; }
-  /* TEMP identificación de capas: html=ROJO, body=VERDE, #root=GRIS. */
-  html { background: #ff0000 !important; }
-  body { background: #00ff00 !important; }
-  #root { background: #808080 !important; }
 }
 
 /* "Elige tu ciudad" abierto: ocultar los rellenos del safe-area superior para que
    el scrim cubra toda la pantalla. Se restaura al cerrar (se quita la clase). */
 html.city-sheet-open #sab,
 html.city-sheet-open body::before { display: none !important; }
-
-/* TEMP verificación: si la clase city-sheet-open está activa, fondo AMARILLO.
-   Va al final → gana al test blanco del @media standalone cuando ambos aplican. */
-html.city-sheet-open,
-html.city-sheet-open body { background: #ffff00 !important; }
