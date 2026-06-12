@@ -189,6 +189,13 @@ input:-webkit-autofill:hover {
   }
 }
 
+/* Prueba visual: en PWA standalone el fondo de #root pasa a blanco. */
+@media all and (display-mode: standalone) {
+  html.app-ready #root {
+    background: #ffffff !important;
+  }
+}
+
 /* "Elige tu ciudad" abierto: ocultar los rellenos del safe-area superior para que
    el scrim cubra toda la pantalla. Se restaura al cerrar (se quita la clase). */
 html.city-sheet-open #sab,
