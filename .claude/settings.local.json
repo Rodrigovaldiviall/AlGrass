@@ -83,7 +83,9 @@
       "Bash(git --no-pager diff v4 --stat)",
       "Bash(git --no-pager diff v4 -- src/components/TabBar.jsx)",
       "Bash(git --no-pager diff v4 -- src/screens/PickupGames.jsx)",
-      "Bash(grep -oE \".{0,30}skipWaiting.{0,30}\" dist/sw.js)"
+      "Bash(grep -oE \".{0,30}skipWaiting.{0,30}\" dist/sw.js)",
+      "Bash(mv -f public/pwa-192x192.png.png public/pwa-192x192.png)",
+      "Bash(mv -f public/pwa-512x512.png.png public/pwa-512x512.png)"
     ],
     "additionalDirectories": [
       "c:\\Users\\rodri\\.claude\\projects\\c--Claude-Code-AlGrass\\memory"
