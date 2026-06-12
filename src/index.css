@@ -184,6 +184,10 @@ input:-webkit-autofill:hover {
   html.app-ready,
   html.app-ready body,
   html.app-ready #root { background: #ffffff !important; }
+  /* TEMP identificación de capas: html=ROJO, body=VERDE, #root=GRIS. */
+  html { background: #ff0000 !important; }
+  body { background: #00ff00 !important; }
+  #root { background: #808080 !important; }
 }
 
 /* "Elige tu ciudad" abierto: ocultar los rellenos del safe-area superior para que
