@@ -1224,7 +1224,7 @@ export default function GameDetail() {
           user_id:       p.user_id,
           name:          p.full_name || p.user_code || 'Jugador',
           position:      pos,
-          age:           ageFromDate(p.birth_date),
+          age:           p.age ?? null,
           hue:           p.avatar_hue ?? null,
           avatarPath:    p.avatar_path ?? null,
           avatarVersion: p.avatar_updated_at ? new Date(p.avatar_updated_at).getTime() : null,
@@ -1300,22 +1300,35 @@ export default function GameDetail() {
     if (!supabase || !gameId) return;
     supabase
       .from('game_players')
-      .select('user_id, payer_id, status, joined_at, checked_in_at, reservation_type, invited_by_user_id, users:user_id(full_name, user_code, avatar_hue, avatar_path, avatar_updated_at, preferred_position, birth_date)')
+      .select('user_id, payer_id, status, joined_at, checked_in_at, reservation_type, invited_by_user_id')
       .eq('game_id', gameId)
-      .then(({ data, error }) => {
+      .then(async ({ data, error }) => {
         if (error) { console.error('[GameDetail] game_players fetch error:', error); return; }
-        const rows = (data ?? []).map(p => ({
-          ...p,
-          full_name:          p.users?.full_name          ?? null,
-          user_code:          p.users?.user_code          ?? null,
-          avatar_hue:         p.users?.avatar_hue         ?? null,
-          avatar_path:        p.users?.avatar_path        ?? null,
-          avatar_updated_at:  p.users?.avatar_updated_at  ?? null,
-          preferred_position: p.users?.preferred_position ?? null,
-          birth_date:         p.users?.birth_date         ?? null,
-          reservation_type:   p.reservation_type          ?? null,
-          invited_by_user_id: p.invited_by_user_id        ?? null,
-        }));
+        const players = data ?? [];
+        const ids = [...new Set(players.map(p => p.user_id).filter(Boolean))];
+        const usersById = {};
+        if (ids.length) {
+          const { data: us } = await supabase
+            .from('users_public')
+            .select('id, full_name, user_code, avatar_hue, avatar_path, avatar_updated_at, preferred_position, age')
+            .in('id', ids);
+          (us || []).forEach(u => { usersById[u.id] = u; });
+        }
+        const rows = players.map(p => {
+          const u = usersById[p.user_id] || {};
+          return {
+            ...p,
+            full_name:          u.full_name          ?? null,
+            user_code:          u.user_code          ?? null,
+            avatar_hue:         u.avatar_hue         ?? null,
+            avatar_path:        u.avatar_path        ?? null,
+            avatar_updated_at:  u.avatar_updated_at  ?? null,
+            preferred_position: u.preferred_position ?? null,
+            age:                u.age                ?? null,
+            reservation_type:   p.reservation_type   ?? null,
+            invited_by_user_id: p.invited_by_user_id ?? null,
+          };
+        });
         setSbRoster(rows);
         setRosterReady(true);
         setSpotsVerified(true);
