@@ -182,6 +182,13 @@ input:-webkit-autofill:hover {
   .tab-sab { /* sin estilos visuales temporales */ }
 }
 
+/* Prueba visual: en PWA standalone la zona inferior (fondo de body) pasa a blanco. */
+@media all and (display-mode: standalone) {
+  html.app-ready body {
+    background: #ffffff !important;
+  }
+}
+
 /* "Elige tu ciudad" abierto: ocultar los rellenos del safe-area superior para que
    el scrim cubra toda la pantalla. Se restaura al cerrar (se quita la clase). */
 html.city-sheet-open #sab,
