@@ -184,5 +184,5 @@ input:-webkit-autofill:hover {
 
 /* TEMP identificación safe-area superior: #sab=ROJO, body::before=VERDE.
    Solo color (override del fondo); sin tamaño/posición/z-index/opacidad. */
-#sab { background: #ff0000 !important; }
+#sab { background: transparent !important; }
 body::before { background: #00ff00 !important; }
