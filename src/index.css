@@ -182,7 +182,7 @@ input:-webkit-autofill:hover {
   .tab-sab { /* sin estilos visuales temporales */ }
 }
 
-/* TEMP identificación safe-area superior: #sab=ROJO, body::before=VERDE.
-   Solo color (override del fondo); sin tamaño/posición/z-index/opacidad. */
-#sab { background: transparent !important; }
-body::before { background: #00ff00 !important; }
+/* "Elige tu ciudad" abierto: ocultar los rellenos del safe-area superior para que
+   el scrim cubra toda la pantalla. Se restaura al cerrar (se quita la clase). */
+html.city-sheet-open #sab,
+html.city-sheet-open body::before { display: none !important; }

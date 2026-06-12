@@ -652,6 +652,7 @@ const COACH_STEPS = [
 function CoachOverlay({ step, onAdvance }) {
   const mark = COACH_STEPS[step];
   const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
+  const standalone = typeof window !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches;
   const [rect, setRect] = useState(null);
   useLayoutEffect(() => {
     if (!isDesktop) return;
@@ -698,7 +699,7 @@ function CoachOverlay({ step, onAdvance }) {
       <div style={{
         position: 'absolute', bottom: 0,
         left: `${step * 25}vw`, width: '25vw',
-        height: 'calc(60px + env(safe-area-inset-bottom))',
+        height: standalone ? '60px' : 'calc(60px + env(safe-area-inset-bottom))',
         boxShadow: '0 0 0 200vmax rgba(0,0,0,0.46)',
       }} />
       <div
@@ -706,7 +707,7 @@ function CoachOverlay({ step, onAdvance }) {
         style={{
           position: 'relative', zIndex: 1,
           margin: '0 16px',
-          marginBottom: 'calc(env(safe-area-inset-bottom) + 72px)',
+          marginBottom: standalone ? '72px' : 'calc(env(safe-area-inset-bottom) + 72px)',
           background: '#fff', borderRadius: 18,
           padding: '18px 18px 14px',
           boxShadow: '0 8px 32px rgba(0,0,0,0.22)',
@@ -765,6 +766,15 @@ function CityOnboardSheet({ onDone }) {
 
   // Trigger open animation after first paint
   useEffect(() => { requestAnimationFrame(() => setOpen(true)); }, []);
+
+  // While the sheet is open, hide the top safe-area fills (#sab / body::before)
+  // so the scrim covers the full screen; restore on close (class removed).
+  useEffect(() => {
+    const el = document.documentElement;
+    if (open) el.classList.add('city-sheet-open');
+    else el.classList.remove('city-sheet-open');
+    return () => el.classList.remove('city-sheet-open');
+  }, [open]);
 
   function handleSelect(city) {
     cityRef.current = city;
