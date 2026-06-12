@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, SOFT, ORANGE } from '../constants';
 import TabBar from '../components/TabBar';
+import { useForegroundTick } from '../hooks/useForegroundTick';
 import I from '../icons';
 import fieldImg from '../assets/cancha.jpg';
 import { useAuth } from '../context/AuthContext';
@@ -277,6 +278,7 @@ export default function Notifications() {
     return () => window.removeEventListener('notif-badge', onBadge);
   }, []);
 
+  const fgTick = useForegroundTick();
   useEffect(() => {
     if (!user?.id) { setLoading(false); return; }
     supabase
@@ -294,7 +296,7 @@ export default function Notifications() {
         setHasMore(more);
         setLoading(false);
       });
-  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user?.id, fgTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!highlightedNotifId) return;

@@ -9,6 +9,7 @@ import { shareOrCopy } from '../utils/share';
 import { GAMES, FIELD_INFO, GAME_DEFAULTS } from '../data/games';
 import { getActivePlayers, getRoster, removePlayers, setTitularCanceled as markTitularCanceled, deleteRoster, getGameById } from '../services/gameService';
 import TabBar from '../components/TabBar';
+import { useForegroundTick } from '../hooks/useForegroundTick';
 import RatingBlock from '../components/RatingBlock';
 import { useAuth } from '../context/AuthContext';
 import { cancelGamePlayer, cancelGuestPlayers, cancelInvitedPlayers } from '../services/reservationService';
@@ -1322,7 +1323,8 @@ export default function GameDetail() {
       });
   }
 
-  useEffect(() => { fetchRoster(); }, [gameId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const fgTick = useForegroundTick();
+  useEffect(() => { fetchRoster(); }, [gameId, fgTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-fetch roster when game transitions to past — ensures players see the final
   // attendance state even if they had GameDetail open before the host marked.

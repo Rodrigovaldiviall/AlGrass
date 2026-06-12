@@ -13,6 +13,7 @@ import { deriveGameState, requiredPlayers, isGameStarted } from '../utils/derive
 import { GameMetaLine } from '../components/GameMetaLine';
 import { abbreviateName, formatDateLabel } from '../utils/format';
 import { getMyWaitlistGameIds } from '../services/waitlistService';
+import { useForegroundTick } from '../hooks/useForegroundTick';
 
 const DOW_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
@@ -900,13 +901,14 @@ export default function PickupGames() {
   useEffect(() => {
     if (location.state?.showCitySheet) { setCitySheetOpen(true); setCityOnboarding(true); }
   }, [location.state?.showCitySheet]);
+  const fgTick = useForegroundTick();
   const [games, setGames]     = useState(() => _gamesCache);
   const [loading, setLoading] = useState(_gamesCache.length === 0);
   useEffect(() => {
     getGames().then(data => {
       _gamesCache = data; setGames(data); setLoading(false);
     });
-  }, []);
+  }, [fgTick]);
 
   const _pr0 = user?.id ? _readPRCache(user.id) : null;
   const _wl0 = user?.id ? _readWLCache(user.id) : null;
@@ -948,7 +950,7 @@ export default function PickupGames() {
         setPlayerRowsFresh(true);
         try { sessionStorage.setItem(_PR_KEY(user.id), JSON.stringify({ rows, names, ts: Date.now() })); } catch {}
       });
-  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user?.id, fgTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!supabase || games.length === 0) return;
@@ -1035,7 +1037,7 @@ export default function PickupGames() {
       setWaitlistFresh(true);
       try { sessionStorage.setItem(_WL_KEY(user.id), JSON.stringify({ ids, ts: Date.now() })); } catch {}
     });
-  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user?.id, fgTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const gameStateMap = useMemo(() => {
     if (!user?.id) return new Map();

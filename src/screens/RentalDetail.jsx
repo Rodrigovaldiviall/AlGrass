@@ -3,6 +3,7 @@ import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, WHATSAPP_NUMBER } from '../constants';
 import I from '../icons';
 import TabBar from '../components/TabBar';
+import { useForegroundTick } from '../hooks/useForegroundTick';
 import { supabase } from '../lib/supabase';
 import { getVenueCoverUrl } from '../utils/venue';
 import { getAvatarUrl } from '../utils/avatar';
@@ -383,6 +384,7 @@ export default function RentalDetail() {
   });
   const [loading, setLoading]         = useState(!location.state?.field);
   const [statusReady, setStatusReady] = useState(!!_rd0);
+  const fgTick = useForegroundTick();
   const [statusVerified, setStatusVerified] = useState(false);
   const [myReservation, setMyRes]     = useState(_rd0?.myReservation ?? null);
   const [cancelOpen, setCancelOpen]   = useState(false);
@@ -426,7 +428,7 @@ export default function RentalDetail() {
         }));
       } catch {}
     });
-  }, [id, user?.id]); // eslint-disable-line
+  }, [id, user?.id, fgTick]); // eslint-disable-line
 
   useEffect(() => {
     const hostId = game?.hostUserId;

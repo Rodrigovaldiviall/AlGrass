@@ -7,13 +7,37 @@ import Sidebar from './components/Sidebar';
 import IntroScreen from './screens/IntroScreen';
 import { supabase } from './lib/supabase';
 import { setNotifBadge } from './utils/notifBadge';
+import { useForegroundTick } from './hooks/useForegroundTick';
 
 const INTRO_KEY = 'algrass_intro_seen';
 
 
+// Al volver a primer plano: (A) emite 'app-foreground' SIEMPRE para que las
+// pantallas re-fetcheen en sitio; (B) comprueba versión nueva del SW solo si
+// pasaron >4h (deja el SW nuevo en 'waiting', sin recargar ni activar en sesión).
+function AppLifecycle() {
+  useEffect(() => {
+    let lastSWCheck = 0;
+    const FOUR_HOURS = 4 * 60 * 60 * 1000;
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      window.dispatchEvent(new CustomEvent('app-foreground'));
+      const now = Date.now();
+      if (now - lastSWCheck > FOUR_HOURS && 'serviceWorker' in navigator) {
+        lastSWCheck = now;
+        navigator.serviceWorker.getRegistration().then((r) => r && r.update());
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
+  return null;
+}
+
 function NotifBadgeSync() {
   const { user } = useAuth();
   const { pathname } = useLocation();
+  const fgTick = useForegroundTick();
   useEffect(() => {
     if (!user?.id) { setNotifBadge(0); return; }
     if (pathname === '/notifications') return;
@@ -23,7 +47,7 @@ function NotifBadgeSync() {
       .eq('recipient_user_id', user.id)
       .is('read_at', null)
       .then(({ count }) => setNotifBadge(count ?? 0));
-  }, [user?.id, pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user?.id, pathname, fgTick]); // eslint-disable-line react-hooks/exhaustive-deps
   return null;
 }
 
@@ -131,6 +155,7 @@ export default function App() {
       </div>
       <NotifBadgeSync />
       <StaffModalBridge />
+      <AppLifecycle />
       <IntroGate />
     </BrowserRouter>
     </StaffProvider>

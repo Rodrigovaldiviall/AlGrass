@@ -11,6 +11,7 @@ import fieldNoAvailable from '../assets/Field no available.webp';
 import { supabase } from '../lib/supabase';
 import { getVenueCoverUrl } from '../utils/venue';
 import { getRentalGames } from '../services/gameService';
+import { useForegroundTick } from '../hooks/useForegroundTick';
 import { getMyBookedGameIds } from '../services/reservationService';
 import { GameMetaLine } from '../components/GameMetaLine';
 import { isGamePast } from '../utils/deriveGameState';
@@ -585,6 +586,7 @@ export default function Fields() {
   const stripCellRefs      = useRef({});
   const programmaticScroll = useRef(false);
 
+  const fgTick = useForegroundTick();
   const [myBookedFresh, setMyBookedFresh] = useState(false);
   const [myBookedIds, setMyBookedIds]     = useState(() => _myBookedCache);
   const [rentalGames, setRentalGames]     = useState(() => _rentalCache);
@@ -604,7 +606,7 @@ export default function Fields() {
         setMyBookedFresh(true);
       }
     });
-  }, []); // eslint-disable-line
+  }, [fgTick]); // eslint-disable-line
 
   const hasHostedInFeed = useMemo(
     () => !!user?.id && rentalGames.some(f => f.hostUserId === user.id),

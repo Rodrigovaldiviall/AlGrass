@@ -16,6 +16,7 @@ import { GameMetaLine } from '../components/GameMetaLine';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import { saveRating, fetchMyRatings, upsertRatingRows, markPopupShown, getLocalRatings, setLocalRatings } from '../services/ratingService';
 import { getMyWaitlistGamesFull } from '../services/waitlistService';
+import { useForegroundTick } from '../hooks/useForegroundTick';
 import { uploadAvatar, getAvatarUrl } from '../utils/avatar';
 
 const USER = {
@@ -2072,6 +2073,7 @@ export default function Profile() {
   const [isDirty] = useState(() => { try { return sessionStorage.getItem('profile_dirty') === '1'; } catch { return false; } });
   // Fresh flags — start false regardless of cache; flip only when Supabase resolves.
   // creditFresh intentionally excluded: credit shows from cache and must never block content.
+  const fgTick = useForegroundTick();
   const [myPlayerRowsFresh, setMyPlayerRowsFresh] = useState(false);
   const [hostedFresh,       setHostedFresh]       = useState(false);
   const [rentalFresh,       setRentalFresh]       = useState(false);
@@ -2314,7 +2316,7 @@ export default function Profile() {
         try { localStorage.setItem(WAITLIST_KEY_P, JSON.stringify(entries)); } catch {}
       });
     });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fgTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-fetch after a new reservation so the game appears immediately without manual refresh
   useEffect(() => {

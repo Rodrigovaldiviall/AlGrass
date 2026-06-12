@@ -82,7 +82,8 @@
       "Bash(git --no-pager show origin/main:src/index.css)",
       "Bash(git --no-pager diff v4 --stat)",
       "Bash(git --no-pager diff v4 -- src/components/TabBar.jsx)",
-      "Bash(git --no-pager diff v4 -- src/screens/PickupGames.jsx)"
+      "Bash(git --no-pager diff v4 -- src/screens/PickupGames.jsx)",
+      "Bash(grep -oE \".{0,30}skipWaiting.{0,30}\" dist/sw.js)"
     ],
     "additionalDirectories": [
       "c:\\Users\\rodri\\.claude\\projects\\c--Claude-Code-AlGrass\\memory"
