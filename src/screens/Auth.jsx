@@ -266,7 +266,7 @@ export function AuthGate() {
   const [relStatus, setRelStatus] = useState('checking'); // checking | allowed | blocked
   useEffect(() => {
     if (!user?.id) return; // sin login → se muestra la UI de login
-    if (!game?.id || waitlistMode || game.invitedMode || game.type === 'rental') { setRelStatus('allowed'); return; }
+    if (!game?.id || waitlistMode || game.invitedMode || game.addGuestsMode || game.type === 'rental') { setRelStatus('allowed'); return; }
     setRelStatus('checking');
     if (game.hostUserId === user.id) { setRelStatus('blocked'); return; }
     let cancelled = false;
@@ -279,7 +279,7 @@ export function AuthGate() {
         setRelStatus(deriveGameState(data ?? [], user.id).isVisible ? 'blocked' : 'allowed');
       });
     return () => { cancelled = true; };
-  }, [user?.id, game?.id, game?.hostUserId, game?.type, game?.invitedMode, waitlistMode]);
+  }, [user?.id, game?.id, game?.hostUserId, game?.type, game?.invitedMode, game?.addGuestsMode, waitlistMode]);
 
   if (!game && !waitlistMode && !state?.gateCleared) return <Navigate to="/games" replace />;
 
