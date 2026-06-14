@@ -200,3 +200,9 @@ input:-webkit-autofill:hover {
    el scrim cubra toda la pantalla. Se restaura al cerrar (se quita la clase). */
 html.city-sheet-open #sab,
 html.city-sheet-open body::before { display: none !important; }
+
+/* TEMP diagnóstico (solo PWA standalone): body::before en amarillo para ver si pinta
+   la franja superior. Revertir tras la prueba. */
+@media all and (display-mode: standalone) {
+  body::before { background: yellow !important; }
+}
