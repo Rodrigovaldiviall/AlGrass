@@ -200,11 +200,3 @@ input:-webkit-autofill:hover {
    el scrim cubra toda la pantalla. Se restaura al cerrar (se quita la clase). */
 html.city-sheet-open #sab,
 html.city-sheet-open body::before { display: none !important; }
-
-/* TEMP diagnóstico franja superior (solo PWA standalone). Revertir tras identificar.
-   html.app-ready → rojo · body::before → amarillo · #sab → violeta */
-@media all and (display-mode: standalone) {
-  html.app-ready        { background: red !important; }
-  html.app-ready body::before { background: yellow !important; }
-  #sab                  { background: #8000ff !important; }
-}
