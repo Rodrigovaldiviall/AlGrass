@@ -281,10 +281,8 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
 // ── Header ─────────────────────────────────────────────────────────────────
 
 function Header({ city, onCityTap }) {
-  // TEMP diagnóstico: en PWA standalone el header pasa a rojo para ver si pinta el inset. Revertir.
-  const standalone = typeof window !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches;
   return (
-    <div style={{ background: standalone ? 'red' : BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 14px)', paddingBottom: 14, paddingLeft: 20, paddingRight: 20 }}>
+    <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 14px)', paddingBottom: 14, paddingLeft: 20, paddingRight: 20 }}>
       <div style={{ height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
         <div style={{ color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>Elije tu partido</div>
         {city && (
