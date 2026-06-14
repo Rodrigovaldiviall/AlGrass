@@ -756,6 +756,7 @@ function CityOnboardSheet({ onDone }) {
   const [cities, setCities] = useState([]);
   const [open, setOpen]     = useState(false);
   const cityRef             = useRef(null);
+  const standalone = typeof window !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches;
 
   useEffect(() => {
     supabase.from('venues').select('city').not('city', 'is', null)
@@ -784,9 +785,13 @@ function CityOnboardSheet({ onDone }) {
 
   return createPortal(
     <>
-      {/* Scrim — fullscreen, no onClick (city selection is mandatory) */}
+      {/* Scrim — fullscreen, no onClick (city selection is mandatory).
+          Solo en PWA standalone el scrim se extiende sobre el inset superior
+          (top negativo); en navegador normal mantiene inset:0 original. */}
       <div style={{
-        position: 'fixed', inset: 0, zIndex: 100000,
+        position: 'fixed', left: 0, right: 0, bottom: 0,
+        top: standalone ? 'calc(-1 * env(safe-area-inset-top))' : 0,
+        zIndex: 100000,
         background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)',
         transition: 'background .22s ease',
         pointerEvents: open ? 'all' : 'none',

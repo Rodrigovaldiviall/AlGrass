@@ -85,7 +85,14 @@
       "Bash(git --no-pager diff v4 -- src/screens/PickupGames.jsx)",
       "Bash(grep -oE \".{0,30}skipWaiting.{0,30}\" dist/sw.js)",
       "Bash(mv -f public/pwa-192x192.png.png public/pwa-192x192.png)",
-      "Bash(mv -f public/pwa-512x512.png.png public/pwa-512x512.png)"
+      "Bash(mv -f public/pwa-512x512.png.png public/pwa-512x512.png)",
+      "Bash(file src/assets/logo.webp dist/assets/logo-*.webp)",
+      "Bash(awk '{print $5, $9}')",
+      "Bash(xxd src/assets/logo.webp)",
+      "Bash(xxd src/assets/logo2.webp)",
+      "Read(//tmp/**)",
+      "Bash(xxd /tmp/logo_old.webp)",
+      "Bash(python -c \"from PIL import Image; im=Image.open\\('dist/assets/logo-CLGfZfKd.webp'\\); print\\('dist OK:', im.format, im.size, im.mode\\)\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\rodri\\.claude\\projects\\c--Claude-Code-AlGrass\\memory"
