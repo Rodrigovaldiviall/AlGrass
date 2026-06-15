@@ -308,10 +308,10 @@ function CitySheet({ cities, current, onSelect, onClose, required = false }) {
     <>
       <div
         onClick={required ? undefined : onClose}
-        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 100000 }}
+        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200 }}
       />
       <div style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 100001,
+        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 201,
         background: '#fff', borderRadius: '20px 20px 0 0',
         padding: '20px 20px calc(env(safe-area-inset-bottom) + 24px)',
         animation: 'lp-slideup 0.28s cubic-bezier(0.32,0.72,0,1) forwards',
