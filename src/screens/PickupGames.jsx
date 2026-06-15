@@ -769,7 +769,7 @@ function CityOnboardSheet({ onDone }) {
   // Trigger open animation after first paint
   useEffect(() => { requestAnimationFrame(() => setOpen(true)); }, []);
 
-  // While the sheet is open, hide the top safe-area fills (#sab / body::before)
+  // While the sheet is open, hide the top safe-area fill (body::before)
   // so the scrim covers the full screen; restore on close (class removed).
   useEffect(() => {
     const el = document.documentElement;
