@@ -683,26 +683,24 @@ export default function ConfirmReservation() {
     if (!authUser?.id || !supabase) return;
     supabase
       .from('game_players')
-      .select('user_id, users:user_id(id, full_name, user_code, avatar_hue, avatar_path, avatar_updated_at, deleted_at)')
+      .select('user_id')
       .eq('payer_id', authUser.id)
       .neq('user_id', authUser.id)
-      .then(({ data }) => {
-        if (!data?.length) return;
-        const seen = new Set();
-        const result = [];
-        for (const row of data) {
-          const u = row.users;
-          if (!u || u.deleted_at || seen.has(u.id)) continue;
-          seen.add(u.id);
-          result.push({
-            id:            u.id,
-            name:          u.full_name || '',
-            code:          u.user_code ? `@${u.user_code}` : '',
-            hue:           u.avatar_hue ?? ([...(u.full_name || '·')].reduce((a, c) => a + c.charCodeAt(0), 0) % 360),
-            avatarPath:    u.avatar_path    ?? null,
-            avatarVersion: u.avatar_updated_at ? new Date(u.avatar_updated_at).getTime() : null,
-          });
-        }
+      .then(async ({ data }) => {
+        const ids = [...new Set((data ?? []).map(r => r.user_id))];
+        if (!ids.length) return;
+        const { data: users } = await supabase
+          .from('users_public')
+          .select('id, full_name, user_code, avatar_hue, avatar_path, avatar_updated_at')
+          .in('id', ids);
+        const result = (users ?? []).map(u => ({
+          id:            u.id,
+          name:          u.full_name || '',
+          code:          u.user_code ? `@${u.user_code}` : '',
+          hue:           u.avatar_hue ?? ([...(u.full_name || '·')].reduce((a, c) => a + c.charCodeAt(0), 0) % 360),
+          avatarPath:    u.avatar_path    ?? null,
+          avatarVersion: u.avatar_updated_at ? new Date(u.avatar_updated_at).getTime() : null,
+        }));
         setPaidPlayers(result);
       });
   }, [authUser?.id]); // eslint-disable-line
