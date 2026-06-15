@@ -95,7 +95,9 @@
       "Bash(python -c \"from PIL import Image; im=Image.open\\('dist/assets/logo-CLGfZfKd.webp'\\); print\\('dist OK:', im.format, im.size, im.mode\\)\")",
       "Bash(git log *)",
       "Bash(grep -rniE \"#sab|id=.{0,3}sab|'sab'|\\\\\"sab\\\\\"\" src/)",
-      "Bash(grep -rnE \"zIndex:\\\\s*9{4,}|z-index:\\\\s*9{4,}|zIndex:\\\\s*100000|zIndex:\\\\s*100001\" src/)"
+      "Bash(grep -rnE \"zIndex:\\\\s*9{4,}|z-index:\\\\s*9{4,}|zIndex:\\\\s*100000|zIndex:\\\\s*100001\" src/)",
+      "Bash(sed -n '25,40p' src/index.css)",
+      "Bash(sed -n '195,215p' src/index.css)"
     ],
     "additionalDirectories": [
       "c:\\Users\\rodri\\.claude\\projects\\c--Claude-Code-AlGrass\\memory"
