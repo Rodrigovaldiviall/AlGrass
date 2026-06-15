@@ -201,7 +201,8 @@ input:-webkit-autofill:hover {
 html.city-sheet-open #sab,
 html.city-sheet-open body::before { display: none !important; }
 
-/* TEMP diagnóstico: ocultar body::before en TODA la app pero solo en PWA standalone. */
+/* TEMP diagnóstico: pintar body::before de amarillo en TODA la app, solo en PWA standalone,
+   para verificar dónde aparece realmente. */
 @media all and (display-mode: standalone) {
-  body::before { display: none !important; }
+  body::before { background: yellow !important; }
 }
