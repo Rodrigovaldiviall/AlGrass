@@ -304,11 +304,14 @@ function Header({ city, onCityTap }) {
 }
 
 function CitySheet({ cities, current, onSelect, onClose, required = false }) {
+  // TEMP diagnóstico (solo PWA standalone): subir el z-index del scrim por encima de
+  // body::before (z99999) para ver si la franja superior se oscurece. Revertir.
+  const standalone = typeof window !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches;
   return (
     <>
       <div
         onClick={required ? undefined : onClose}
-        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200 }}
+        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: standalone ? 100000 : 200 }}
       />
       <div style={{
         position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 201,
