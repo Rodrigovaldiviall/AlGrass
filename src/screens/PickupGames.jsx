@@ -304,18 +304,14 @@ function Header({ city, onCityTap }) {
 }
 
 function CitySheet({ cities, current, onSelect, onClose, required = false }) {
-  // En PWA standalone, body::before (z99999) pinta el sliver del safe-area superior.
-  // Subimos scrim (100000) por encima para que cubra esa franja, y panel (100001)
-  // por encima del scrim para que siga visible. En Safari (z 200/201) no cambia nada.
-  const standalone = typeof window !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches;
   return (
     <>
       <div
         onClick={required ? undefined : onClose}
-        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: standalone ? 100000 : 200 }}
+        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200 }}
       />
       <div style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: standalone ? 100001 : 201,
+        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 201,
         background: '#fff', borderRadius: '20px 20px 0 0',
         padding: '20px 20px calc(env(safe-area-inset-bottom) + 24px)',
         animation: 'lp-slideup 0.28s cubic-bezier(0.32,0.72,0,1) forwards',
@@ -898,6 +894,15 @@ export default function PickupGames() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user }  = useAuth();
+
+  // TEMP diagnóstico (solo PWA standalone): mientras PickupGames esté montado, ocultar
+  // body::before para ver qué color queda detrás en el safe-area superior. Revertir.
+  useEffect(() => {
+    if (!window.matchMedia('(display-mode: standalone)').matches) return;
+    const el = document.documentElement;
+    el.classList.add('pg-diag-hide-sab');
+    return () => el.classList.remove('pg-diag-hide-sab');
+  }, []);
 
   const [coachStep, setCoachStep] = useState(null);
   function advanceCoach() {

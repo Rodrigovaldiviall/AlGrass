@@ -201,6 +201,8 @@ input:-webkit-autofill:hover {
 html.city-sheet-open #sab,
 html.city-sheet-open body::before { display: none !important; }
 
-/* TEMP diagnóstico GLOBAL: body::before desactivado en TODA la app para ver qué hay
-   detrás del relleno del safe-area superior. Revertir tras la prueba. */
-body::before { display: none !important; }
+/* TEMP diagnóstico: ocultar body::before solo en PickupGames (clase añadida al montar)
+   y solo en PWA standalone, para ver qué hay detrás. Revertir tras la prueba. */
+@media all and (display-mode: standalone) {
+  html.pg-diag-hide-sab body::before { display: none !important; }
+}
