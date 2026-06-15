@@ -200,3 +200,9 @@ input:-webkit-autofill:hover {
    el scrim cubra toda la pantalla. Se restaura al cerrar (se quita la clase). */
 html.city-sheet-open #sab,
 html.city-sheet-open body::before { display: none !important; }
+
+/* TEMP diagnóstico: ocultar body::before tras app-ready para comprobar si es la capa
+   que impide que los scrims cubran el safe-area superior. Revertir tras la prueba. */
+html.app-ready body::before {
+  display: none !important;
+}
