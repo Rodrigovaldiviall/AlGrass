@@ -199,5 +199,4 @@ input:-webkit-autofill:hover {
 
 /* "Elige tu ciudad" abierto: ocultar los rellenos del safe-area superior para que
    el scrim cubra toda la pantalla. Se restaura al cerrar (se quita la clase). */
-html.city-sheet-open #sab,
 html.city-sheet-open body::before { display: none !important; }
