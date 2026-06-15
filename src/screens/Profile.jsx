@@ -1562,6 +1562,12 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
         }}>
           Guardar cambios
         </button>
+        {!isSocial && !emailLocked && !confirmField && (
+          <div onClick={() => requestLock('email')} style={{ position: 'absolute', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.3)' }} />
+        )}
+        {!isSocial && !pwLocked && !confirmField && (
+          <div onClick={() => requestLock('password')} style={{ position: 'absolute', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.3)' }} />
+        )}
         </div>
 
         {confirmField && (
