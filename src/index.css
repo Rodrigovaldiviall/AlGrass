@@ -201,8 +201,7 @@ input:-webkit-autofill:hover {
 html.city-sheet-open #sab,
 html.city-sheet-open body::before { display: none !important; }
 
-/* TEMP diagnóstico: ocultar body::before solo en PickupGames (clase añadida al montar)
-   y solo en PWA standalone, para ver qué hay detrás. Revertir tras la prueba. */
+/* TEMP diagnóstico: ocultar body::before en TODA la app pero solo en PWA standalone. */
 @media all and (display-mode: standalone) {
-  html.pg-diag-hide-sab body::before { display: none !important; }
+  body::before { display: none !important; }
 }
