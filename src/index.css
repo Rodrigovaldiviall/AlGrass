@@ -204,5 +204,5 @@ html.city-sheet-open body::before { display: none !important; }
 /* TEMP diagnóstico: pintar body::before de amarillo en TODA la app, solo en PWA standalone,
    para verificar dónde aparece realmente. */
 @media all and (display-mode: standalone) {
-  body::before { background: yellow !important; }
+  body::before { background: #ffff00 !important; }
 }
