@@ -899,15 +899,6 @@ export default function PickupGames() {
   const location = useLocation();
   const { user }  = useAuth();
 
-  // TEMP diagnóstico (solo PWA standalone): mientras PickupGames esté montado, ocultar
-  // body::before para ver qué color queda detrás en el safe-area superior. Revertir.
-  useEffect(() => {
-    if (!window.matchMedia('(display-mode: standalone)').matches) return;
-    const el = document.documentElement;
-    el.classList.add('pg-diag-hide-sab');
-    return () => el.classList.remove('pg-diag-hide-sab');
-  }, []);
-
   const [coachStep, setCoachStep] = useState(null);
   function advanceCoach() {
     if (coachStep < COACH_STEPS.length - 1) { setCoachStep(s => s + 1); }
