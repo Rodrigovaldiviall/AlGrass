@@ -4,6 +4,7 @@ import { BLUE, TEXT, SUB, HAIR, TAB_INACTIVE, RED } from '../constants';
 import I from '../icons';
 import { haptic } from '../utils/haptic';
 import { readNotifBadgeLabel, badgeLabel } from '../utils/notifBadge';
+import { readWaitlistBadge } from '../utils/waitlistBadge';
 
 const TABS = [
   { id: 'partidos',       icon: I.search,  label: 'Partidos',       route: '/games' },
@@ -52,6 +53,7 @@ export default function Sidebar() {
   const activeTab    = tabFromPath(pathname);
 
   const [notifBadge, setNotifBadgeState] = useState(readNotifBadgeLabel);
+  const [waitlistDot, setWaitlistDot] = useState(readWaitlistBadge);
 
   useEffect(() => {
     if (isRootScreen) sessionStorage.setItem(SESSION_KEY, ROOT_ROUTES[pathname]);
@@ -62,6 +64,13 @@ export default function Sidebar() {
     function onBadge(e) { setNotifBadgeState(badgeLabel(e.detail)); }
     window.addEventListener('notif-badge', onBadge);
     return () => window.removeEventListener('notif-badge', onBadge);
+  }, []);
+
+  useEffect(() => {
+    setWaitlistDot(readWaitlistBadge());
+    function onWl(e) { setWaitlistDot(!!e.detail); }
+    window.addEventListener('waitlist-badge', onWl);
+    return () => window.removeEventListener('waitlist-badge', onWl);
   }, []);
 
   const badges = { notificaciones: notifBadge, perfil: getUpcomingBadge() };
@@ -124,6 +133,12 @@ export default function Sidebar() {
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     boxSizing: 'border-box',
                   }}>{badge}</div>
+                )}
+                {t.id === 'perfil' && waitlistDot && (
+                  <span style={{
+                    position: 'absolute', top: -6, right: -12,
+                    fontSize: 15, lineHeight: 1, pointerEvents: 'none',
+                  }}>🔔</span>
                 )}
               </div>
               <span style={{

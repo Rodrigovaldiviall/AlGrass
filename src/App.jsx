@@ -7,6 +7,8 @@ import Sidebar from './components/Sidebar';
 import IntroScreen from './screens/IntroScreen';
 import { supabase } from './lib/supabase';
 import { setNotifBadge } from './utils/notifBadge';
+import { setWaitlistBadge } from './utils/waitlistBadge';
+import { hasAvailableWaitlistSpot } from './services/waitlistService';
 import { useForegroundTick } from './hooks/useForegroundTick';
 
 const INTRO_KEY = 'algrass_intro_seen';
@@ -47,6 +49,19 @@ function NotifBadgeSync() {
       .eq('recipient_user_id', user.id)
       .is('read_at', null)
       .then(({ count }) => setNotifBadge(count ?? 0));
+  }, [user?.id, pathname, fgTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  return null;
+}
+
+// Publica el booleano de "oportunidad activa de waitlist" para TabBar/Sidebar.
+// Recalcula al cambiar de usuario, de ruta o al volver a primer plano.
+function WaitlistBadgeSync() {
+  const { user } = useAuth();
+  const { pathname } = useLocation();
+  const fgTick = useForegroundTick();
+  useEffect(() => {
+    if (!user?.id) { setWaitlistBadge(false); return; }
+    hasAvailableWaitlistSpot(user.id).then(setWaitlistBadge);
   }, [user?.id, pathname, fgTick]); // eslint-disable-line react-hooks/exhaustive-deps
   return null;
 }
@@ -154,6 +169,7 @@ export default function App() {
         </div>
       </div>
       <NotifBadgeSync />
+      <WaitlistBadgeSync />
       <StaffModalBridge />
       <AppLifecycle />
       <IntroGate />

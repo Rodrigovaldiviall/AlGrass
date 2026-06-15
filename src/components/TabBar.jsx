@@ -5,6 +5,7 @@ import I from '../icons';
 import { haptic } from '../utils/haptic';
 import { isGamePast } from '../utils/deriveGameState';
 import { readNotifBadgeLabel, badgeLabel } from '../utils/notifBadge';
+import { readWaitlistBadge } from '../utils/waitlistBadge';
 
 const TABS = [
   { id: 'partidos',       icon: I.search,  label: 'Partidos',       route: '/games' },
@@ -30,7 +31,7 @@ function tabFromPath(pathname, backPath) {
   return 'partidos';
 }
 
-function TabItem({ icon, label, active, badge, onClick }) {
+function TabItem({ icon, label, active, badge, dot, onClick }) {
   const color = active ? BLUE : TAB_INACTIVE;
   const [pressed, setPressed] = useState(false);
   return (
@@ -62,6 +63,12 @@ function TabItem({ icon, label, active, badge, onClick }) {
             boxSizing: 'border-box',
           }}>{badge}</div>
         )}
+        {dot && (
+          <span style={{
+            position: 'absolute', top: -4, right: -14,
+            fontSize: 12, lineHeight: 1, pointerEvents: 'none',
+          }}>🔔</span>
+        )}
       </div>
       <div style={{ fontSize: 11, fontWeight: active ? 600 : 500, color, letterSpacing: -0.1 }}>{label}</div>
     </button>
@@ -75,12 +82,20 @@ export default function TabBar({ activeTab: activeProp }) {
   const isDetailScreen = pathname.startsWith('/game/') || pathname.startsWith('/field/') || pathname.startsWith('/rental/');
 
   const [notifBadge, setNotifBadgeState] = useState(readNotifBadgeLabel);
+  const [waitlistDot, setWaitlistDot] = useState(readWaitlistBadge);
 
   useEffect(() => {
     setNotifBadgeState(readNotifBadgeLabel());
     function onBadge(e) { setNotifBadgeState(badgeLabel(e.detail)); }
     window.addEventListener('notif-badge', onBadge);
     return () => window.removeEventListener('notif-badge', onBadge);
+  }, []);
+
+  useEffect(() => {
+    setWaitlistDot(readWaitlistBadge());
+    function onWl(e) { setWaitlistDot(!!e.detail); }
+    window.addEventListener('waitlist-badge', onWl);
+    return () => window.removeEventListener('waitlist-badge', onWl);
   }, []);
 
   const badges = { notificaciones: notifBadge, perfil: getUpcomingBadge() };
@@ -97,6 +112,7 @@ export default function TabBar({ activeTab: activeProp }) {
           icon={t.icon}
           label={t.label}
           badge={badges[t.id]}
+          dot={t.id === 'perfil' && waitlistDot}
           active={activeTab === t.id}
           onClick={() => {
             haptic();

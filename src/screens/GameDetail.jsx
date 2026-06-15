@@ -1245,6 +1245,7 @@ export default function GameDetail() {
   const confirmed = g.totalSpots - openSpots;
   const [inWaitlist,    setInWaitlist]    = useState(false);
   const [waitlistReady, setWaitlistReady] = useState(false);
+  const [showWaitlistAuth, setShowWaitlistAuth] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [modifyOpen, setModifyOpen] = useState(false);
   const [cancelOpen,  setCancelOpen]  = useState(false);
@@ -1279,9 +1280,22 @@ export default function GameDetail() {
   }, [gameId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!user?.id || !gameId) return;
+    if (!gameId) return;
+    if (!user?.id) { setInWaitlist(false); setWaitlistReady(true); return; }
+    let pending = null;
+    try { pending = sessionStorage.getItem('pending_waitlist_game'); } catch {}
     getMyWaitlistGameIds(user.id).then(ids => {
-      setInWaitlist(ids.includes(gameId));
+      const already = ids.includes(gameId);
+      if (!already && pending === gameId) {
+        // Inscripción pendiente tras autenticarse: completar automáticamente.
+        joinWaitlist(user.id, gameId);
+        setInWaitlist(true);
+        try { sessionStorage.removeItem(`pg_waitlist_${user.id}`); } catch {}
+        try { sessionStorage.setItem('profile_dirty', '1'); } catch {}
+      } else {
+        setInWaitlist(already);
+      }
+      if (pending === gameId) { try { sessionStorage.removeItem('pending_waitlist_game'); } catch {} }
       setWaitlistReady(true);
     });
   }, [user?.id, gameId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1479,7 +1493,7 @@ export default function GameDetail() {
 
   function handleWaitlistToggle() {
     if (!user) {
-      navigate('/checkout', { state: { waitlistMode: true, backPath: id ? `/game/${id}` : '/games' } });
+      setShowWaitlistAuth(true);
       return;
     }
     const next = !inWaitlist;
@@ -1743,6 +1757,34 @@ export default function GameDetail() {
         )}
         <TabBar />
       {selectedPlayer && <PlayerModal player={selectedPlayer} isHost={selectedPlayer.isHost ?? false} onClose={() => setSelectedPlayer(null)} />}
+      {showWaitlistAuth && (
+        <div
+          onClick={() => setShowWaitlistAuth(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 32px' }}>
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: '#fff', borderRadius: 20, width: '100%', maxWidth: 340, padding: '24px 22px 18px', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: TEXT, letterSpacing: -0.2, marginBottom: 8 }}>Lista de espera</div>
+            <div style={{ fontSize: 14.5, color: SUB, lineHeight: 1.5, marginBottom: 20 }}>Ingresa para recibir notificaciones.</div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={() => setShowWaitlistAuth(false)}
+                style={{ flex: 1, height: 46, borderRadius: 14, border: `1px solid ${HAIR}`, background: '#fff', color: TEXT, fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  setShowWaitlistAuth(false);
+                  try { sessionStorage.setItem('pending_waitlist_game', gameId); } catch {}
+                  navigate('/checkout', { state: { waitlistMode: true, backPath: id ? `/game/${id}` : '/games' } });
+                }}
+                style={{ flex: 1, height: 46, borderRadius: 14, border: 'none', background: BLUE, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                Ingresar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {modifyOpen && (
         <ModifySheet
           canAddGuests={liveOpenSpots > 0}

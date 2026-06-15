@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { isGamePast } from '../utils/deriveGameState';
 
 export async function joinWaitlist(userId, gameId) {
   if (!supabase || !userId || !gameId) return;
@@ -97,6 +98,24 @@ export async function markWaitlistReserved(userId, gameId) {
     .eq('game_id', gameId)
     .eq('status', 'waiting');
   if (error) console.warn('[waitlist] mark reserved error:', error);
+}
+
+// true si el usuario está en alguna waitlist (status='waiting') de un partido NO pasado
+// con al menos un cupo libre (total_spots − confirmados > 0).
+export async function hasAvailableWaitlistSpot(userId) {
+  if (!supabase || !userId) return false;
+  const ids = await getMyWaitlistGameIds(userId);
+  if (!ids.length) return false;
+  const [{ data: games }, { data: players }] = await Promise.all([
+    supabase.from('games').select('id, total_spots, date_key, time, duration_min').in('id', ids),
+    supabase.from('game_players').select('game_id').eq('status', 'confirmed').in('game_id', ids),
+  ]);
+  const confirmedByGame = new Map();
+  (players ?? []).forEach(r => confirmedByGame.set(r.game_id, (confirmedByGame.get(r.game_id) ?? 0) + 1));
+  return (games ?? []).some(g =>
+    !isGamePast(g.date_key, g.time, g.duration_min) &&
+    (g.total_spots ?? 0) - (confirmedByGame.get(g.id) ?? 0) > 0
+  );
 }
 
 export async function getMyWaitlistGamesFull(userId) {
