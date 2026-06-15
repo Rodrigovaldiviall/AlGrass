@@ -304,8 +304,9 @@ function Header({ city, onCityTap }) {
 }
 
 function CitySheet({ cities, current, onSelect, onClose, required = false }) {
-  // TEMP diagnóstico (solo PWA standalone): subir el z-index del scrim por encima de
-  // body::before (z99999) para ver si la franja superior se oscurece. Revertir.
+  // En PWA standalone, body::before (z99999) pinta el sliver del safe-area superior.
+  // Subimos scrim (100000) por encima para que cubra esa franja, y panel (100001)
+  // por encima del scrim para que siga visible. En Safari (z 200/201) no cambia nada.
   const standalone = typeof window !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches;
   return (
     <>
@@ -314,7 +315,7 @@ function CitySheet({ cities, current, onSelect, onClose, required = false }) {
         style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: standalone ? 100000 : 200 }}
       />
       <div style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 201,
+        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: standalone ? 100001 : 201,
         background: '#fff', borderRadius: '20px 20px 0 0',
         padding: '20px 20px calc(env(safe-area-inset-bottom) + 24px)',
         animation: 'lp-slideup 0.28s cubic-bezier(0.32,0.72,0,1) forwards',
