@@ -1302,7 +1302,7 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
           opacity: open ? 1 : 0,
           transition: 'opacity .2s ease',
           position: 'relative', boxSizing: 'border-box',
-          maxHeight: 'calc(100dvh - 44px)',
+          maxHeight: 'calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 44px)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
         }}
       >
