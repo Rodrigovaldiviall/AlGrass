@@ -92,7 +92,8 @@
       "Bash(xxd src/assets/logo2.webp)",
       "Read(//tmp/**)",
       "Bash(xxd /tmp/logo_old.webp)",
-      "Bash(python -c \"from PIL import Image; im=Image.open\\('dist/assets/logo-CLGfZfKd.webp'\\); print\\('dist OK:', im.format, im.size, im.mode\\)\")"
+      "Bash(python -c \"from PIL import Image; im=Image.open\\('dist/assets/logo-CLGfZfKd.webp'\\); print\\('dist OK:', im.format, im.size, im.mode\\)\")",
+      "Bash(git log *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\rodri\\.claude\\projects\\c--Claude-Code-AlGrass\\memory"
