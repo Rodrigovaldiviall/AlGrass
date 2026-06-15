@@ -500,7 +500,7 @@ function SecuritySheet({ onClose, onDeleteRequest }) {
     <div
       onClick={close}
       style={{
-        position: 'fixed', inset: 0, zIndex: 9999,
+        position: 'fixed', inset: 0, zIndex: 9000,
         background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)',
         transition: 'background .22s ease',
         display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
@@ -515,7 +515,6 @@ function SecuritySheet({ onClose, onDeleteRequest }) {
           boxShadow: '0 -8px 32px rgba(0,0,0,0.10)',
           transform: open ? 'translateY(0)' : 'translateY(100%)',
           transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)',
-          zIndex: 10000,
         }}>
         <div style={{ width: 36, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '8px auto 20px' }} />
         <div style={{ fontSize: 11, fontWeight: 600, color: SUB, letterSpacing: 0.5, textTransform: 'uppercase', paddingLeft: 4, marginBottom: 7 }}>

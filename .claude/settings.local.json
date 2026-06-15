@@ -101,7 +101,9 @@
       "Bash(grep -iE \"//|/\\\\*|<!--\")",
       "Bash(sed -n '197,201p' src/index.css)",
       "Bash(sed -n '678,695p' src/screens/Settings.jsx)",
-      "Bash(sed -n '855,882p' src/screens/Settings.jsx)"
+      "Bash(sed -n '855,882p' src/screens/Settings.jsx)",
+      "Bash(sed -n '355,365p' src/screens/GameDetail.jsx)",
+      "Bash(sed -n '978,992p' src/screens/GameDetail.jsx)"
     ],
     "additionalDirectories": [
       "c:\\Users\\rodri\\.claude\\projects\\c--Claude-Code-AlGrass\\memory"

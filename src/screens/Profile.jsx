@@ -1295,7 +1295,7 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
       <div
         onClick={e => e.stopPropagation()}
         style={{
-          margin: '20px auto calc(24px + env(safe-area-inset-bottom))',
+          margin: 'calc(env(safe-area-inset-top) + 20px) auto calc(24px + env(safe-area-inset-bottom))',
           width: 'calc(100% - 32px)', maxWidth: 420,
           background: '#fff', borderRadius: 24,
           boxShadow: '0 8px 40px rgba(0,0,0,0.22)',
