@@ -265,7 +265,10 @@ function Header({ city, onCityTap }) {
             padding: '5px 10px 5px 8px', cursor: 'pointer', outline: 'none',
             WebkitTapHighlightColor: 'transparent',
           }}>
-            <img src={logo} alt="" style={{ width: 28, height: 'auto', objectFit: 'contain' }} />
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke="#fff" strokeWidth="2" strokeLinejoin="round"/>
+              <circle cx="12" cy="9" r="2.5" fill="#fff"/>
+            </svg>
             <span style={{ color: '#fff', fontSize: 13, fontWeight: 500, letterSpacing: -0.1 }}>{city}</span>
             <svg width="9" height="6" viewBox="0 0 9 6" fill="none"><path d="M1 1l3.5 3.5L8 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
           </button>

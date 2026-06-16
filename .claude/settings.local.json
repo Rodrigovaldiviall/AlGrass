@@ -103,7 +103,18 @@
       "Bash(sed -n '678,695p' src/screens/Settings.jsx)",
       "Bash(sed -n '855,882p' src/screens/Settings.jsx)",
       "Bash(sed -n '355,365p' src/screens/GameDetail.jsx)",
-      "Bash(sed -n '978,992p' src/screens/GameDetail.jsx)"
+      "Bash(sed -n '978,992p' src/screens/GameDetail.jsx)",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\(p.dependencies,null,2\\)\\)\")",
+      "Bash(awk '{print $9}')",
+      "Bash(awk '/CREATE TABLE public.venues/,/\\\\\\);/' full.sql)",
+      "Bash(awk '/COPY \"public\".\"venues\"/,/\\\\\\\\\\\\./' full.sql)",
+      "Bash(awk '{print $5}')",
+      "Bash(NODE_OPTIONS=--use-system-ca npm install leaflet)",
+      "Bash(node -e \"console.log\\('leaflet:', require\\('./package.json'\\).dependencies.leaflet\\)\")",
+      "Bash(ls node_modules/leaflet/dist/leaflet.js)",
+      "Bash(sort -t'│' -k1 -h)",
+      "Bash(grep -nE \"navigate\\\\\\(\\\\`/game\" src/screens/PickupGames.jsx)",
+      "Bash(grep -nE \"src=\\\\{logo\\\\}|width: 28, height: 'auto'\" src/screens/PickupGames.jsx src/screens/Fields.jsx)"
     ],
     "additionalDirectories": [
       "c:\\Users\\rodri\\.claude\\projects\\c--Claude-Code-AlGrass\\memory"

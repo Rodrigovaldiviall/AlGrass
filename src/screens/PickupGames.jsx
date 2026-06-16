@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useLayoutEffect, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, RED, GREEN, ORANGE } from '../constants';
@@ -6,6 +6,8 @@ import I from '../icons';
 import { DATE_WINDOW, TODAY_KEY, ymd } from '../data/games';
 import logo from '../assets/logo.webp';
 import { getGames } from '../services/gameService';
+import { getVenues } from '../services/venueService';
+import DistrictSheet from '../components/DistrictSheet';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -14,6 +16,9 @@ import { GameMetaLine } from '../components/GameMetaLine';
 import { abbreviateName, formatDateLabel } from '../utils/format';
 import { getMyWaitlistGameIds } from '../services/waitlistService';
 import { useForegroundTick } from '../hooks/useForegroundTick';
+
+// Mapa lazy: vive en su propio chunk; solo se descarga al pulsar "Mapa".
+const MapView = lazy(() => import('./MapView'));
 
 const DOW_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
@@ -29,7 +34,7 @@ const EMPTY_FLT = {
   organiza: false,
   cubierta: false, estacionamiento: false, duchas: false, mujeres: false, master45: false,
   suplentes: false,
-  formatos: [], minSpots: null, dias: [], horarios: [],
+  formatos: [], minSpots: null, dias: [], horarios: [], distritos: [],
 };
 
 function parseHour(time, ampm) {
@@ -293,7 +298,10 @@ function Header({ city, onCityTap }) {
             padding: '5px 10px 5px 8px', cursor: 'pointer', outline: 'none',
             WebkitTapHighlightColor: 'transparent',
           }}>
-            <img src={logo} alt="" style={{ width: 28, height: 'auto', objectFit: 'contain' }} />
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke="#fff" strokeWidth="2" strokeLinejoin="round"/>
+              <circle cx="12" cy="9" r="2.5" fill="#fff"/>
+            </svg>
             <span style={{ color: '#fff', fontSize: 13, fontWeight: 500, letterSpacing: -0.1 }}>{city}</span>
             <svg width="9" height="6" viewBox="0 0 9 6" fill="none"><path d="M1 1l3.5 3.5L8 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
           </button>
@@ -391,7 +399,7 @@ const CHIP_DEFS = [
   { id: 'duchas',          label: 'Duchas',           icon: c => ShowerIcon(c)   },
 ];
 
-function FilterRow({ chipActive, onToggleChip, onOpenPanel, panelHasExtra, hasHostedInFeed }) {
+function FilterRow({ chipActive, onToggleChip, onOpenPanel, panelHasExtra, hasHostedInFeed, onOpenDistricts, districtsActive }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px 8px', background: '#fff' }}>
       <FilterButton onClick={onOpenPanel} hasActive={panelHasExtra} />
@@ -400,6 +408,9 @@ function FilterRow({ chipActive, onToggleChip, onOpenPanel, panelHasExtra, hasHo
         flex: 1, minWidth: 0, display: 'flex', gap: 8, overflowX: 'auto',
         scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch',
       }}>
+        <Chip key="distritos" label="Distritos"
+          icon={c => <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 22s7-5.8 7-12a7 7 0 1 0-14 0c0 6.2 7 12 7 12z" stroke={c} strokeWidth="2"/><circle cx="12" cy="10" r="2.5" stroke={c} strokeWidth="2"/></svg>}
+          active={districtsActive} onClick={onOpenDistricts} last={false} />
         {hasHostedInFeed && (
           <Chip key="organiza" label="Organiza"
             icon={c => <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><circle cx="5" cy="4" r="2.5" stroke={c} strokeWidth="1.4"/><path d="M1 12c0-2.2 1.8-4 4-4" stroke={c} strokeWidth="1.4" strokeLinecap="round"/><circle cx="10" cy="8.5" r="2.5" stroke={c} strokeWidth="1.4"/><path d="M7 13c0-1.7 1.3-3 3-3s3 1.3 3 3" stroke={c} strokeWidth="1.4" strokeLinecap="round"/></svg>}
@@ -425,7 +436,7 @@ function DateCell({ top, bottom, active, isToday, onClick, refEl, disabled }) {
   const bottomColor = disabled ? '#D1D1D6' : (active ? '#fff' : TEXT);
   return (
     <button ref={refEl} onClick={disabled ? undefined : onClick} style={{
-      flex: '0 0 auto', width: 50, height: 58, borderRadius: 11,
+      flex: '0 0 auto', width: 50, height: 52, borderRadius: 11,
       background: bg, border, display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center', gap: 2, padding: 0,
       cursor: disabled ? 'default' : 'pointer',
@@ -442,7 +453,7 @@ function DateStrip({ dates, selectedKey, onSelect, scrollerRef, cellRefs, eventD
   return (
     <div ref={scrollerRef} className="no-sb" style={{
       display: 'flex', gap: 8, overflowX: 'auto',
-      padding: '8px 16px 12px',
+      padding: '4px 16px 8px',
       scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch', background: '#fff',
     }}>
       {dates.map((d) => {
@@ -623,7 +634,7 @@ function DateHeader({ dateKey, refEl }) {
   const d = new Date(_y, _mo - 1, _d);
   return (
     <div data-date-header={dateKey} ref={refEl} style={{
-      padding: '14px 16px 8px', color: SUB, fontSize: 'var(--gm-dhr, 13.5px)', fontWeight: 500,
+      padding: '10px 16px 6px', color: SUB, fontSize: 'var(--gm-dhr, 13.5px)', fontWeight: 500,
       background: '#fff',
     }}>
       {formatDateLabel(ymd(d))}
@@ -895,6 +906,18 @@ export default function PickupGames() {
   const location = useLocation();
   const { user }  = useAuth();
 
+  const _mapReturn = location.state?.mapReturn ?? null;       // contexto restaurado al volver de GameDetail
+  const [view, setView] = useState(_mapReturn?.view ?? 'list'); // 'list' | 'map'
+  const [selectedVenue, setSelectedVenue] = useState(_mapReturn?.selectedVenue ?? null); // { id, name } | null (selección del mapa)
+  const [sheetExpanded, setSheetExpanded] = useState(_mapReturn?.sheetExpanded ?? false); // BottomSheet: false=40% (collapsed) | true=100% (expanded)
+  const [sheetVisible, setSheetVisible] = useState(!!_mapReturn?.selectedVenue);          // translateY: true=0 (en pantalla) | false=100% (oculto). Restaurado = visible directo
+  const sheetDragRef = useRef(null);
+  // Slide-in al seleccionar venue: monta oculto (translateY 100%) y sube a 0 en el siguiente frame.
+  useEffect(() => {
+    if (!selectedVenue) return;
+    const raf = requestAnimationFrame(() => setSheetVisible(true));
+    return () => cancelAnimationFrame(raf);
+  }, [selectedVenue?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [coachStep, setCoachStep] = useState(null);
   function advanceCoach() {
     if (coachStep < COACH_STEPS.length - 1) { setCoachStep(s => s + 1); }
@@ -976,7 +999,7 @@ export default function PickupGames() {
   }, [games]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [flt, setFlt]               = useState(() => {
-    try { return JSON.parse(sessionStorage.getItem('pg'))?.flt ?? EMPTY_FLT; } catch { return EMPTY_FLT; }
+    try { return { ...EMPTY_FLT, ...(JSON.parse(sessionStorage.getItem('pg'))?.flt ?? {}) }; } catch { return EMPTY_FLT; }
   });
   const [panelOpen, setPanelOpen]   = useState(false);
   const [userCity, setUserCity] = useState(() => {
@@ -988,6 +1011,25 @@ export default function PickupGames() {
   const hasGamesCache = useRef(_gamesCache.length > 0).current;
   const listReady = cityReady && (hasGamesCache || (!loading && pillReady));
   const [citySheetOpen, setCitySheetOpen] = useState(!!location.state?.showCitySheet);
+  // Venues de la ciudad actual (fuente única: mapa + distritos). Incluye venues sin coordenadas.
+  const [venues, setVenues] = useState([]);
+  useEffect(() => {
+    if (!userCity) { setVenues([]); return; }
+    let cancelled = false;
+    getVenues(userCity).then(v => { if (!cancelled) setVenues(v); });
+    return () => { cancelled = true; };
+  }, [userCity]);
+  const availableDistricts = useMemo(
+    () => [...new Set(venues.map(v => v.district).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es')),
+    [venues]
+  );
+  const [districtSheetOpen, setDistrictSheetOpen] = useState(false);
+  function toggleDistrict(d) {
+    setFlt(f => {
+      const cur = f.distritos ?? [];
+      return { ...f, distritos: cur.includes(d) ? cur.filter(x => x !== d) : [...cur, d] };
+    });
+  }
   const [availableCities, setAvailableCities] = useState([]);
   useEffect(() => {
     supabase.from('venues').select('city').not('city', 'is', null).then(({ data }) => {
@@ -1097,7 +1139,8 @@ export default function PickupGames() {
     else setFlt(f => ({ ...f, [id]: !f[id] }));
   }
 
-  const filteredGames = useMemo(() => {
+  // Base con TODOS los filtros EXCEPTO distrito (alimenta mapa: badges + sheet reales).
+  const filteredGamesNoDistrict = useMemo(() => {
     const result = games.filter(g => {
       if (isGameStarted(g.dateKey, g.time24)) return false;   // now >= game_start → out of marketplace
       if (flt.organiza && g.hostUserId !== user?.id) return false;
@@ -1128,6 +1171,12 @@ export default function PickupGames() {
     return result;
   }, [flt, userCity, games, liveOpenSpotsMap]);
 
+  // Lista: filtro DURO de distrito sobre la base. El distrito es el único filtro especial.
+  const filteredGames = useMemo(
+    () => filteredGamesNoDistrict.filter(g => !flt.distritos.length || flt.distritos.includes(g.venueDistrict)),
+    [filteredGamesNoDistrict, flt.distritos]
+  );
+
   const grouped = useMemo(() => {
     const map = new Map();
     for (const g of filteredGames) {
@@ -1140,6 +1189,9 @@ export default function PickupGames() {
     if (!map.has(TODAY_KEY)) map.set(TODAY_KEY, []);
     return [...map.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1);
   }, [filteredGames]);
+
+  // Partidos visibles de la fecha seleccionada (para los contadores del mapa).
+  const mapGames = useMemo(() => filteredGamesNoDistrict.filter(g => g.dateKey === selectedKey), [filteredGamesNoDistrict, selectedKey]);
 
   const eventDates  = useMemo(() => new Set(grouped.map(([k]) => k)), [grouped]);
   const maxEventKey = useMemo(() => games.reduce((max, g) => g.dateKey > max ? g.dateKey : max, ''), [games]);
@@ -1242,6 +1294,64 @@ export default function PickupGames() {
     }
   };
 
+  // Render de una card de partido (reutilizado por la lista y por el BottomSheet del mapa).
+  function renderGameRow(g, last) {
+    const st = gameStateMap.get(g.id);
+    const isHost = !!user?.id && g.hostUserId === user.id;
+    return (
+      <GameRow key={g.id} g={g}
+        last={last}
+        booked={myPlayerRowsReady && !isHost && st?.isBooked}
+        inWaitlist={waitlistReady && !isHost && waitlistGameIds.has(g.id)}
+        guestInfo={myPlayerRowsReady && !isHost && st?.isGuestConfirmed ? { paidBy: st.paidBy, payerCode: st.payerCode, guestId: st.guestId, activeGuestCount: st.activeGuestCount } : undefined}
+        canceledCount={myPlayerRowsReady && !isHost && st?.relationship === 'canceled-with-guests' ? st.activeGuestCount : undefined}
+        activeGuestCount={myPlayerRowsReady ? (st?.activeGuestCount ?? 0) : 0}
+        liveOpenSpots={confirmedCountReady ? liveOpenSpotsMap.get(g.id) : g.openSpots}
+        isHost={isHost}
+        pillReady={pillReady}
+        confirmedCountReady={confirmedCountReady}
+        onOpen={() => {
+          if (st?.isGuestConfirmed) {
+            navigate(`/game/${g.id}`, { state: { game: { ...g, paidBy: st.paidBy, paidByCode: st.payerCode, guestId: st.guestId }, infoMode: true, backPath: '/games', mapReturn: { view, selectedVenue, sheetExpanded } } });
+          } else if (st?.relationship === 'canceled-with-guests' && st.isGuestCanceled) {
+            navigate(`/game/${g.id}`, { state: { guestCanceledView: true, infoMode: false, backPath: '/games', game: { ...g, guestCanceledView: true, paymentBreakdown: null }, mapReturn: { view, selectedVenue, sheetExpanded } } });
+          } else {
+            navigate(`/game/${g.id}`, { state: { game: g, backPath: '/games', mapReturn: { view, selectedVenue, sheetExpanded } } });
+          }
+        }}
+      />
+    );
+  }
+
+  // Partidos del BottomSheet: todos los de la fecha, o solo los del venue seleccionado.
+  const sheetGames = selectedVenue ? mapGames.filter(g => g.venueId === selectedVenue.id) : mapGames;
+
+  // Abrir/actualizar venue. Si estaba cerrado, abre en 40%; si ya estaba abierto, mantiene la altura.
+  function openVenue(v) {
+    const wasOpen = !!selectedVenue;
+    setSelectedVenue({ id: v.id, name: v.name });
+    if (!wasOpen) setSheetExpanded(false);
+  }
+  // Cierre animado: baja el sheet (translateY 100%); al terminar la transición se limpia la selección.
+  function closeSheet() { setSheetVisible(false); }
+  // Reset duro (al cambiar de vista): sin animación.
+  function resetSheet() { setSelectedVenue(null); setSheetExpanded(false); setSheetVisible(false); }
+  // Header del sheet: tap → alterna 40% ↔ 100%; drag corto → snapping; drag abajo en 40% → cierra.
+  function onSheetDown(e) { sheetDragRef.current = { startY: e.clientY, delta: 0, wasDrag: false }; try { e.currentTarget.setPointerCapture(e.pointerId); } catch {} }
+  function onSheetMove(e) { if (sheetDragRef.current) sheetDragRef.current.delta = sheetDragRef.current.startY - e.clientY; }
+  // pointerup: SOLO maneja el drag (snapping). El tap NO togglea aquí → no reflow antes del click sintético.
+  function onSheetUp() {
+    const d = sheetDragRef.current?.delta ?? 0;
+    if (sheetDragRef.current) sheetDragRef.current.wasDrag = Math.abs(d) >= 16;
+    if (d > 16) setSheetExpanded(true);                            // drag arriba → 100%
+    else if (d < -16) { if (sheetExpanded) setSheetExpanded(false); else closeSheet(); } // drag abajo → 40% o cerrar
+  }
+  // click del header: toggle del tap. Si el gesto fue drag, no togglea (el snapping ya se hizo en pointerup).
+  function onSheetClick() {
+    if (sheetDragRef.current?.wasDrag) { sheetDragRef.current = null; return; }
+    setSheetExpanded(e => !e);
+  }
+
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
       <Header city={userCity} onCityTap={() => setCitySheetOpen(true)} />
@@ -1251,6 +1361,8 @@ export default function PickupGames() {
         onOpenPanel={() => setPanelOpen(true)}
         panelHasExtra={panelHasExtra}
         hasHostedInFeed={hasHostedInFeed}
+        onOpenDistricts={() => setDistrictSheetOpen(true)}
+        districtsActive={flt.distritos.length > 0}
       />
       <DateStrip
         dates={DATE_WINDOW}
@@ -1260,6 +1372,68 @@ export default function PickupGames() {
         cellRefs={stripCellRefs}
         eventDates={eventDates}
       />
+      {view === 'map' ? (
+        <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex' }}>
+          <Suspense fallback={<div style={{ flex: 1, background: '#fff' }} />}>
+            <MapView
+              city={userCity}
+              games={mapGames}
+              selectedVenueId={selectedVenue?.id ?? null}
+              sheetExpanded={sheetExpanded}
+              selectedDistricts={flt.distritos}
+              onSelectVenue={openVenue}
+              onClearSelection={closeSheet}
+            />
+          </Suspense>
+          {selectedVenue && (
+            <div
+              onTransitionEnd={(e) => { if (e.propertyName === 'transform' && !sheetVisible) setSelectedVenue(null); }}
+              style={{
+                position: 'absolute', left: 0, right: 0, bottom: 0,
+                height: sheetExpanded ? '100%' : '40%',
+                background: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20,
+                boxShadow: '0 -4px 16px rgba(0,0,0,0.12)',
+                transform: sheetVisible ? 'translateY(0)' : 'translateY(100%)',
+                transition: 'transform .3s cubic-bezier(0.32,0.72,0,1), height .25s ease',
+                display: 'flex', flexDirection: 'column',
+              }}>
+              {/* Header clickeable (handle + chip + padding inferior): toda la banda alterna 40% ↔ 100% */}
+              <div onPointerDown={onSheetDown} onPointerMove={onSheetMove} onPointerUp={onSheetUp} onClick={onSheetClick}
+                style={{ flexShrink: 0, cursor: 'pointer', touchAction: 'none', padding: '6px 0 4px' }}>
+                <div style={{ width: 40, height: 5, borderRadius: 3, background: '#D0D0D6', margin: '0 auto 6px' }} />
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '0 16px' }}>
+                  <div style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%',
+                    padding: '4px 6px 4px 10px', borderRadius: 999,
+                    background: 'rgba(245,200,66,0.22)', border: '1px solid rgba(212,150,10,0.35)',
+                    color: '#7A5A06', fontSize: 12.5, fontWeight: 600,
+                  }}>
+                    <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedVenue.name}</span>
+                    <button
+                      onPointerDown={e => e.stopPropagation()}
+                      onPointerUp={e => e.stopPropagation()}
+                      onClick={e => { e.stopPropagation(); closeSheet(); }}
+                      style={{
+                        flexShrink: 0, width: 16, height: 16, borderRadius: '50%', border: 'none',
+                        background: 'rgba(212,150,10,0.25)', color: '#7A5A06', cursor: 'pointer',
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0,
+                        fontSize: 10, lineHeight: 1, WebkitTapHighlightColor: 'transparent', outline: 'none',
+                      }}>✕</button>
+                  </div>
+                </div>
+              </div>
+              {/* Lista (reutiliza renderGameRow) */}
+              <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', paddingTop: 0, paddingBottom: 8 }}>
+                {sheetGames.length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', color: SUB, fontSize: 14 }}>
+                    No hay partidos para esta selección.
+                  </div>
+                ) : sheetGames.map(g => renderGameRow(g, false))}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
       <div ref={listRef} onScroll={onListScroll} className="no-sb"
         style={{ flex: 1, overflowY: 'auto', paddingBottom: 8, scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', background: '#fff' }}>
         {!listReady ? (
@@ -1277,32 +1451,7 @@ export default function PickupGames() {
                 <div style={{ padding: '12px 20px', color: SUB, fontSize: 14 }}>
                   No hay más partidos disponibles para hoy.
                 </div>
-              ) : games.map((g, i) => {
-                const st = gameStateMap.get(g.id);
-                const isHost = !!user?.id && g.hostUserId === user.id;
-                return (
-                <GameRow key={g.id} g={g}
-                  last={i === games.length - 1 && isLast}
-                  booked={myPlayerRowsReady && !isHost && st?.isBooked}
-                  inWaitlist={waitlistReady && !isHost && waitlistGameIds.has(g.id)}
-                  guestInfo={myPlayerRowsReady && !isHost && st?.isGuestConfirmed ? { paidBy: st.paidBy, payerCode: st.payerCode, guestId: st.guestId, activeGuestCount: st.activeGuestCount } : undefined}
-                  canceledCount={myPlayerRowsReady && !isHost && st?.relationship === 'canceled-with-guests' ? st.activeGuestCount : undefined}
-                  activeGuestCount={myPlayerRowsReady ? (st?.activeGuestCount ?? 0) : 0}
-                  liveOpenSpots={confirmedCountReady ? liveOpenSpotsMap.get(g.id) : g.openSpots}
-                  isHost={isHost}
-                  pillReady={pillReady}
-                  confirmedCountReady={confirmedCountReady}
-                  onOpen={() => {
-                    if (st?.isGuestConfirmed) {
-                      navigate(`/game/${g.id}`, { state: { game: { ...g, paidBy: st.paidBy, paidByCode: st.payerCode, guestId: st.guestId }, infoMode: true, backPath: '/games' } });
-                    } else if (st?.relationship === 'canceled-with-guests' && st.isGuestCanceled) {
-                      navigate(`/game/${g.id}`, { state: { guestCanceledView: true, infoMode: false, backPath: '/games', game: { ...g, guestCanceledView: true, paymentBreakdown: null } } });
-                    } else {
-                      navigate(`/game/${g.id}`, { state: { game: g, backPath: '/games' } });
-                    }
-                  }}
-                />
-              ); })}
+              ) : games.map((g, i) => renderGameRow(g, i === games.length - 1 && isLast))}
               {isLast && dateKey === maxEventKey && games.length > 0 && (
                 <div style={{
                   padding: '28px 16px 20px', textAlign: 'center',
@@ -1341,8 +1490,40 @@ export default function PickupGames() {
         })}
         <div style={{ height: 8 }} />
       </div>
+      )}
+      {/* FAB único Lista ↔ Mapa (sobre la TabBar, respetando safe-area) */}
+      <button
+        onClick={() => { setView(v => v === 'list' ? 'map' : 'list'); resetSheet(); }}
+        style={{
+          position: 'fixed', left: '50%', transform: 'translateX(-50%)',
+          bottom: 'calc(env(safe-area-inset-bottom) + 70px)', zIndex: 50,
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          height: 34, padding: '0 14px', borderRadius: 999, border: 'none',
+          background: view === 'list' ? '#222222' : '#fff', color: view === 'list' ? '#fff' : '#1B1B1F', fontSize: 12.5, fontWeight: 700,
+          boxShadow: '0 4px 14px rgba(0,0,0,0.26)', cursor: 'pointer', fontFamily: 'inherit',
+          WebkitTapHighlightColor: 'transparent', outline: 'none',
+        }}>
+        {view === 'list' ? (
+          <><span>Mapa</span>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 21s7-5.6 7-11a7 7 0 10-14 0c0 5.4 7 11 7 11z" stroke="currentColor" strokeWidth="2"/><circle cx="12" cy="10" r="2.4" stroke="currentColor" strokeWidth="2"/></svg>
+          </>
+        ) : (
+          <><span>Lista</span>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+          </>
+        )}
+      </button>
       <TabBar activeTab="partidos" />
       <FilterPanel open={panelOpen} onClose={() => setPanelOpen(false)} flt={flt} setFlt={setFlt} />
+      {districtSheetOpen && (
+        <DistrictSheet
+          city={userCity}
+          districts={availableDistricts}
+          selected={flt.distritos}
+          onToggle={toggleDistrict}
+          onClose={() => setDistrictSheetOpen(false)}
+        />
+      )}
       {showCitySheet && (
         <CityOnboardSheet onDone={city => {
           try {

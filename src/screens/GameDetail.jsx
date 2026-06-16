@@ -1161,6 +1161,7 @@ export default function GameDetail() {
 
   const rating     = location.state?.rating    ?? null;
   const backPath   = location.state?.backPath  ?? '/games';
+  const mapReturn  = location.state?.mapReturn ?? null; // contexto de PickupGames (mapa/venue/sheet) a restaurar al volver
 
   const { user } = useAuth();
 
@@ -1486,7 +1487,7 @@ export default function GameDetail() {
     try { sessionStorage.removeItem(_rosterCacheKey(gameId)); } catch {}
     setCancelOpen(false);
     fetchRoster();
-    navigate(backPath);
+    navigate(backPath, mapReturn ? { state: { mapReturn } } : undefined);
   }
 
   const activeList = isCanceledWithGuests ? (guestCanceledView ? guestOwnGuests : guestsInRoster) : [];
@@ -1512,7 +1513,7 @@ export default function GameDetail() {
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
-        <Header field={g.field} openSpots={openSpots} infoMode={infoMode} onBack={() => navigate(backPath)}
+        <Header field={g.field} openSpots={openSpots} infoMode={infoMode} onBack={() => navigate(backPath, mapReturn ? { state: { mapReturn } } : undefined)}
           showShare={(!isFull || isBooked) && !isPastGame}
           onShare={() => {
             if (!gameId) return;

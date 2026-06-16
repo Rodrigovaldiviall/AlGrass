@@ -40,9 +40,13 @@ const GAME_SELECT = `
     default_host_user_id,
     field_amenities:amenities,
     venues:venue_id (
+      id,
       name,
       city,
       address,
+      lat,
+      lng,
+      district,
       cover_image_path,
       cover_updated_at,
       venue_amenities:amenities
@@ -69,6 +73,12 @@ function mapGame(g) {
     field:       venue?.name                        ?? '',
     fieldName:   field?.name                        ?? '',
     address:     venue?.address                     ?? '',
+    // Campos de venue para agrupación en MapView (aditivos, no usados por la lista).
+    venueId:       venue?.id                         ?? null,
+    venueName:     venue?.name                       ?? '',
+    venueLat:      venue?.lat                         ?? null,
+    venueLng:      venue?.lng                         ?? null,
+    venueDistrict: venue?.district                    ?? null,
     // Priority: games.format → fields.format
     format:      g.format ?? field?.format ?? '',
     // Priority: games.duration_min → fields.duration_min → null
