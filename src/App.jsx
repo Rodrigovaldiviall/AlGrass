@@ -63,6 +63,23 @@ function WaitlistBadgeSync() {
     if (!user?.id) { setWaitlistBadge(false); return; }
     hasAvailableWaitlistSpot(user.id).then(setWaitlistBadge);
   }, [user?.id, pathname, fgTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Expiración real de waitlist (persistencia/analítica): se dispara SOLO cuando la sesión Supabase
+  // (JWT) ya está cargada — no cuando user?.id se hidrata síncrono desde localStorage. 1× por sesión,
+  // idempotente, sin polling. Captura el error para no ocultar fallos.
+  useEffect(() => {
+    if (!supabase) return;
+    let fired = false;
+    const run = (session) => {
+      if (fired || !session) return;
+      fired = true;
+      supabase.rpc('expire_waitlists').then(({ error }) => {
+        if (error) console.warn('[waitlist] expire_waitlists failed:', error);
+      });
+    };
+    supabase.auth.getSession().then(({ data }) => run(data?.session));                          // sesión ya presente al montar
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => run(session)); // o cuando llega
+    return () => subscription?.unsubscribe();
+  }, []);
   return null;
 }
 

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useSheetPull } from '../hooks/useSheetPull';
 import { useAuth } from '../context/AuthContext';
 import { TEXT, SUB, HAIR, ORANGE, SOFT, DANGER, YAPE } from '../constants';
 import I from '../icons';
@@ -422,6 +423,10 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
     setOpen(false);
     setTimeout(() => onClose?.(), 240);
   }
+  // Drag-to-dismiss SOLO en selección de método (paying === 'idle'); deshabilitado en
+  // loading/confirming/rejected y bajo cualquier overlay bloqueante.
+  const { rootRef, scrollRef, dragY, dragging } = useSheetPull({ onClose: handleClose });
+  const dragOn = paying === 'idle';
 
   function pay() {
     if (!canPay || paying !== 'idle') return;
@@ -482,12 +487,12 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
         transition: 'background .22s ease',
         overflow: 'hidden',
       }}>
-      <div className="sheet-panel" style={{
+      <div className="sheet-panel" ref={dragOn ? rootRef : undefined} style={{
         position: 'relative', background: '#FAFAFA',
         borderTopLeftRadius: 22, borderTopRightRadius: 22,
         boxShadow: '0 -12px 40px rgba(0,0,0,0.18)',
-        transform: open ? 'translateY(0)' : 'translateY(100%)',
-        transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)',
+        transform: open ? `translateY(${dragOn ? dragY : 0}px)` : 'translateY(100%)',
+        transition: (dragOn && dragging) ? 'none' : 'transform .28s cubic-bezier(0.32,0.72,0,1)',
         maxHeight: '92%',
         display: 'flex', flexDirection: 'column',
       }}>
@@ -504,7 +509,7 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
         </div>
 
         {/* Scrollable body */}
-        <div className="no-sb" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'none', padding: '10px 16px 0' }}>
+        <div ref={scrollRef} className="no-sb" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'none', padding: '10px 16px 0' }}>
           <div style={{ paddingBottom: 10 }}>
             <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, letterSpacing: -0.3 }}>Método de pago</div>
             <div style={{ marginTop: 2, fontSize: 13, color: SUB }}>

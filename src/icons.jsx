@@ -18,8 +18,8 @@ const I = {
   ),
   camera: (c = TEXT) => (
     <svg width="16" height="14" viewBox="0 0 16 14" fill="none">
-      <path d="M2 4.5C2 3.7 2.7 3 3.5 3H5l1.2-1.5h3.6L11 3h1.5c.8 0 1.5.7 1.5 1.5v6c0 .8-.7 1.5-1.5 1.5h-9C2.7 12 2 11.3 2 10.5v-6z" stroke={c} strokeWidth="1.5" strokeLinejoin="round"/>
-      <circle cx="8" cy="7.5" r="2.4" stroke={c} strokeWidth="1.5"/>
+      <rect x="1.5" y="4.5" width="9" height="7" rx="2" stroke={c} strokeWidth="1.4" strokeLinejoin="round"/>
+      <path d="M10.5 7l4-2.2v6.4L10.5 9z" stroke={c} strokeWidth="1.4" strokeLinejoin="round"/>
     </svg>
   ),
   twoPeople: (c = TEXT) => (
@@ -31,9 +31,9 @@ const I = {
     </svg>
   ),
   roof: (c = TEXT) => (
-    <svg width="18" height="12" viewBox="0 0 18 12" fill="none">
-      <path d="M1 8L9 2l8 6" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
-      <path d="M3 8v3h12V8" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+    <svg width="14" height="12" viewBox="0 0 14 12" fill="none">
+      <path d="M1 8L7 2l6 6" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M2.5 8v3h9V8" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   ),
   female: (c = TEXT) => (

@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, RED, GREEN, ORANGE } from '../constants';
 import I from '../icons';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';
 import { DATE_WINDOW, TODAY_KEY, ymd } from '../data/games';
 import logo from '../assets/logo.webp';
 import { getGames } from '../services/gameService';
@@ -12,7 +14,7 @@ import VenueBottomSheet from '../components/VenueBottomSheet';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
-import { deriveGameState, requiredPlayers, isGameStarted } from '../utils/deriveGameState';
+import { deriveGameState, requiredPlayers, isGameStarted, isGamePast } from '../utils/deriveGameState';
 import { GameMetaLine } from '../components/GameMetaLine';
 import { abbreviateName, formatDateLabel } from '../utils/format';
 import { getMyWaitlistGameIds } from '../services/waitlistService';
@@ -35,7 +37,7 @@ function chipLabel(d) {
 const EMPTY_FLT = {
   organiza: false,
   cubierta: false, estacionamiento: false, duchas: false, mujeres: false, master45: false,
-  suplentes: false,
+  suplentes: false, filmed: false,
   formatos: [], minSpots: null, dias: [], horarios: [], distritos: [],
 };
 
@@ -69,9 +71,10 @@ const PANEL_CHECKS = [
   { key: 'cubierta',        label: 'Cubierta',       icon: c => I.roof(c)      },
   { key: 'estacionamiento', label: 'Estacionamiento', icon: c => ParkingIcon(c) },
   { key: 'duchas',          label: 'Duchas',          icon: c => ShowerIcon(c)  },
-  { key: 'mujeres',         label: 'Para mujeres',    icon: c => I.female(c)    },
+  { key: 'mujeres',         label: 'Femenino',        icon: c => I.female(c)    },
   { key: 'master45',        label: 'Master 45+',      icon: c => StarIcon(c)    },
   { key: 'suplentes',       label: 'Con suplentes',   icon: c => I.sub(c)       },
+  { key: 'filmed',          label: 'Filmado',         icon: c => I.camera(c)    },
 ];
 const PANEL_FORMATOS  = ['5v5', '6v6', '7v7', '8v8', '11v11'];
 const PANEL_DIAS      = [
@@ -99,7 +102,7 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
   const clearAll   = ()   => setFlt(EMPTY_FLT);
 
   const hasAny = flt.cubierta || flt.estacionamiento || flt.duchas || flt.mujeres || flt.master45 ||
-    flt.suplentes || flt.formatos.length > 0 || flt.minSpots !== null || flt.dias.length > 0 || flt.horarios.length > 0;
+    flt.suplentes || flt.filmed || flt.formatos.length > 0 || flt.minSpots !== null || flt.dias.length > 0 || flt.horarios.length > 0;
 
   const visibleSpots = spotsExpanded ? ALL_SPOTS : ALL_SPOTS.slice(0, 6);
 
@@ -407,9 +410,10 @@ function FilterButton({ onClick, hasActive }) {
 }
 
 const CHIP_DEFS = [
+  { id: 'filmed',          label: 'Filmado',         icon: c => I.camera(c)     },
   { id: 'spots',           label: '+1 cupos',        icon: c => I.joinIcon(c)   },
   { id: 'cubierta',        label: 'Techado',         icon: c => I.roof(c)       },
-  { id: 'mujeres',         label: 'Para mujeres',     icon: c => I.female(c)     },
+  { id: 'mujeres',         label: 'Femenino',         icon: c => I.female(c)     },
   { id: 'estacionamiento', label: 'Estacionamiento',  icon: c => ParkingIcon(c)  },
   { id: 'duchas',          label: 'Duchas',           icon: c => ShowerIcon(c)   },
 ];
@@ -492,12 +496,21 @@ function DateStrip({ dates, selectedKey, onSelect, scrollerRef, cellRefs, eventD
 
 // ── List rows ──────────────────────────────────────────────────────────────
 
-function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount = 0, isHost = false, totalSpots = 0, countsReady = false }) {
+function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount = 0, isHost = false, totalSpots = 0, countsReady = false, live = false }) {
   const PILL_MIN = 64;
+  // Indicador de partido en curso (mismo lugar que la campana de waitlist): icono de transmisión a la izquierda.
+  const liveWrap = (node) => live ? (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4 }}>
+      <span style={{ fontSize: 13, lineHeight: 1, marginTop: 3, color: RED, display: 'inline-flex' }}>
+        <FontAwesomeIcon icon={faTowerBroadcast} />
+      </span>
+      {node}
+    </div>
+  ) : node;
   if (isHost) {
     const confirmed = totalSpots - openSpots;
-    return (
-      <div className="game-status-pill" style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', minWidth: PILL_MIN, padding: '4px 8px', borderRadius: 999, background: ORANGE, flexShrink: 0 }}>
+    return liveWrap(
+      <div className="game-status-pill" style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', width: PILL_MIN, padding: '4px 8px', borderRadius: 999, background: ORANGE, flexShrink: 0 }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: '#1B1B1F', lineHeight: 1.2 }}>Organiza</span>
         {countsReady && totalSpots > 0 && (
           <span style={{ fontSize: 10, fontWeight: 600, color: BLUE, lineHeight: 1.2 }}>{confirmed}/{totalSpots}</span>
@@ -505,27 +518,46 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
       </div>
     );
   }
-  if (canceledCount != null) {
+  // Cancelado-con-invitados + waitlist activa (partido NO iniciado): 🔔 + (cupos | Cancelado) + (X invitados).
+  if (canceledCount != null && inWaitlist && !live) {
+    const mainPill = openSpots > 0 ? (
+      <div className="game-status-pill" style={{ height: 22, width: PILL_MIN, padding: '0 8px', borderRadius: 999, whiteSpace: 'nowrap', background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN, fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{openSpots} {openSpots === 1 ? 'cupo' : 'cupos'}</div>
+    ) : (
+      <div className="game-status-pill" style={{ height: 22, width: 74, padding: '0 8px', borderRadius: 999, whiteSpace: 'nowrap', background: '#FFF0F0', border: `1.2px solid ${RED}40`, color: RED, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>Cancelado</div>
+    );
     return (
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4 }}>
+        <span style={{ fontSize: 13, lineHeight: 1, marginTop: 3 }}>🔔</span>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+          {mainPill}
+          <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap', textAlign: 'center' }}>
+            ({canceledCount} {canceledCount === 1 ? 'invitado' : 'invitados'})
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (canceledCount != null) {
+    return liveWrap(
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-        <div className="game-status-pill" style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, background: '#FFF0F0', border: `1.2px solid ${RED}40`, color: RED, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="game-status-pill" style={{ height: 22, width: 74, padding: '0 8px', borderRadius: 999, whiteSpace: 'nowrap', background: '#FFF0F0', border: `1.2px solid ${RED}40`, color: RED, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
           Cancelado
         </div>
-        <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
-          {canceledCount} {canceledCount === 1 ? 'invitado activo' : 'invitados activos'}
+        <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap', minWidth: PILL_MIN, textAlign: 'center' }}>
+          {canceledCount} {canceledCount === 1 ? 'invitado' : 'invitados'}
         </div>
       </div>
     );
   }
   if (guestInfo) {
-    return (
+    return liveWrap(
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-        <div className="game-status-pill" style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, background: '#EDF5FF', border: `1.2px solid ${BLUE}40`, color: BLUE, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="game-status-pill" style={{ height: 22, width: PILL_MIN, padding: '0 8px', borderRadius: 999, whiteSpace: 'nowrap', background: '#EDF5FF', border: `1.2px solid ${BLUE}40`, color: BLUE, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
           Invitado
         </div>
         <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap', minWidth: PILL_MIN, textAlign: 'center' }}>
           {guestInfo.activeGuestCount > 0
-            ? `${guestInfo.activeGuestCount} ${guestInfo.activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}`
+            ? `${guestInfo.activeGuestCount} ${guestInfo.activeGuestCount === 1 ? 'invitado' : 'invitados'}`
             : guestInfo.paidBy ? `por ${abbreviateName(guestInfo.paidBy)}` : null}
         </div>
       </div>
@@ -533,26 +565,31 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
   }
   if (booked) {
     if (activeGuestCount > 0) {
-      return (
+      return liveWrap(
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-          <div className="game-status-pill" style={{ height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999, background: BLUE, color: '#fff', fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>Inscrito</div>
-          <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
-            {activeGuestCount} {activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}
+          <div className="game-status-pill" style={{ height: 22, width: PILL_MIN, padding: '0 8px', borderRadius: 999, whiteSpace: 'nowrap', background: BLUE, color: '#fff', fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>Inscrito</div>
+          <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap', minWidth: PILL_MIN, textAlign: 'center' }}>
+            {activeGuestCount} {activeGuestCount === 1 ? 'invitado' : 'invitados'}
           </div>
         </div>
       );
     }
-    return (
+    return liveWrap(
       <div className="game-status-pill" style={{
-        height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999,
+        height: 22, width: PILL_MIN, padding: '0 8px', borderRadius: 999, whiteSpace: 'nowrap',
         background: BLUE, color: '#fff',
         fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600,
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
       }}>Inscrito</div>
     );
   }
+  // Sin vínculo (incluye waitlist) y partido en vivo → "📡 Ahora" (familia roja en vivo).
+  if (live) return liveWrap(
+    <div className="game-status-pill" style={{ height: 22, width: PILL_MIN, padding: '0 8px', borderRadius: 999, whiteSpace: 'nowrap', background: '#FFF0F0', border: `1.2px solid ${RED}`, color: RED, fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>Ahora</div>,
+    true,
+  );
   if (inWaitlist) {
-    const wlPillStyle = { height: 22, width: 72, padding: '0 8px', borderRadius: 999, fontSize: 'var(--gm-pill-fs, 11px)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' };
+    const wlPillStyle = { height: 22, width: PILL_MIN, padding: '0 8px', borderRadius: 999, whiteSpace: 'nowrap', fontSize: 'var(--gm-pill-fs, 11px)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' };
     const capPill = openSpots <= 0 ? (
       <div className="game-status-pill" style={{ ...wlPillStyle, border: `1.2px solid ${RED}`, color: RED, fontWeight: 500 }}>Completo</div>
     ) : (
@@ -571,7 +608,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
   if (openSpots <= 0) {
     return (
       <div className="game-status-pill" style={{
-        height: 22, minWidth: PILL_MIN, padding: '0 8px', borderRadius: 999,
+        height: 22, width: PILL_MIN, padding: '0 8px', borderRadius: 999, whiteSpace: 'nowrap',
         border: `1.2px solid ${RED}`, color: RED,
         fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 500,
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -580,7 +617,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
   }
   return (
     <div className="game-status-pill" style={{
-      height: 22, minWidth: 64, padding: '0 8px', borderRadius: 999,
+      height: 22, width: PILL_MIN, padding: '0 8px', borderRadius: 999, whiteSpace: 'nowrap',
       background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN,
       fontSize: 'var(--gm-pill-fs, 11px)', fontWeight: 600,
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -626,7 +663,7 @@ function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount
       <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
         <div style={{ fontSize: 'var(--gm-title, 16px)', fontWeight: 600, color: TEXT, lineHeight: 1.2, letterSpacing: -0.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.field}</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, color: SUB, fontSize: 11, flexWrap: 'nowrap', overflow: 'hidden' }}>
-          <GameMetaLine format={g.format} totalSpots={g.totalSpots} durationMin={g.durationMin} womenOnly={g.womenOnly} parking={g.parking} covered={g.covered} />
+          <GameMetaLine format={g.format} totalSpots={g.totalSpots} durationMin={g.durationMin} womenOnly={g.womenOnly} parking={g.parking} covered={g.covered} filmed={g.filmed} />
           {g.price !== undefined && (
             <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0, fontSize: 13, fontWeight: 600, color: TEXT }}>
               S/.{g.price}
@@ -637,7 +674,7 @@ function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount
       {(!pillReady && !isHost) ? (
         <SkeletonPill />
       ) : (
-        <StatusPill openSpots={liveOpenSpots ?? g.openSpots} booked={booked} inWaitlist={inWaitlist} guestInfo={guestInfo} canceledCount={canceledCount} activeGuestCount={activeGuestCount} isHost={isHost} totalSpots={g.totalSpots ?? 0} countsReady={confirmedCountReady} />
+        <StatusPill openSpots={liveOpenSpots ?? g.openSpots} booked={booked} inWaitlist={inWaitlist} guestInfo={guestInfo} canceledCount={canceledCount} activeGuestCount={activeGuestCount} isHost={isHost} totalSpots={g.totalSpots ?? 0} countsReady={confirmedCountReady} live={isGameStarted(g.dateKey, g.time24) && !isGamePast(g.dateKey, g.time24, g.durationMin)} />
       )}
       <div style={{ pointerEvents: 'none', marginLeft: 6 }}>{I.chev()}</div>
     </div>
@@ -1141,6 +1178,7 @@ export default function PickupGames() {
   // Chip active state mirrors flt
   const chipActive = {
     organiza:        flt.organiza,
+    filmed:          flt.filmed,
     spots:           flt.minSpots !== null,
     cubierta:        flt.cubierta,
     mujeres:         flt.mujeres,
@@ -1161,13 +1199,14 @@ export default function PickupGames() {
   // Base con TODOS los filtros EXCEPTO distrito (alimenta mapa: badges + sheet reales).
   const filteredGamesNoDistrict = useMemo(() => {
     const result = games.filter(g => {
-      if (isGameStarted(g.dateKey, g.time24)) return false;   // now >= game_start → out of marketplace
+      if (isGamePast(g.dateKey, g.time24, g.durationMin)) return false;   // visible hasta finalizar (publicado → en vivo → finalizado)
       if (flt.organiza && g.hostUserId !== user?.id) return false;
       if (userCity && g.city && g.city !== userCity) return false;
       if (flt.cubierta        && !g.covered)   return false;
       if (flt.estacionamiento && !g.parking)   return false;
       if (flt.duchas          && !g.showers)   return false;
       if (flt.mujeres         && !g.womenOnly) return false;
+      if (flt.filmed          && !g.filmed)    return false;
       if (flt.master45        && !g.master45)  return false;
       if (flt.suplentes       && g.totalSpots <= requiredPlayers(g.format)) return false;
       if (flt.minSpots !== null && (liveOpenSpotsMap.get(g.id) ?? g.openSpots) < flt.minSpots) return false;

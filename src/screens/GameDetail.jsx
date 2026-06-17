@@ -4,7 +4,7 @@ import { useSheetPull } from '../hooks/useSheetPull';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, DANGER, RED, WHATSAPP_NUMBER } from '../constants';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faWhatsapp } from '@fortawesome/free-brands-svg-icons';
-import { faCommentSms } from '@fortawesome/free-solid-svg-icons';
+import { faCommentSms, faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';
 import I from '../icons';
 import { shareOrCopy } from '../utils/share';
 import { GAMES, FIELD_INFO, GAME_DEFAULTS } from '../data/games';
@@ -46,7 +46,7 @@ function buildGame(sel) {
       address: FIELD_INFO['Xaloc'].address,
       chips: [
         { kind: 'format', label: '8v8' }, { kind: 'covered', label: 'Techado' },
-        { kind: 'filmed', label: 'Filmado' }, { kind: 'women', label: 'Para mujeres' },
+        { kind: 'filmed', label: 'Filmado' }, { kind: 'women', label: 'Femenino' },
       ],
       description: GAME_DEFAULTS.description,
       recommendations: GAME_DEFAULTS.recommendations,
@@ -66,7 +66,7 @@ function buildGame(sel) {
     total > requiredPlayers(sel.format) && { kind: 'suplentes', label: 'Con suplentes' },
     sel.covered   && { kind: 'covered',  label: 'Techado' },
     sel.filmed    && { kind: 'filmed',   label: 'Filmado' },
-    sel.womenOnly && { kind: 'women',    label: 'Solo mujeres' },
+    sel.womenOnly && { kind: 'women',    label: 'Femenino' },
     sel.master45  && { kind: 'master45', label: 'Master 45+' },
     sel.parking   && { kind: 'parking',  label: 'Estacionamiento' },
     sel.showers   && { kind: 'showers',  label: 'Duchas' },
@@ -111,7 +111,7 @@ function buildGame(sel) {
 }
 
 // ── Header
-function Header({ field, openSpots, onBack, onShare, infoMode, showShare }) {
+function Header({ field, openSpots, onBack, onShare, infoMode, showShare, live = false }) {
   const cupoLabel = openSpots === 0 ? 'Lleno' : `${openSpots} ${openSpots === 1 ? 'cupo' : 'cupos'}`;
   return (
     <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 16, paddingRight: 16, position: 'relative' }}>
@@ -124,14 +124,23 @@ function Header({ field, openSpots, onBack, onShare, infoMode, showShare }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{field}</div>
         </div>
-        {!infoMode && (
+        {live ? (
+          <div style={{
+            height: 26, padding: '0 10px', borderRadius: 999,
+            background: RED, color: '#fff', fontSize: 12, fontWeight: 700,
+            display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0,
+          }}>
+            <FontAwesomeIcon icon={faTowerBroadcast} style={{ fontSize: 12 }} />
+            Ahora
+          </div>
+        ) : !infoMode ? (
           <div style={{
             height: 26, padding: '0 10px', borderRadius: 999,
             background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.45)',
             color: '#fff', fontSize: 12, fontWeight: 600,
             display: 'inline-flex', alignItems: 'center',
           }}>{cupoLabel}</div>
-        )}
+        ) : null}
         {showShare && (
           <button
             onClick={onShare}
@@ -395,7 +404,7 @@ function Avatar({ name, size = 36, hue = null, avatarPath = null, avatarVersion 
 function WaitlistRow({ inList, openSpots = 0, onToggle }) {
   const spotFreed = inList && openSpots > 0;
   return (
-    <div style={{ padding: '10px 10px 0', background: '#fff', borderTop: `1px solid ${HAIR}` }}>
+    <div style={{ padding: '10px', background: '#fff', borderTop: `1px solid ${HAIR}` }}>
       <div style={{
         padding: '8px 10px 8px 12px',
         background: spotFreed ? '#F0FAF3' : '#FFF8EC',
@@ -1517,7 +1526,7 @@ export default function GameDetail() {
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
-        <Header field={g.field} openSpots={openSpots} infoMode={infoMode} onBack={() => navigate(backPath, mapReturn ? { state: { mapReturn } } : undefined)}
+        <Header field={g.field} openSpots={openSpots} infoMode={infoMode} live={isStarted && !isPastGame} onBack={() => navigate(backPath, mapReturn ? { state: { mapReturn } } : undefined)}
           showShare={(!isFull || isBooked) && !isPastGame}
           onShare={() => {
             if (!gameId) return;
@@ -1687,7 +1696,7 @@ export default function GameDetail() {
         )}
         {isHost ? (
           /* ── Host action bar ───────────────────────────── */
-          !isPastGame && (
+          (!isPastGame && !isStarted) && (
             <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '12px 16px' }}>
               <button
                 onClick={() => setModifyOpen(true)}

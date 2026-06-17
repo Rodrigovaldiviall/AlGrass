@@ -11,9 +11,9 @@ const ParkingIcon = (c = SUB) => (
 /**
  * Fila secundaria de metadata de partido: format · 90' oficial · Con suplentes · amenities.
  * Renders as a fragment — el padre controla gap, fontSize base y color.
- * Props: format, totalSpots, durationMin, womenOnly, parking, covered
+ * Props: format, totalSpots, durationMin, womenOnly, parking, covered, filmed
  */
-export function GameMetaLine({ format, totalSpots, durationMin, womenOnly, parking, covered }) {
+export function GameMetaLine({ format, totalSpots, durationMin, womenOnly, parking, covered, filmed }) {
   const hasSubs   = (totalSpots ?? 0) > requiredPlayers(format);
   const is90min   = durationMin === 90;
   return (
@@ -32,19 +32,24 @@ export function GameMetaLine({ format, totalSpots, durationMin, womenOnly, parki
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0, overflow: 'hidden' }}>
         {womenOnly ? (
           <>
-            {I.female(SUB)}{!hasSubs && <span style={{ whiteSpace: 'nowrap' }}>Para mujeres</span>}
+            {I.female(SUB)}{!hasSubs && !is90min && <span style={{ whiteSpace: 'nowrap' }}>Femenino</span>}
             {parking && <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 3 }}>{ParkingIcon()}</span>}
             {covered && <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 3 }}>{I.roof(SUB)}</span>}
           </>
         ) : parking ? (
           <>
-            {ParkingIcon()}{!hasSubs && <span style={{ whiteSpace: 'nowrap' }}>Estac.</span>}
+            {ParkingIcon()}{!hasSubs && <span style={{ whiteSpace: 'nowrap' }}>Est.</span>}
             {covered && <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 3 }}>{I.roof(SUB)}</span>}
           </>
         ) : covered ? (
           <>{I.roof(SUB)}{!hasSubs && <span style={{ whiteSpace: 'nowrap' }}>Cubierta</span>}</>
         ) : null}
       </span>
+      {filmed && (
+        <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
+          {I.camera(SUB)}
+        </span>
+      )}
     </>
   );
 }

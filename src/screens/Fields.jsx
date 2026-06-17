@@ -43,7 +43,7 @@ function headerLabel(d) {
 
 const EMPTY_FLT = {
   organiza: false,
-  cubierta: false, estacionamiento: false, duchas: false, noDisp: true,
+  cubierta: false, estacionamiento: false, duchas: false, noDisp: true, filmed: false,
   formatos: [], dias: [], horarios: [], distritos: [],
 };
 
@@ -78,6 +78,7 @@ const PANEL_CHECKS = [
   { key: 'cubierta',        label: 'Cubierta',        icon: c => I.roof(c)       },
   { key: 'estacionamiento', label: 'Estacionamiento', icon: c => ParkingIcon(c)  },
   { key: 'duchas',          label: 'Duchas',           icon: c => ShowerIcon(c)   },
+  { key: 'filmed',          label: 'Filmado',          icon: c => I.camera(c)     },
   { key: 'noDisp',          label: 'Ocultar No disp.', icon: c => LockIcon(c)     },
 ];
 const PANEL_FORMATOS = ['5v5', '6v6', '7v7', '8v8', '11v11'];
@@ -101,7 +102,7 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
   const toggleArr  = (k, v) => setFlt(f => ({ ...f, [k]: f[k].includes(v) ? f[k].filter(x => x !== v) : [...f[k], v] }));
   const clearAll   = ()     => setFlt(EMPTY_FLT);
 
-  const hasAny = flt.cubierta || flt.estacionamiento || flt.duchas || !flt.noDisp ||
+  const hasAny = flt.cubierta || flt.estacionamiento || flt.duchas || !flt.noDisp || flt.filmed ||
     flt.formatos.length > 0 || flt.dias.length > 0 || flt.horarios.length > 0;
 
   useEffect(() => {
@@ -367,6 +368,7 @@ function FilterButton({ onClick, hasActive }) {
 }
 
 const CHIP_DEFS = [
+  { id: 'filmed',          label: 'Filmado',        icon: c => I.camera(c)     },
   { id: 'cubierta',        label: 'Techado',        icon: c => I.roof(c)       },
   { id: 'estacionamiento', label: 'Estacionamiento', icon: c => ParkingIcon(c)  },
   { id: 'duchas',          label: 'Duchas',           icon: c => ShowerIcon(c)   },
@@ -530,7 +532,7 @@ function FieldRow({ f, last, onPress, userBooked, isHost, coverPath, coverVersio
       <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
         <div style={{ fontSize: 16, fontWeight: 600, color: TEXT, lineHeight: 1.2, letterSpacing: -0.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.field}</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, color: SUB, fontSize: 11, overflow: 'hidden' }}>
-          <GameMetaLine format={f.format} durationMin={f.durationMin} parking={f.parking} covered={f.covered} womenOnly={false} />
+          <GameMetaLine format={f.format} durationMin={f.durationMin} parking={f.parking} covered={f.covered} womenOnly={false} filmed={f.filmed} />
         </div>
       </div>
       <FieldThumbnail price={isHost ? null : f.price} reserved={f.reserved} userBooked={userBooked} isHost={isHost} coverPath={coverPath} coverVersion={coverVersion} badgeReady={badgeReady} />
@@ -676,13 +678,14 @@ export default function Fields() {
 
   const chipActive = {
     organiza:        flt.organiza,
+    filmed:          flt.filmed,
     cubierta:        flt.cubierta,
     estacionamiento: flt.estacionamiento,
     duchas:          flt.duchas,
     noDisp:          !flt.noDisp,
   };
 
-  const panelHasExtra = flt.cubierta || flt.estacionamiento || flt.duchas || !flt.noDisp ||
+  const panelHasExtra = flt.cubierta || flt.estacionamiento || flt.duchas || !flt.noDisp || flt.filmed ||
     flt.formatos.length > 0 || flt.dias.length > 0 || flt.horarios.length > 0;
 
   function toggleChip(id) {
@@ -697,6 +700,7 @@ export default function Fields() {
     if (flt.cubierta        && !f.covered)  return false;
     if (flt.estacionamiento && !f.parking)  return false;
     if (flt.duchas          && !f.showers)  return false;
+    if (flt.filmed          && !f.filmed)   return false;
     if (!flt.noDisp         && f.reserved)  return false;
     if (flt.formatos.length && !flt.formatos.includes(f.format)) return false;
     if (flt.dias.length) {

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, RED, DANGER } from '../constants';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faHeadset, faCoins } from '@fortawesome/free-solid-svg-icons';
+import { faHeadset, faCoins, faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';
 import { SupportMenu } from '../components/SupportMenu';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
@@ -1643,6 +1643,16 @@ function GameRow({ game, onPress, muted = false, userId = null, highlighted = fa
   const isCampo  = game.type === 'campo';
   const isRental = game.type === 'rental';
   const isHost   = !!userId && !!game.hostUserId && game.hostUserId === userId;
+  // Partido en curso (ya empezó y aún no termina). Mismo indicador que PickupGames.
+  const live = isStarted(game) && !isPast(game);
+  const liveWrap = (node, on) => on ? (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4 }}>
+      <span style={{ fontSize: 13, lineHeight: 1, marginTop: 5, color: RED, display: 'inline-flex' }}>
+        <FontAwesomeIcon icon={faTowerBroadcast} />
+      </span>
+      {node}
+    </div>
+  ) : node;
   return (
     <div
       onClick={onPress}
@@ -1670,8 +1680,8 @@ function GameRow({ game, onPress, muted = false, userId = null, highlighted = fa
           {isCampo
             ? <span style={{ fontWeight: 500 }}>Cancha completa</span>
             : isRental
-            ? <GameMetaLine format={game.format} durationMin={game.durationMin} parking={game.parking} covered={game.covered} womenOnly={false} />
-            : <GameMetaLine format={game.format} durationMin={game.durationMin} totalSpots={game.totalSpots} womenOnly={game.womenOnly} parking={game.parking} covered={game.covered} />}
+            ? <GameMetaLine format={game.format} durationMin={game.durationMin} parking={game.parking} covered={game.covered} womenOnly={false} filmed={game.filmed} />
+            : <GameMetaLine format={game.format} durationMin={game.durationMin} totalSpots={game.totalSpots} womenOnly={game.womenOnly} parking={game.parking} covered={game.covered} filmed={game.filmed} />}
         </div>
       </div>
       {(() => {
@@ -1683,7 +1693,7 @@ function GameRow({ game, onPress, muted = false, userId = null, highlighted = fa
           const rentalReserved  = isRental && (game.status === 'reserved' || game.status === 'completed');
           const pillBg    = muted ? 'transparent' : ORANGE;
           const labelColor = muted ? SUB : '#1B1B1F';
-          return (
+          return liveWrap((
             <div className="game-status-pill" style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', minWidth: PM, padding: '5px 8px', borderRadius: 999, background: pillBg, flexShrink: 0 }}>
               <span style={{ fontSize: 12, fontWeight: 700, color: labelColor, lineHeight: 1.2 }}>Organiza</span>
               {isRental ? (
@@ -1698,7 +1708,7 @@ function GameRow({ game, onPress, muted = false, userId = null, highlighted = fa
                 )
               )}
             </div>
-          );
+          ), live && !isCampo && !isRental);
         }
         if (game.status === 'waitlist') return (
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4 }}>
@@ -1715,36 +1725,55 @@ function GameRow({ game, onPress, muted = false, userId = null, highlighted = fa
         if (muted) return (
           <div className="game-status-pill" style={{ ...pillBase, background: 'transparent', color: SUB, fontWeight: 600, border: 'none' }}>Finalizado</div>
         );
-        if (game.status === 'canceled-with-guests' || game.status === 'guest-canceled-with-sub-guests') return (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-            <div className="game-status-pill" style={{ ...pillBase, height: 22, fontSize: 11, fontWeight: 700, background: '#FFF0F0', border: `1.2px solid ${RED}40`, color: RED }}>Cancelado</div>
-            <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
-              {game.activeGuestCount} {game.activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}
+        if (game.status === 'canceled-with-guests' || game.status === 'guest-canceled-with-sub-guests') {
+          // Cancelado-con-invitados + waitlist activa (no iniciado): 🔔 + (cupos | Cancelado) + (X invitados).
+          if (game.inWaitlist && !isStarted(game)) {
+            const mainPill = (game.openSpots ?? 0) > 0
+              ? <div className="game-status-pill" style={{ ...pillBase, width: PM, minWidth: 0, background: '#F0FAF3', border: `1.2px solid ${GREEN}`, color: GREEN }}>{game.openSpots} {game.openSpots === 1 ? 'cupo' : 'cupos'}</div>
+              : <div className="game-status-pill" style={{ ...pillBase, width: PM, minWidth: 0, fontSize: 11, fontWeight: 700, background: '#FFF0F0', border: `1.2px solid ${RED}40`, color: RED }}>Cancelado</div>;
+            return (
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4 }}>
+                <span style={{ fontSize: 13, lineHeight: 1, marginTop: 5 }}>🔔</span>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                  {mainPill}
+                  <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap', textAlign: 'center' }}>
+                    ({game.activeGuestCount} {game.activeGuestCount === 1 ? 'invitado' : 'invitados'})
+                  </div>
+                </div>
+              </div>
+            );
+          }
+          return liveWrap((
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+              <div className="game-status-pill" style={{ ...pillBase, width: PM, minWidth: 0, fontSize: 11, fontWeight: 700, background: '#FFF0F0', border: `1.2px solid ${RED}40`, color: RED }}>Cancelado</div>
+              <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap', minWidth: PM, textAlign: 'center' }}>
+                {game.activeGuestCount} {game.activeGuestCount === 1 ? 'invitado' : 'invitados'}
+              </div>
             </div>
-          </div>
-        );
-        if (game.status === 'guest') return (
+          ), live);
+        }
+        if (game.status === 'guest') return liveWrap((
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
             <div className="game-status-pill" style={{ ...pillBase, background: '#EDF5FF', border: `1.2px solid ${BLUE}40`, color: BLUE }}>Invitado</div>
             <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap', minWidth: PM, textAlign: 'center' }}>
               {game.activeGuestCount > 0
-                ? `${game.activeGuestCount} ${game.activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}`
+                ? `${game.activeGuestCount} ${game.activeGuestCount === 1 ? 'invitado' : 'invitados'}`
                 : `por ${abbreviateName(game.paidBy)}`}
             </div>
           </div>
-        );
-        if (game.status === 'reserved') return (
+        ), live);
+        if (game.status === 'reserved') return liveWrap((
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
             <div className="game-status-pill" style={{ ...pillBase, background: BLUE, color: '#fff' }}>
               {(isCampo || isRental) ? 'Reservado' : 'Inscrito'}
             </div>
             {!isCampo && !isRental && game.activeGuestCount > 0 && (
-              <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap' }}>
-                {game.activeGuestCount} {game.activeGuestCount === 1 ? 'invitado activo' : 'invitados activos'}
+              <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap', minWidth: PM, textAlign: 'center' }}>
+                {game.activeGuestCount} {game.activeGuestCount === 1 ? 'invitado' : 'invitados'}
               </div>
             )}
           </div>
-        );
+        ), live && !isCampo && !isRental);
         return null;
       })()}
       <ChevIcon />
@@ -2445,7 +2474,14 @@ export default function Profile() {
     const seen = new Map();
     for (const g of raw) {
       const key = g.gameId || g.id;
-      if (!key || seen.has(key)) continue;
+      if (!key) continue;
+      if (seen.has(key)) {
+        // Mismo partido en matchCards (p. ej. cancelado) y en waitlist → conservar el primero,
+        // marcar waitlist activa (🔔) y usar el openSpots FRESCO de la entrada waitlist
+        // (conteo real de confirmados; el de matchCards viene de current_players, que está stale).
+        if (g.status === 'waitlist') seen.set(key, { ...seen.get(key), inWaitlist: true, openSpots: g.openSpots });
+        continue;
+      }
       seen.set(key, g);
     }
     return [...seen.values()];
