@@ -73,7 +73,7 @@ function buildField(sel) {
 // ── Header
 function Header({ field, onBack, onShare }) {
   return (
-    <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 14px)', paddingBottom: 14, paddingLeft: 16, paddingRight: 16 }}>
+    <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 16, paddingRight: 16 }}>
       <div style={{ height: 44, display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
         <button
           onClick={onBack}

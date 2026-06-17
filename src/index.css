@@ -88,6 +88,13 @@ input:-webkit-autofill:hover {
   .hide-on-desktop { display: none !important; }
 }
 
+/* Venue lead: bloques apilados en móvil, lado a lado (mismo peso) en tablet/desktop */
+.venue-lead-blocks { display: flex; flex-direction: column; gap: 12px; }
+.venue-lead-block  { flex: 1; min-width: 0; }
+@media (min-width: 768px) {
+  .venue-lead-blocks { flex-direction: row; align-items: flex-start; gap: 16px; max-width: 920px; margin: 0 auto; }
+}
+
 /* ── Responsive app shell ───────────────────────────────── */
 
 /* Mobile: wrappers are transparent so existing flex layout is unchanged */

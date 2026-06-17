@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
+import { useSheetPull } from '../hooks/useSheetPull';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, WHATSAPP_NUMBER } from '../constants';
 import I from '../icons';
 import TabBar from '../components/TabBar';
@@ -39,7 +40,7 @@ function formatDuration(min) {
 // ── Header
 function Header({ title, onBack }) {
   return (
-    <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 14px)', paddingBottom: 14, paddingLeft: 16, paddingRight: 16 }}>
+    <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 16, paddingRight: 16 }}>
       <div style={{ height: 44, display: 'flex', alignItems: 'center', gap: 8 }}>
         <button
           onClick={onBack}
@@ -211,6 +212,7 @@ function CancelSheet({ userName, refundAmount, onClose, onConfirm, onDone }) {
     setOpen(false);
     setTimeout(onClose, 220);
   }
+  const { rootRef, scrollRef, dragY, dragging } = useSheetPull({ onClose: dismiss });
 
   async function confirm() {
     setCaptured(refundAmount);
@@ -231,12 +233,13 @@ function CancelSheet({ userName, refundAmount, onClose, onConfirm, onDone }) {
         transition: 'background .22s ease',
       }}>
       <div className="sheet-panel"
+        ref={rootRef}
         onClick={e => e.stopPropagation()}
         style={{
           background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22,
           width: '100%', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)',
-          transform: open ? 'translateY(0)' : 'translateY(100%)',
-          transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)',
+          transform: open ? `translateY(${dragY}px)` : 'translateY(100%)',
+          transition: dragging ? 'none' : 'transform .28s cubic-bezier(0.32,0.72,0,1)',
           maxHeight: '80vh', display: 'flex', flexDirection: 'column',
         }}>
 
@@ -249,7 +252,7 @@ function CancelSheet({ userName, refundAmount, onClose, onConfirm, onDone }) {
               <span style={{ fontSize: 12.5, color: GREEN, fontWeight: 500, lineHeight: 1.45 }}>Las cancelaciones generan un crédito aplicable a tu próxima reserva.</span>
             </div>
           </div>
-          <div className="no-sb" style={{ overflowY: 'auto', flex: 1 }}>
+          <div ref={scrollRef} className="no-sb" style={{ overflowY: 'auto', overscrollBehavior: 'contain', flex: 1 }}>
             <div style={{ width: '100%', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: `1px solid ${HAIR}` }}>
               <div style={{ flex: 1 }}>
                 <span style={{ fontSize: 14.5, fontWeight: 600, color: BLUE }}>{userName} (Tú)</span>
@@ -300,6 +303,7 @@ function ManageSheet({ onClose, onViewPayment, onCancel }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
+  const { rootRef, dragY, dragging } = useSheetPull({ onClose: dismiss });
   const rowStyle = { width: '100%', padding: '14px 16px', borderRadius: 14, background: '#fff', border: `1px solid ${HAIR}`, display: 'flex', alignItems: 'center', marginBottom: 10, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' };
   const chevron = (color = SUB) => (
     <svg width="8" height="14" viewBox="0 0 8 14" fill="none">
@@ -308,7 +312,7 @@ function ManageSheet({ onClose, onViewPayment, onCancel }) {
   );
   return (
     <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease', pointerEvents: open ? 'auto' : 'none' }}>
-      <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(20px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
+      <div className="sheet-panel" ref={rootRef} onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(20px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? `translateY(${dragY}px)` : 'translateY(100%)', transition: dragging ? 'none' : 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
         <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 20px' }} />
         <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 16, textAlign: 'center', letterSpacing: -0.2 }}>Gestionar la reserva</div>
         <button onClick={onViewPayment} style={rowStyle}>
@@ -333,6 +337,7 @@ function PaymentSheet({ onClose, userName, reservation }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
+  const { rootRef, dragY, dragging } = useSheetPull({ onClose: dismiss });
   const fmt = n => `S/. ${Number(n).toFixed(2)}`;
   const amount = reservation?.amount ?? 0;
   const reservedAt = reservation?.reservedAt ? new Date(reservation.reservedAt) : null;
@@ -344,7 +349,7 @@ function PaymentSheet({ onClose, userName, reservation }) {
   );
   return (
     <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease', pointerEvents: open ? 'auto' : 'none' }}>
-      <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(24px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
+      <div className="sheet-panel" ref={rootRef} onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(24px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? `translateY(${dragY}px)` : 'translateY(100%)', transition: dragging ? 'none' : 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
         <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 20px' }} />
         <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 16, textAlign: 'center', letterSpacing: -0.2 }}>Detalles del pago</div>
         <div style={{ padding: '12px 14px 14px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -375,6 +380,8 @@ export default function RentalDetail() {
   const location = useLocation();
   const { id }   = useParams();
   const { user } = useAuth();
+  const mapReturn = location.state?.mapReturn ?? null;  // contexto del mapa de Canchas, se devuelve al volver
+  const goBack = () => navigate(location.state?.backPath ?? '/fields', mapReturn ? { state: { mapReturn } } : undefined);
 
   const _rd0 = _readRDCache(id);
   const [game, setGame]               = useState(() => {
@@ -448,7 +455,7 @@ export default function RentalDetail() {
   if (!game) {
     return (
       <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#F2F2F4' }}>
-        <Header title="Cancha" onBack={() => navigate(location.state?.backPath ?? '/fields')} />
+        <Header title="Cancha" onBack={goBack} />
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: SUB, fontSize: 15 }}>
           Cancha no encontrada
         </div>
@@ -497,7 +504,7 @@ export default function RentalDetail() {
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
-      <Header title={title} onBack={() => navigate(location.state?.backPath ?? '/fields')} />
+      <Header title={title} onBack={goBack} />
 
       <div className="no-sb" style={{ flex: 1, overflowY: 'auto', background: '#fff' }}>
         <HeroImage coverPath={game.venueCoverPath} coverVersion={game.venueCoverVersion} />
@@ -636,7 +643,7 @@ export default function RentalDetail() {
           refundAmount={myReservation?.amount ?? 0}
           onClose={() => setCancelOpen(false)}
           onConfirm={handleCancel}
-          onDone={() => navigate(location.state?.backPath ?? '/fields')}
+          onDone={goBack}
         />
       )}
 

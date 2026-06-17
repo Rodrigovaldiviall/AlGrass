@@ -166,7 +166,7 @@ function NotificationRow({ n, expanded, onPress, highlighted = false }) {
 // ── Header
 function Header({ hasUnread, onMarkAll }) {
   return (
-    <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 14px)', paddingBottom: 14, paddingLeft: 16, paddingRight: 16, flexShrink: 0 }}>
+    <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 16, paddingRight: 16, flexShrink: 0 }}>
       <div style={{ height: 44, display: 'flex', alignItems: 'center', position: 'relative' }}>
         <div style={{ flex: 1, color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2, textAlign: 'center' }}>
           Notificaciones

@@ -310,8 +310,8 @@ export function AuthGate() {
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
       <div style={{
         background: BLUE,
-        paddingTop: 'calc(env(safe-area-inset-top) + 14px)',
-        paddingBottom: 14, paddingLeft: 16, paddingRight: 16,
+        paddingTop: 'calc(env(safe-area-inset-top) + 9px)',
+        paddingBottom: 9, paddingLeft: 16, paddingRight: 16,
       }}>
         <div style={{ height: 44, display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
           <button

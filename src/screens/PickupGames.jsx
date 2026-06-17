@@ -8,6 +8,7 @@ import logo from '../assets/logo.webp';
 import { getGames } from '../services/gameService';
 import { getVenues } from '../services/venueService';
 import DistrictSheet from '../components/DistrictSheet';
+import VenueBottomSheet from '../components/VenueBottomSheet';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -16,6 +17,7 @@ import { GameMetaLine } from '../components/GameMetaLine';
 import { abbreviateName, formatDateLabel } from '../utils/format';
 import { getMyWaitlistGameIds } from '../services/waitlistService';
 import { useForegroundTick } from '../hooks/useForegroundTick';
+import { useSheetPull } from '../hooks/useSheetPull';
 
 // Mapa lazy: vive en su propio chunk; solo se descarga al pulsar "Mapa".
 const MapView = lazy(() => import('./MapView'));
@@ -89,6 +91,7 @@ const ALL_SPOTS = Array.from({ length: 22 }, (_, i) => i + 1);
 function FilterPanel({ open, onClose, flt, setFlt }) {
   const [spotsExpanded, setSpotsExpanded] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const { rootRef, scrollRef, dragY, dragging } = useSheetPull({ onClose });
 
   const toggleBool = k    => setFlt(f => ({ ...f, [k]: !f[k] }));
   const toggleArr  = (k, v) => setFlt(f => ({ ...f, [k]: f[k].includes(v) ? f[k].filter(x => x !== v) : [...f[k], v] }));
@@ -141,12 +144,13 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
         transition: 'background .22s ease',
         pointerEvents: open ? 'auto' : 'none',
       }}>
-      <div className="sheet-panel" onTransitionEnd={() => { if (!open) setMounted(false); }} style={{
+      <div ref={rootRef} className="sheet-panel" onTransitionEnd={() => { if (!open) setMounted(false); }} style={{
         background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22,
         boxShadow: '0 -12px 40px rgba(0,0,0,0.18)',
-        transform: open ? 'translateY(0)' : 'translateY(100%)',
-        transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)',
+        transform: open ? `translateY(${dragY}px)` : 'translateY(100%)',
+        transition: dragging ? 'none' : 'transform .28s cubic-bezier(0.32,0.72,0,1)',
         maxHeight: '88%', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        willChange: 'transform',
       }}>
 
         {/* Header */}
@@ -163,7 +167,7 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
         </div>
 
         {/* Body */}
-        <div className="no-sb" style={{ flex: 1, overflowY: 'auto', padding: '0 14px', overscrollBehavior: 'none' }}>
+        <div ref={scrollRef} className="no-sb" style={{ flex: 1, overflowY: 'auto', padding: '0 14px', overscrollBehavior: 'contain' }}>
 
           {/* Características */}
           <div style={{ borderBottom: `1px solid ${HAIR}`, paddingBottom: 10 }}>
@@ -287,7 +291,7 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
 
 function Header({ city, onCityTap }) {
   return (
-    <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 14px)', paddingBottom: 14, paddingLeft: 20, paddingRight: 20 }}>
+    <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 20, paddingRight: 20 }}>
       <div style={{ height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
         <div style={{ color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>Elije tu partido</div>
         {city && (
@@ -907,17 +911,15 @@ export default function PickupGames() {
   const { user }  = useAuth();
 
   const _mapReturn = location.state?.mapReturn ?? null;       // contexto restaurado al volver de GameDetail
-  const [view, setView] = useState(_mapReturn?.view ?? 'list'); // 'list' | 'map'
-  const [selectedVenue, setSelectedVenue] = useState(_mapReturn?.selectedVenue ?? null); // { id, name } | null (selección del mapa)
-  const [sheetExpanded, setSheetExpanded] = useState(_mapReturn?.sheetExpanded ?? false); // BottomSheet: false=40% (collapsed) | true=100% (expanded)
-  const [sheetVisible, setSheetVisible] = useState(!!_mapReturn?.selectedVenue);          // translateY: true=0 (en pantalla) | false=100% (oculto). Restaurado = visible directo
-  const sheetDragRef = useRef(null);
-  // Slide-in al seleccionar venue: monta oculto (translateY 100%) y sube a 0 en el siguiente frame.
-  useEffect(() => {
-    if (!selectedVenue) return;
-    const raf = requestAnimationFrame(() => setSheetVisible(true));
-    return () => cancelAnimationFrame(raf);
-  }, [selectedVenue?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Estado persistido entre tabs (sessionStorage). Prioridad: mapReturn (detalle) → persistido (tab) → default.
+  const _pgStored = (() => { try { return JSON.parse(sessionStorage.getItem('pg')) ?? {}; } catch { return {}; } })();
+  const [view, setView] = useState(_mapReturn?.view ?? _pgStored.view ?? 'list'); // 'list' | 'map'
+  const [selectedVenue, setSelectedVenue] = useState(_mapReturn?.selectedVenue ?? _pgStored.venue ?? null); // { id, name } | null (selección del mapa)
+  // BottomSheet de 3 snaps: 0=100% · 1=40% · 2=cerrado. Restaura desde sheetExpanded persistido.
+  const _restVenue = _mapReturn?.selectedVenue ?? _pgStored.venue ?? null;
+  const _restExpanded = _mapReturn?.sheetExpanded ?? _pgStored.sheetExpanded ?? false;
+  const [snapIndex, setSnapIndex] = useState(_restVenue ? (_restExpanded ? 0 : 1) : 1);
+  const mapViewRef = useRef(_pgStored.mapView ?? null); // { center:[lat,lng], zoom } | null — cámara del mapa
   const [coachStep, setCoachStep] = useState(null);
   function advanceCoach() {
     if (coachStep < COACH_STEPS.length - 1) { setCoachStep(s => s + 1); }
@@ -1030,6 +1032,12 @@ export default function PickupGames() {
       return { ...f, distritos: cur.includes(d) ? cur.filter(x => x !== d) : [...cur, d] };
     });
   }
+  // Venue restaurado que ya no existe en la ciudad actual → limpiar selección/sheet.
+  useEffect(() => {
+    if (selectedVenue && venues.length && !venues.some(v => v.id === selectedVenue.id)) {
+      setSelectedVenue(null); setSnapIndex(1);
+    }
+  }, [venues]); // eslint-disable-line react-hooks/exhaustive-deps
   const [availableCities, setAvailableCities] = useState([]);
   useEffect(() => {
     supabase.from('venues').select('city').not('city', 'is', null).then(({ data }) => {
@@ -1217,6 +1225,10 @@ export default function PickupGames() {
   useEffect(() => { fltRef.current = flt; }, [flt]);
   const selKeyRef = useRef(selectedKey);
   useEffect(() => { selKeyRef.current = selectedKey; }, [selectedKey]);
+  // Refs espejo del estado del mapa para persistir al desmontar (cambio de tab).
+  const viewRef = useRef(view);                   useEffect(() => { viewRef.current = view; }, [view]);
+  const selVenueRef = useRef(selectedVenue);       useEffect(() => { selVenueRef.current = selectedVenue; }, [selectedVenue]);
+  const snapIndexRef = useRef(snapIndex);          useEffect(() => { snapIndexRef.current = snapIndex; }, [snapIndex]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -1238,6 +1250,11 @@ export default function PickupGames() {
           flt: fltRef.current,
           sel: selKeyRef.current,
           scroll: listScrollPosRef.current,
+          view: viewRef.current,
+          venue: selVenueRef.current,
+          sheetExpanded: snapIndexRef.current === 0,
+          sheetVisible: !!selVenueRef.current && snapIndexRef.current !== 2,
+          mapView: mapViewRef.current,
         }));
       } catch {}
     };
@@ -1245,11 +1262,25 @@ export default function PickupGames() {
 
   useEffect(() => {
     function onTabScrollTop(e) {
-      if (e.detail === 'partidos') listRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+      if (e.detail !== 'partidos') return;
+      // Primer re-tap desde mapa: solo sale del modo mapa (conserva el scroll de la lista).
+      if (viewRef.current === 'map') { setView('list'); return; }
+      listRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     }
     window.addEventListener('tab-scroll-top', onTabScrollTop);
     return () => window.removeEventListener('tab-scroll-top', onTabScrollTop);
   }, []);
+
+  // Al volver de mapa → lista (re-tap o FAB), restaurar el scroll previo de la lista.
+  const prevViewRef = useRef(view);
+  useEffect(() => {
+    const prev = prevViewRef.current;
+    prevViewRef.current = view;
+    if (prev === 'map' && view === 'list') {
+      const el = listRef.current;
+      if (el) requestAnimationFrame(() => el.scrollTo({ top: listScrollPosRef.current, behavior: 'instant' }));
+    }
+  }, [view]);
 
   const centerChip = (key) => {
     const s = stripScrollerRef.current;
@@ -1312,11 +1343,11 @@ export default function PickupGames() {
         confirmedCountReady={confirmedCountReady}
         onOpen={() => {
           if (st?.isGuestConfirmed) {
-            navigate(`/game/${g.id}`, { state: { game: { ...g, paidBy: st.paidBy, paidByCode: st.payerCode, guestId: st.guestId }, infoMode: true, backPath: '/games', mapReturn: { view, selectedVenue, sheetExpanded } } });
+            navigate(`/game/${g.id}`, { state: { game: { ...g, paidBy: st.paidBy, paidByCode: st.payerCode, guestId: st.guestId }, infoMode: true, backPath: '/games', mapReturn: { view, selectedVenue, sheetExpanded: snapIndex === 0 } } });
           } else if (st?.relationship === 'canceled-with-guests' && st.isGuestCanceled) {
-            navigate(`/game/${g.id}`, { state: { guestCanceledView: true, infoMode: false, backPath: '/games', game: { ...g, guestCanceledView: true, paymentBreakdown: null }, mapReturn: { view, selectedVenue, sheetExpanded } } });
+            navigate(`/game/${g.id}`, { state: { guestCanceledView: true, infoMode: false, backPath: '/games', game: { ...g, guestCanceledView: true, paymentBreakdown: null }, mapReturn: { view, selectedVenue, sheetExpanded: snapIndex === 0 } } });
           } else {
-            navigate(`/game/${g.id}`, { state: { game: g, backPath: '/games', mapReturn: { view, selectedVenue, sheetExpanded } } });
+            navigate(`/game/${g.id}`, { state: { game: g, backPath: '/games', mapReturn: { view, selectedVenue, sheetExpanded: snapIndex === 0 } } });
           }
         }}
       />
@@ -1326,31 +1357,16 @@ export default function PickupGames() {
   // Partidos del BottomSheet: todos los de la fecha, o solo los del venue seleccionado.
   const sheetGames = selectedVenue ? mapGames.filter(g => g.venueId === selectedVenue.id) : mapGames;
 
-  // Abrir/actualizar venue. Si estaba cerrado, abre en 40%; si ya estaba abierto, mantiene la altura.
+  // Abrir/actualizar venue. Si estaba cerrado, abre en 40%; si ya estaba abierto, mantiene el snap.
   function openVenue(v) {
     const wasOpen = !!selectedVenue;
     setSelectedVenue({ id: v.id, name: v.name });
-    if (!wasOpen) setSheetExpanded(false);
+    if (!wasOpen) setSnapIndex(1);
   }
-  // Cierre animado: baja el sheet (translateY 100%); al terminar la transición se limpia la selección.
-  function closeSheet() { setSheetVisible(false); }
+  // Cierre animado: snap a cerrado (2); al terminar la transición VenueBottomSheet llama onClosed.
+  function closeSheet() { setSnapIndex(2); }
   // Reset duro (al cambiar de vista): sin animación.
-  function resetSheet() { setSelectedVenue(null); setSheetExpanded(false); setSheetVisible(false); }
-  // Header del sheet: tap → alterna 40% ↔ 100%; drag corto → snapping; drag abajo en 40% → cierra.
-  function onSheetDown(e) { sheetDragRef.current = { startY: e.clientY, delta: 0, wasDrag: false }; try { e.currentTarget.setPointerCapture(e.pointerId); } catch {} }
-  function onSheetMove(e) { if (sheetDragRef.current) sheetDragRef.current.delta = sheetDragRef.current.startY - e.clientY; }
-  // pointerup: SOLO maneja el drag (snapping). El tap NO togglea aquí → no reflow antes del click sintético.
-  function onSheetUp() {
-    const d = sheetDragRef.current?.delta ?? 0;
-    if (sheetDragRef.current) sheetDragRef.current.wasDrag = Math.abs(d) >= 16;
-    if (d > 16) setSheetExpanded(true);                            // drag arriba → 100%
-    else if (d < -16) { if (sheetExpanded) setSheetExpanded(false); else closeSheet(); } // drag abajo → 40% o cerrar
-  }
-  // click del header: toggle del tap. Si el gesto fue drag, no togglea (el snapping ya se hizo en pointerup).
-  function onSheetClick() {
-    if (sheetDragRef.current?.wasDrag) { sheetDragRef.current = null; return; }
-    setSheetExpanded(e => !e);
-  }
+  function resetSheet() { setSelectedVenue(null); setSnapIndex(1); }
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
@@ -1373,64 +1389,34 @@ export default function PickupGames() {
         eventDates={eventDates}
       />
       {view === 'map' ? (
-        <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex' }}>
+        <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
           <Suspense fallback={<div style={{ flex: 1, background: '#fff' }} />}>
             <MapView
               city={userCity}
               games={mapGames}
               selectedVenueId={selectedVenue?.id ?? null}
-              sheetExpanded={sheetExpanded}
+              sheetExpanded={snapIndex === 0}
               selectedDistricts={flt.distritos}
+              initialCenter={mapViewRef.current?.center ?? null}
+              initialZoom={mapViewRef.current?.zoom ?? null}
+              onViewChange={(center, zoom) => { mapViewRef.current = { center, zoom }; }}
               onSelectVenue={openVenue}
               onClearSelection={closeSheet}
             />
           </Suspense>
           {selectedVenue && (
-            <div
-              onTransitionEnd={(e) => { if (e.propertyName === 'transform' && !sheetVisible) setSelectedVenue(null); }}
-              style={{
-                position: 'absolute', left: 0, right: 0, bottom: 0,
-                height: sheetExpanded ? '100%' : '40%',
-                background: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20,
-                boxShadow: '0 -4px 16px rgba(0,0,0,0.12)',
-                transform: sheetVisible ? 'translateY(0)' : 'translateY(100%)',
-                transition: 'transform .3s cubic-bezier(0.32,0.72,0,1), height .25s ease',
-                display: 'flex', flexDirection: 'column',
-              }}>
-              {/* Header clickeable (handle + chip + padding inferior): toda la banda alterna 40% ↔ 100% */}
-              <div onPointerDown={onSheetDown} onPointerMove={onSheetMove} onPointerUp={onSheetUp} onClick={onSheetClick}
-                style={{ flexShrink: 0, cursor: 'pointer', touchAction: 'none', padding: '6px 0 4px' }}>
-                <div style={{ width: 40, height: 5, borderRadius: 3, background: '#D0D0D6', margin: '0 auto 6px' }} />
-                <div style={{ display: 'flex', justifyContent: 'center', padding: '0 16px' }}>
-                  <div style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%',
-                    padding: '4px 6px 4px 10px', borderRadius: 999,
-                    background: 'rgba(245,200,66,0.22)', border: '1px solid rgba(212,150,10,0.35)',
-                    color: '#7A5A06', fontSize: 12.5, fontWeight: 600,
-                  }}>
-                    <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedVenue.name}</span>
-                    <button
-                      onPointerDown={e => e.stopPropagation()}
-                      onPointerUp={e => e.stopPropagation()}
-                      onClick={e => { e.stopPropagation(); closeSheet(); }}
-                      style={{
-                        flexShrink: 0, width: 16, height: 16, borderRadius: '50%', border: 'none',
-                        background: 'rgba(212,150,10,0.25)', color: '#7A5A06', cursor: 'pointer',
-                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0,
-                        fontSize: 10, lineHeight: 1, WebkitTapHighlightColor: 'transparent', outline: 'none',
-                      }}>✕</button>
-                  </div>
+            <VenueBottomSheet
+              venueName={selectedVenue.name}
+              index={snapIndex}
+              onSettle={setSnapIndex}
+              onClosed={() => setSelectedVenue(null)}
+              onRequestClose={closeSheet}>
+              {sheetGames.length === 0 ? (
+                <div style={{ padding: '24px', textAlign: 'center', color: SUB, fontSize: 14 }}>
+                  No hay partidos para esta selección.
                 </div>
-              </div>
-              {/* Lista (reutiliza renderGameRow) */}
-              <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', paddingTop: 0, paddingBottom: 8 }}>
-                {sheetGames.length === 0 ? (
-                  <div style={{ padding: '24px', textAlign: 'center', color: SUB, fontSize: 14 }}>
-                    No hay partidos para esta selección.
-                  </div>
-                ) : sheetGames.map(g => renderGameRow(g, false))}
-              </div>
-            </div>
+              ) : sheetGames.map(g => renderGameRow(g, false))}
+            </VenueBottomSheet>
           )}
         </div>
       ) : (
@@ -1505,7 +1491,7 @@ export default function PickupGames() {
         }}>
         {view === 'list' ? (
           <><span>Mapa</span>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 21s7-5.6 7-11a7 7 0 10-14 0c0 5.4 7 11 7 11z" stroke="currentColor" strokeWidth="2"/><circle cx="12" cy="10" r="2.4" stroke="currentColor" strokeWidth="2"/></svg>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M9 3L3 5.5v15L9 18l6 3 6-2.5v-15L15 6 9 3z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/><path d="M9 3v15M15 6v15" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
           </>
         ) : (
           <><span>Lista</span>
@@ -1521,6 +1507,7 @@ export default function PickupGames() {
           districts={availableDistricts}
           selected={flt.distritos}
           onToggle={toggleDistrict}
+          onClear={() => setFlt(f => ({ ...f, distritos: [] }))}
           onClose={() => setDistrictSheetOpen(false)}
         />
       )}

@@ -1,5 +1,5 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useMemo, useRef, useEffect, lazy, Suspense } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, ORANGE } from '../constants';
 import { useAuth } from '../context/AuthContext';
 import I from '../icons';
@@ -11,7 +11,14 @@ import fieldNoAvailable from '../assets/Field no available.webp';
 import { supabase } from '../lib/supabase';
 import { getVenueCoverUrl } from '../utils/venue';
 import { getRentalGames } from '../services/gameService';
+import { getVenues } from '../services/venueService';
+import DistrictSheet from '../components/DistrictSheet';
+import VenueBottomSheet from '../components/VenueBottomSheet';
+
+// Mapa lazy: vive en su propio chunk; solo se descarga al pulsar "Mapa".
+const MapView = lazy(() => import('./MapView'));
 import { useForegroundTick } from '../hooks/useForegroundTick';
+import { useSheetPull } from '../hooks/useSheetPull';
 import { getMyBookedGameIds } from '../services/reservationService';
 import { GameMetaLine } from '../components/GameMetaLine';
 import { isGamePast } from '../utils/deriveGameState';
@@ -37,7 +44,7 @@ function headerLabel(d) {
 const EMPTY_FLT = {
   organiza: false,
   cubierta: false, estacionamiento: false, duchas: false, noDisp: true,
-  formatos: [], dias: [], horarios: [],
+  formatos: [], dias: [], horarios: [], distritos: [],
 };
 
 function parseHour(time, ampm) {
@@ -89,6 +96,7 @@ const PANEL_HORARIOS = [
 
 function FilterPanel({ open, onClose, flt, setFlt }) {
   const [mounted, setMounted] = useState(false);
+  const { rootRef, scrollRef, dragY, dragging } = useSheetPull({ onClose });
   const toggleBool = k      => setFlt(f => ({ ...f, [k]: !f[k] }));
   const toggleArr  = (k, v) => setFlt(f => ({ ...f, [k]: f[k].includes(v) ? f[k].filter(x => x !== v) : [...f[k], v] }));
   const clearAll   = ()     => setFlt(EMPTY_FLT);
@@ -134,12 +142,13 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
         transition: 'background .22s ease',
         pointerEvents: open ? 'auto' : 'none',
       }}>
-      <div onTransitionEnd={() => { if (!open) setMounted(false); }} style={{
+      <div ref={rootRef} onTransitionEnd={() => { if (!open) setMounted(false); }} style={{
         background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22,
         boxShadow: '0 -12px 40px rgba(0,0,0,0.18)',
-        transform: open ? 'translateY(0)' : 'translateY(100%)',
-        transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)',
+        transform: open ? `translateY(${dragY}px)` : 'translateY(100%)',
+        transition: dragging ? 'none' : 'transform .28s cubic-bezier(0.32,0.72,0,1)',
         maxHeight: '88%', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        willChange: 'transform',
       }}>
 
         {/* Header */}
@@ -156,7 +165,7 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
         </div>
 
         {/* Body */}
-        <div className="no-sb" style={{ flex: 1, overflowY: 'auto', padding: '0 14px', overscrollBehavior: 'none' }}>
+        <div ref={scrollRef} className="no-sb" style={{ flex: 1, overflowY: 'auto', padding: '0 14px', overscrollBehavior: 'contain' }}>
 
           {/* Características */}
           <div style={{ borderBottom: `1px solid ${HAIR}`, paddingBottom: 10 }}>
@@ -254,7 +263,7 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
 // ── Header
 function Header({ city, onCityTap }) {
   return (
-    <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 14px)', paddingBottom: 14, paddingLeft: 20, paddingRight: 20 }}>
+    <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 20, paddingRight: 20 }}>
       <div style={{ height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
         <div style={{ color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>Elige tu cancha</div>
         {city && (
@@ -334,16 +343,16 @@ function Chip({ label, icon, active, onClick, last, labelStyle }) {
   );
 }
 
-function FilterButton({ onClick }) {
+function FilterButton({ onClick, hasActive }) {
   return (
     <button onClick={onClick} style={{
       flex: '0 0 auto', width: 38, height: 38, borderRadius: 999,
-      border: `1px solid ${HAIR}`,
-      background: '#fff',
+      border: `1px solid ${hasActive ? BLUE : HAIR}`,
+      background: hasActive ? BLUE : '#fff',
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
       cursor: 'pointer', outline: 'none', WebkitTapHighlightColor: 'transparent', padding: 0,
     }}>
-      {I.filtersBig(TEXT)}
+      {I.filtersBig(hasActive ? '#fff' : TEXT)}
     </button>
   );
 }
@@ -355,7 +364,7 @@ const CHIP_DEFS = [
   { id: 'noDisp',          label: 'Ocultar No disp.',  icon: c => LockIcon(c)     },
 ];
 
-function FilterRow({ chipActive, onToggleChip, onOpenPanel, panelHasExtra, hasHostedInFeed }) {
+function FilterRow({ chipActive, onToggleChip, onOpenPanel, panelHasExtra, hasHostedInFeed, onOpenDistricts, districtsActive }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px 8px', background: '#fff' }}>
       <FilterButton onClick={onOpenPanel} hasActive={panelHasExtra} />
@@ -364,6 +373,9 @@ function FilterRow({ chipActive, onToggleChip, onOpenPanel, panelHasExtra, hasHo
         flex: 1, minWidth: 0, display: 'flex', gap: 8, overflowX: 'auto',
         scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch',
       }}>
+        <Chip key="distritos" label="Distritos"
+          icon={c => <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 22s7-5.8 7-12a7 7 0 1 0-14 0c0 6.2 7 12 7 12z" stroke={c} strokeWidth="2"/><circle cx="12" cy="10" r="2.5" stroke={c} strokeWidth="2"/></svg>}
+          active={districtsActive} onClick={onOpenDistricts} last={false} />
         {hasHostedInFeed && (
           <Chip key="organiza" label="Organiza"
             icon={c => <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><circle cx="5" cy="4" r="2.5" stroke={c} strokeWidth="1.4"/><path d="M1 12c0-2.2 1.8-4 4-4" stroke={c} strokeWidth="1.4" strokeLinecap="round"/><circle cx="10" cy="8.5" r="2.5" stroke={c} strokeWidth="1.4"/><path d="M7 13c0-1.7 1.3-3 3-3s3 1.3 3 3" stroke={c} strokeWidth="1.4" strokeLinecap="round"/></svg>}
@@ -386,7 +398,7 @@ function DateCell({ top, bottom, active, isToday, onClick, refEl, disabled }) {
   const bottomColor = disabled ? '#D1D1D6' : (active ? '#fff' : TEXT);
   return (
     <button ref={refEl} onClick={disabled ? undefined : onClick} style={{
-      flex: '0 0 auto', width: 50, height: 58, borderRadius: 11,
+      flex: '0 0 auto', width: 50, height: 52, borderRadius: 11,
       background: active ? BLUE : '#fff',
       border: active ? `1px solid ${BLUE}` : `1px solid ${HAIR}`,
       display: 'flex', flexDirection: 'column',
@@ -403,7 +415,7 @@ function DateCell({ top, bottom, active, isToday, onClick, refEl, disabled }) {
 
 function DateStrip({ dates, selectedKey, onSelect, scrollerRef, cellRefs, eventDates }) {
   return (
-    <div ref={scrollerRef} className="no-sb" style={{ display: 'flex', gap: 8, overflowX: 'auto', padding: '8px 16px 12px', scrollBehavior: 'smooth' }}>
+    <div ref={scrollerRef} className="no-sb" style={{ display: 'flex', gap: 8, overflowX: 'auto', padding: '4px 16px 8px', scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch', background: '#fff' }}>
       {dates.map((d) => {
         const k   = ymd(d);
         const lab = chipLabel(d);
@@ -522,7 +534,7 @@ function DateHeader({ dateKey, refEl }) {
   const [_y, _mo, _d] = dateKey.split('-').map(Number);
   const d = new Date(_y, _mo - 1, _d);
   return (
-    <div data-date-header={dateKey} ref={refEl} style={{ padding: '14px 16px 8px', color: SUB, fontSize: 13.5, fontWeight: 500, background: '#fff' }}>
+    <div data-date-header={dateKey} ref={refEl} style={{ padding: '10px 16px 6px', color: SUB, fontSize: 13.5, fontWeight: 500, background: '#fff' }}>
       {headerLabel(d)}
     </div>
   );
@@ -534,9 +546,20 @@ let _myBookedCache  = new Set();
 
 export default function Fields() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
+  const _mapReturn = location.state?.mapReturn ?? null;       // contexto restaurado al volver de RentalDetail
+  // Estado persistido entre tabs (sessionStorage). Prioridad: mapReturn (detalle) → persistido (tab) → default.
+  const _flStored = (() => { try { return JSON.parse(sessionStorage.getItem('fl')) ?? {}; } catch { return {}; } })();
+  const [view, setView] = useState(_mapReturn?.view ?? _flStored.view ?? 'list'); // 'list' | 'map'
+  const [selectedVenue, setSelectedVenue] = useState(_mapReturn?.selectedVenue ?? _flStored.venue ?? null); // { id, name } | null
+  // BottomSheet de 3 snaps: 0=100% · 1=40% · 2=cerrado. Restaura desde sheetExpanded persistido.
+  const _restVenue = _mapReturn?.selectedVenue ?? _flStored.venue ?? null;
+  const _restExpanded = _mapReturn?.sheetExpanded ?? _flStored.sheetExpanded ?? false;
+  const [snapIndex, setSnapIndex] = useState(_restVenue ? (_restExpanded ? 0 : 1) : 1);
+  const mapViewRef = useRef(_flStored.mapView ?? null); // { center:[lat,lng], zoom } | null — cámara del mapa
   const [flt, setFlt]               = useState(() => {
-    try { return JSON.parse(sessionStorage.getItem('fl'))?.flt ?? EMPTY_FLT; } catch { return EMPTY_FLT; }
+    try { return { ...EMPTY_FLT, ...(JSON.parse(sessionStorage.getItem('fl'))?.flt ?? {}) }; } catch { return EMPTY_FLT; }
   });
   const [panelOpen, setPanelOpen]   = useState(false);
   const [userCity, setUserCity] = useState(() => {
@@ -616,6 +639,32 @@ export default function Fields() {
     [rentalGames, user?.id]
   );
 
+  // Venues de la ciudad actual (fuente única de distritos). Incluye venues sin coordenadas.
+  const [venues, setVenues] = useState([]);
+  useEffect(() => {
+    if (!userCity) { setVenues([]); return; }
+    let cancelled = false;
+    getVenues(userCity).then(v => { if (!cancelled) setVenues(v); });
+    return () => { cancelled = true; };
+  }, [userCity]);
+  const availableDistricts = useMemo(
+    () => [...new Set(venues.map(v => v.district).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es')),
+    [venues]
+  );
+  const [districtSheetOpen, setDistrictSheetOpen] = useState(false);
+  function toggleDistrict(d) {
+    setFlt(f => {
+      const cur = f.distritos ?? [];
+      return { ...f, distritos: cur.includes(d) ? cur.filter(x => x !== d) : [...cur, d] };
+    });
+  }
+  // Venue restaurado que ya no existe en la ciudad actual → limpiar selección/sheet.
+  useEffect(() => {
+    if (selectedVenue && venues.length && !venues.some(v => v.id === selectedVenue.id)) {
+      setSelectedVenue(null); setSnapIndex(1);
+    }
+  }, [venues]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const chipActive = {
     organiza:        flt.organiza,
     cubierta:        flt.cubierta,
@@ -631,7 +680,8 @@ export default function Fields() {
     setFlt(f => ({ ...f, [id]: !f[id] }));
   }
 
-  const filteredFields = useMemo(() => rentalGames.filter(f => {
+  // Base con TODOS los filtros EXCEPTO distrito (lista para un futuro mapa: badges + sheet reales).
+  const filteredFieldsNoDistrict = useMemo(() => rentalGames.filter(f => {
     if (isGamePast(f.dateKey, f.time24, f.durationMin)) return false;
     if (flt.organiza && f.hostUserId !== user?.id) return false;
     if (userCity && f.city && f.city !== userCity) return false;
@@ -655,6 +705,15 @@ export default function Fields() {
     }
     return true;
   }), [flt, userCity, rentalGames]);
+
+  // Lista: filtro DURO de distrito sobre la base.
+  const filteredFields = useMemo(
+    () => filteredFieldsNoDistrict.filter(f => !flt.distritos.length || flt.distritos.includes(f.venueDistrict)),
+    [filteredFieldsNoDistrict, flt.distritos]
+  );
+
+  // Canchas visibles de la fecha seleccionada (alimenta contadores del mapa; distrito NO altera badges).
+  const mapFields = useMemo(() => filteredFieldsNoDistrict.filter(f => f.dateKey === selectedKey), [filteredFieldsNoDistrict, selectedKey]);
 
   const grouped = useMemo(() => {
     const map = new Map();
@@ -694,6 +753,10 @@ export default function Fields() {
   useEffect(() => { fltRef.current = flt; }, [flt]);
   const selKeyRef = useRef(selectedKey);
   useEffect(() => { selKeyRef.current = selectedKey; }, [selectedKey]);
+  // Refs espejo del estado del mapa para persistir al desmontar (cambio de tab).
+  const viewRef = useRef(view);              useEffect(() => { viewRef.current = view; }, [view]);
+  const selVenueRef = useRef(selectedVenue);  useEffect(() => { selVenueRef.current = selectedVenue; }, [selectedVenue]);
+  const snapIndexRef = useRef(snapIndex);     useEffect(() => { snapIndexRef.current = snapIndex; }, [snapIndex]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -715,6 +778,11 @@ export default function Fields() {
           flt: fltRef.current,
           sel: selKeyRef.current,
           scroll: listScrollPosRef.current,
+          view: viewRef.current,
+          venue: selVenueRef.current,
+          sheetExpanded: snapIndexRef.current === 0,
+          sheetVisible: !!selVenueRef.current && snapIndexRef.current !== 2,
+          mapView: mapViewRef.current,
         }));
       } catch {}
     };
@@ -722,11 +790,25 @@ export default function Fields() {
 
   useEffect(() => {
     function onTabScrollTop(e) {
-      if (e.detail === 'campos') listRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+      if (e.detail !== 'campos') return;
+      // Primer re-tap desde mapa: solo sale del modo mapa (conserva el scroll de la lista).
+      if (viewRef.current === 'map') { setView('list'); return; }
+      listRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     }
     window.addEventListener('tab-scroll-top', onTabScrollTop);
     return () => window.removeEventListener('tab-scroll-top', onTabScrollTop);
   }, []);
+
+  // Al volver de mapa → lista (re-tap o FAB), restaurar el scroll previo de la lista.
+  const prevViewRef = useRef(view);
+  useEffect(() => {
+    const prev = prevViewRef.current;
+    prevViewRef.current = view;
+    if (prev === 'map' && view === 'list') {
+      const el = listRef.current;
+      if (el) requestAnimationFrame(() => el.scrollTo({ top: listScrollPosRef.current, behavior: 'instant' }));
+    }
+  }, [view]);
 
   const centerChip = (key) => {
     const s = stripScrollerRef.current;
@@ -769,6 +851,32 @@ export default function Fields() {
     }
   };
 
+  // Render de una card de cancha (reutilizado por la lista y por el BottomSheet del mapa).
+  function renderFieldRow(f, last) {
+    return (
+      <FieldRow key={f.id} f={f} last={last}
+        userBooked={myBookedFresh && myBookedIds.has(f.id)}
+        isHost={!!user?.id && !!f.hostUserId && f.hostUserId === user.id}
+        coverPath={f.venueCoverPath ?? null}
+        coverVersion={f.venueCoverVersion ?? null}
+        badgeReady={myBookedFresh}
+        onPress={() => navigate(`/rental/${f.id}`, { state: { field: f, backPath: '/fields', mapReturn: { view, selectedVenue, sheetExpanded: snapIndex === 0 } } })} />
+    );
+  }
+
+  // Canchas del BottomSheet: todas las de la fecha, o solo las del venue seleccionado.
+  const sheetFields = selectedVenue ? mapFields.filter(f => f.venueId === selectedVenue.id) : mapFields;
+
+  // Abrir/actualizar venue. Si estaba cerrado, abre en 40%; si ya estaba abierto, mantiene el snap.
+  function openVenue(v) {
+    const wasOpen = !!selectedVenue;
+    setSelectedVenue({ id: v.id, name: v.name });
+    if (!wasOpen) setSnapIndex(1);
+  }
+  // Cierre animado: snap a cerrado (2); al terminar la transición VenueBottomSheet llama onClosed.
+  function closeSheet() { setSnapIndex(2); }
+  function resetSheet() { setSelectedVenue(null); setSnapIndex(1); }
+
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
       <Header city={userCity} onCityTap={() => setCitySheetOpen(true)} />
@@ -779,6 +887,8 @@ export default function Fields() {
           onOpenPanel={() => setPanelOpen(true)}
           panelHasExtra={panelHasExtra}
           hasHostedInFeed={hasHostedInFeed}
+          onOpenDistricts={() => setDistrictSheetOpen(true)}
+          districtsActive={flt.distritos.length > 0}
         />
         <DateStrip
           dates={DATE_WINDOW}
@@ -788,6 +898,38 @@ export default function Fields() {
           cellRefs={stripCellRefs}
           eventDates={eventDates}
         />
+        {view === 'map' ? (
+        <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
+          <Suspense fallback={<div style={{ flex: 1, background: '#fff' }} />}>
+            <MapView
+              city={userCity}
+              games={mapFields}
+              selectedVenueId={selectedVenue?.id ?? null}
+              sheetExpanded={snapIndex === 0}
+              selectedDistricts={flt.distritos}
+              initialCenter={mapViewRef.current?.center ?? null}
+              initialZoom={mapViewRef.current?.zoom ?? null}
+              onViewChange={(center, zoom) => { mapViewRef.current = { center, zoom }; }}
+              onSelectVenue={openVenue}
+              onClearSelection={closeSheet}
+            />
+          </Suspense>
+          {selectedVenue && (
+            <VenueBottomSheet
+              venueName={selectedVenue.name}
+              index={snapIndex}
+              onSettle={setSnapIndex}
+              onClosed={() => setSelectedVenue(null)}
+              onRequestClose={closeSheet}>
+              {sheetFields.length === 0 ? (
+                <div style={{ padding: '24px', textAlign: 'center', color: SUB, fontSize: 14 }}>
+                  No hay canchas para esta selección.
+                </div>
+              ) : sheetFields.map(f => renderFieldRow(f, false))}
+            </VenueBottomSheet>
+          )}
+        </div>
+        ) : (
         <div ref={listRef} onScroll={onListScroll} className="no-sb"
           style={{ flex: 1, overflowY: 'auto', paddingBottom: 8, overscrollBehavior: 'contain' }}>
           {!listReady ? (
@@ -805,15 +947,7 @@ export default function Fields() {
                   <div style={{ padding: '12px 20px', color: SUB, fontSize: 14 }}>
                     No hay más canchas disponibles para hoy.
                   </div>
-                ) : fields.map((f, i) => (
-                  <FieldRow key={f.id} f={f} last={i === fields.length - 1 && isLast}
-                    userBooked={myBookedFresh && myBookedIds.has(f.id)}
-                    isHost={!!user?.id && !!f.hostUserId && f.hostUserId === user.id}
-                    coverPath={f.venueCoverPath ?? null}
-                    coverVersion={f.venueCoverVersion ?? null}
-                    badgeReady={myBookedFresh}
-                    onPress={() => navigate(`/rental/${f.id}`, { state: { field: f } })} />
-                ))}
+                ) : fields.map((f, i) => renderFieldRow(f, i === fields.length - 1 && isLast))}
                 {isLast && dateKey === maxEventKey && fields.length > 0 && (
                   <div style={{ padding: '28px 16px 20px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: SUB, fontSize: 13, fontWeight: 500 }}>
@@ -849,9 +983,42 @@ export default function Fields() {
           })}
           <div style={{ height: 8 }} />
         </div>
+        )}
+        {/* FAB único Lista ↔ Mapa (sobre la TabBar, respetando safe-area) */}
+        <button
+          onClick={() => { setView(v => v === 'list' ? 'map' : 'list'); resetSheet(); }}
+          style={{
+            position: 'fixed', left: '50%', transform: 'translateX(-50%)',
+            bottom: 'calc(env(safe-area-inset-bottom) + 70px)', zIndex: 50,
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            height: 34, padding: '0 14px', borderRadius: 999, border: 'none',
+            background: view === 'list' ? '#222222' : '#fff', color: view === 'list' ? '#fff' : '#1B1B1F', fontSize: 12.5, fontWeight: 700,
+            boxShadow: '0 4px 14px rgba(0,0,0,0.26)', cursor: 'pointer', fontFamily: 'inherit',
+            WebkitTapHighlightColor: 'transparent', outline: 'none',
+          }}>
+          {view === 'list' ? (
+            <><span>Mapa</span>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M9 3L3 5.5v15L9 18l6 3 6-2.5v-15L15 6 9 3z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/><path d="M9 3v15M15 6v15" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
+            </>
+          ) : (
+            <><span>Lista</span>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+            </>
+          )}
+        </button>
         <TabBar />
       </div>
       <FilterPanel open={panelOpen} onClose={() => setPanelOpen(false)} flt={flt} setFlt={setFlt} />
+      {districtSheetOpen && (
+        <DistrictSheet
+          city={userCity}
+          districts={availableDistricts}
+          selected={flt.distritos}
+          onToggle={toggleDistrict}
+          onClear={() => setFlt(f => ({ ...f, distritos: [] }))}
+          onClose={() => setDistrictSheetOpen(false)}
+        />
+      )}
       {citySheetOpen && (
         <CitySheet
           cities={availableCities}

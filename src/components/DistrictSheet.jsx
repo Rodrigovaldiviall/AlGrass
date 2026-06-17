@@ -1,22 +1,46 @@
+import { useState, useEffect } from 'react';
 import { BLUE, TEXT, SUB, HAIR } from '../constants';
+import { useSheetPull } from '../hooks/useSheetPull';
+
+const EASE = 'transform .28s cubic-bezier(0.32,0.72,0,1)';
 
 // Filtro de distritos: multi-select. La ciudad es informativa (no editable).
 // selected = [] significa "todos los distritos".
-export default function DistrictSheet({ city, districts, selected, onToggle, onClose }) {
+export default function DistrictSheet({ city, districts, selected, onToggle, onClear, onClose }) {
+  const [visible, setVisible] = useState(false);                 // entrada/salida (slide)
+  useEffect(() => { const r = requestAnimationFrame(() => setVisible(true)); return () => cancelAnimationFrame(r); }, []);
+  const startExit = () => setVisible(false);                      // anima salida; onClose real al terminar
+  const { rootRef, scrollRef, dragY, dragging } = useSheetPull({ onClose: startExit });
   return (
     <>
-      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200 }} />
-      <div style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 201,
-        background: '#fff', borderRadius: '20px 20px 0 0',
-        padding: '14px 20px calc(env(safe-area-inset-bottom) + 24px)',
-        boxShadow: '0 -8px 32px rgba(0,0,0,0.12)',
-        maxHeight: '72%', display: 'flex', flexDirection: 'column',
-      }}>
-        <div style={{ width: 36, height: 4, borderRadius: 2, background: '#E0E0E6', margin: '0 auto 14px' }} />
-        <div style={{ fontSize: 17, fontWeight: 700, color: TEXT, letterSpacing: -0.2 }}>Distritos</div>
-        <div style={{ fontSize: 13, color: SUB, marginTop: 2, marginBottom: 12 }}>{city}</div>
-        <div className="no-sb" style={{ overflowY: 'auto', WebkitOverflowScrolling: 'touch', display: 'flex', flexDirection: 'column' }}>
+      <div onClick={startExit} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200 }} />
+      <div ref={rootRef}
+        onTransitionEnd={(e) => { if (e.propertyName === 'transform' && !visible) onClose(); }}
+        style={{
+          position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 201,
+          background: '#fff', borderRadius: '20px 20px 0 0',
+          padding: '14px 20px calc(env(safe-area-inset-bottom) + 24px)',
+          boxShadow: '0 -8px 32px rgba(0,0,0,0.12)',
+          maxHeight: '72%', display: 'flex', flexDirection: 'column',
+          transform: visible ? `translateY(${dragY}px)` : 'translateY(100%)',
+          transition: dragging ? 'none' : EASE,
+          willChange: 'transform',
+        }}>
+        <div>
+          <div style={{ width: 36, height: 4, borderRadius: 2, background: '#E0E0E6', margin: '0 auto 14px' }} />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ fontSize: 17, fontWeight: 700, color: TEXT, letterSpacing: -0.2 }}>Distritos</div>
+            {selected.length > 0 && (
+              <button onClick={onClear} style={{
+                padding: '4px 0', background: 'transparent', border: 'none', cursor: 'pointer',
+                fontSize: 13, fontWeight: 600, color: BLUE, fontFamily: 'inherit',
+                outline: 'none', WebkitTapHighlightColor: 'transparent',
+              }}>Limpiar</button>
+            )}
+          </div>
+          <div style={{ fontSize: 13, color: SUB, marginTop: 2, paddingBottom: 12, marginBottom: 4, borderBottom: `1px solid ${HAIR}` }}>{city}</div>
+        </div>
+        <div ref={scrollRef} className="no-sb" style={{ overflowY: 'auto', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column' }}>
           {districts.length === 0 ? (
             <div style={{ padding: '20px 0', textAlign: 'center', color: SUB, fontSize: 14 }}>
               No hay distritos disponibles.

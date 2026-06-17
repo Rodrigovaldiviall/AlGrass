@@ -9,6 +9,7 @@ import { supabase } from '../lib/supabase';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faHeadset } from '@fortawesome/free-solid-svg-icons';
 import { SupportMenu } from '../components/SupportMenu';
+import VenueLeadScreen from '../components/VenueLeadScreen';
 import { validateDeleteAccount, executeDeleteAccount } from '../services/deleteAccountService';
 import pkg from '../../package.json';
 
@@ -174,7 +175,7 @@ function Section({ title, children }) {
   );
 }
 
-function Row({ label, sublabel, value, onPress, right, disabled, danger, accent }) {
+function Row({ label, sublabel, value, onPress, right, disabled, danger, accent, bold }) {
   const [pressed, setPressed] = useState(false);
   const isClickable = !disabled && !!onPress;
   const labelColor = danger ? DANGER : (accent || TEXT);
@@ -194,7 +195,7 @@ function Row({ label, sublabel, value, onPress, right, disabled, danger, accent 
         WebkitTapHighlightColor: 'transparent', boxSizing: 'border-box',
       }}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13.5, color: labelColor, fontWeight: (danger || accent) ? 600 : 400, lineHeight: 1.3 }}>{label}</div>
+        <div style={{ fontSize: bold ? 14.5 : 13.5, color: labelColor, fontWeight: bold ? 700 : ((danger || accent) ? 600 : 400), lineHeight: 1.3 }}>{label}</div>
         {sublabel && <div style={{ fontSize: 11, color: SUB, marginTop: 2, lineHeight: 1.35 }}>{sublabel}</div>}
       </div>
       {value != null && <span style={{ fontSize: 13.5, color: SUB, flexShrink: 0 }}>{value}</span>}
@@ -560,6 +561,7 @@ export default function Settings() {
   const [openQuestion, setOpenQuestion] = useState(null);
   const [legalModal, setLegalModal] = useState(null);
   const [showSecurity, setShowSecurity] = useState(false);
+  const [showVenueLead, setShowVenueLead] = useState(false);
   const [showDelete, setShowDelete]     = useState(false);
   const [showConfirm, setShowConfirm]   = useState(false);
   const [checking, setChecking]         = useState(false);
@@ -680,8 +682,8 @@ export default function Settings() {
       {/* Header */}
       <div style={{
         background: BLUE,
-        paddingTop: 'calc(env(safe-area-inset-top) + 14px)',
-        paddingBottom: 14, paddingLeft: 20, paddingRight: 20, flexShrink: 0,
+        paddingTop: 'calc(env(safe-area-inset-top) + 9px)',
+        paddingBottom: 9, paddingLeft: 20, paddingRight: 20, flexShrink: 0,
       }}>
         <div style={{ height: 44, display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
           <button
@@ -731,14 +733,15 @@ export default function Settings() {
           {supportOpen && <SupportMenu onClose={() => setSupportOpen(false)} />}
         </div>
 
-        {/* 3. Rol */}
-        <Section title="Rol">
-          <div style={{ display: 'flex', alignItems: 'center', padding: '10px 16px', gap: 12, minHeight: 44 }}>
-            <span style={{ flex: 1, fontSize: 13.5, color: TEXT, fontWeight: 500 }}>
-              {role === 'jugador' ? 'Convertirse en organizador' : 'Volver a jugador'}
-            </span>
-            <RoleButton role={role} onSwitch={switchRole} />
-          </div>
+        {/* 3. Para dueños de canchas */}
+        <Section title="Para dueños de canchas">
+          <Row
+            label="¿Eres dueño de una cancha?"
+            sublabel="Genera más reservas con AlGrass."
+            onPress={() => setShowVenueLead(true)}
+            right={<ChevRight />}
+            bold
+          />
         </Section>
 
         {/* 4. Cuenta */}
@@ -845,6 +848,7 @@ export default function Settings() {
 
       </div>
 
+      {showVenueLead && <VenueLeadScreen onClose={() => setShowVenueLead(false)} defaultCity={city} />}
       {legalModal && <LegalModal type={legalModal} onClose={() => setLegalModal(null)} />}
       {showSecurity && (
         <SecuritySheet
