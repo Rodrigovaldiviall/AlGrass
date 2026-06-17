@@ -316,17 +316,28 @@ function Header({ city, onCityTap }) {
 }
 
 function CitySheet({ cities, current, onSelect, onClose, required = false }) {
+  // Selector del header: arrastrar hacia abajo cierra (useSheetPull). Si es obligatorio (onboarding
+  // in-app), NO se adjunta el gesto ni se permite cerrar. La entrada (slide-up .28s) es idéntica a lp-slideup.
+  const interactive = !required;
+  const [open, setOpen] = useState(false);
+  useEffect(() => { const r = requestAnimationFrame(() => setOpen(true)); return () => cancelAnimationFrame(r); }, []);
+  const startExit = () => setOpen(false);
+  const { rootRef, dragY, dragging } = useSheetPull({ onClose: startExit });
   return (
     <>
       <div
-        onClick={required ? undefined : onClose}
+        onClick={interactive ? startExit : undefined}
         style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200 }}
       />
-      <div style={{
+      <div
+        ref={interactive ? rootRef : undefined}
+        onTransitionEnd={interactive ? (e => { if (e.propertyName === 'transform' && !open) onClose(); }) : undefined}
+        style={{
         position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 201,
         background: '#fff', borderRadius: '20px 20px 0 0',
         padding: '20px 20px calc(env(safe-area-inset-bottom) + 24px)',
-        animation: 'lp-slideup 0.28s cubic-bezier(0.32,0.72,0,1) forwards',
+        transform: open ? `translateY(${interactive ? dragY : 0}px)` : 'translateY(100%)',
+        transition: (interactive && dragging) ? 'none' : 'transform .28s cubic-bezier(0.32,0.72,0,1)',
       }}>
         <div style={{ width: 36, height: 4, borderRadius: 2, background: '#E0E0E6', margin: '0 auto 16px' }} />
         <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: required ? 4 : 14 }}>
