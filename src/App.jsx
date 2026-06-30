@@ -99,6 +99,7 @@ const Settings     = lazy(() => import('./screens/Settings'));
 const Fields        = lazy(() => import('./screens/Fields'));
 const FieldDetail   = lazy(() => import('./screens/FieldDetail'));
 const RentalDetail  = lazy(() => import('./screens/RentalDetail'));
+const VenueDetail   = lazy(() => import('./screens/VenueDetail'));
 const Notifications = lazy(() => import('./screens/Notifications'));
 
 const WELCOME_KEY = 'pichanga_welcome_seen';
@@ -178,6 +179,7 @@ export default function App() {
               <Route path="/fields" element={<Fields />} />
               <Route path="/field/:id" element={<FieldDetail />} />
               <Route path="/rental/:id" element={<RentalDetail />} />
+              <Route path="/venue" element={<VenueDetail />} />
               <Route path="/notifications" element={<Notifications />} />
               <Route path="/organizer" element={<Placeholder title="Organizador" />} />
               <Route path="/admin" element={<Placeholder title="Admin" />} />

@@ -661,7 +661,12 @@ function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount
         <div style={{ fontSize: 'var(--gm-ampm, 12px)', fontWeight: 500, color: SUB, lineHeight: 1.1, marginTop: 2 }}>{g.ampm}</div>
       </div>
       <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
-        <div style={{ fontSize: 'var(--gm-title, 16px)', fontWeight: 600, color: TEXT, lineHeight: 1.2, letterSpacing: -0.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.field}</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', minWidth: 0, overflow: 'hidden' }}>
+          <span style={{ fontSize: 'var(--gm-title, 16px)', fontWeight: 600, color: TEXT, lineHeight: 1.2, letterSpacing: -0.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 0, maxWidth: '100%' }}>{g.field}</span>
+          {g.venueDistrict && (
+            <span style={{ flexShrink: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 13, fontWeight: 500, color: SUB, lineHeight: 1.2, marginLeft: 6 }}>· {g.venueDistrict}</span>
+          )}
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, color: SUB, fontSize: 11, flexWrap: 'nowrap', overflow: 'hidden' }}>
           <GameMetaLine format={g.format} totalSpots={g.totalSpots} durationMin={g.durationMin} womenOnly={g.womenOnly} parking={g.parking} covered={g.covered} filmed={g.filmed} />
           {g.price !== undefined && (

@@ -5,6 +5,8 @@ import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, DANGER, RED, WHATSAPP_NUMBE
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faWhatsapp } from '@fortawesome/free-brands-svg-icons';
 import { faCommentSms, faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';
+import MapsLinkButton from '../components/MapsLinkButton';
+import Pressable from '../components/Pressable';
 import I from '../icons';
 import { shareOrCopy } from '../utils/share';
 import { GAMES, FIELD_INFO, GAME_DEFAULTS } from '../data/games';
@@ -84,6 +86,10 @@ function buildGame(sel) {
     duration: `${sel.durationMin ?? 60} min`,
     fieldNumber: sel.fieldName || GAME_DEFAULTS.fieldNumber,
     address,
+    venueLat:          sel.venueLat            ?? null,
+    venueLng:          sel.venueLng            ?? null,
+    venueDistrict:     sel.venueDistrict       ?? null,
+    venueName:         sel.venueName           ?? null,
     chips,
     description: GAME_DEFAULTS.description,
     recommendations: GAME_DEFAULTS.recommendations,
@@ -1594,11 +1600,16 @@ export default function GameDetail() {
               secondary={`${g.time} ${g.ampm} · ${g.duration}`}
               action={(isHost || isBooked || isGuest || guestsInRoster.length > 0) ? <WAChatButton /> : undefined}
             />
-            <InfoRow
-              icon={I.fieldIcon()}
-              primary={g.fieldNumber}
-              secondary={<span>{g.address[0]}{g.address[1] ? <><br />{g.address[1]}</> : null}</span>}
-            />
+            <Pressable
+              onPress={() => navigate('/venue', { state: { venue: { venueName: g.venueName, name: g.fieldNumber, address: g.address, district: g.venueDistrict, lat: g.venueLat, lng: g.venueLng, chips: g.chips } } })}
+              style={{ borderRadius: 12 }}>
+              <InfoRow
+                icon={I.fieldIcon()}
+                primary={g.fieldNumber}
+                secondary={<span>{g.address[0]}{g.address[1] ? <><br />{g.address[1]}</> : null}{g.venueDistrict ? ` · ${g.venueDistrict}` : ''}</span>}
+                action={<MapsLinkButton lat={g.venueLat} lng={g.venueLng} address={g.address} />}
+              />
+            </Pressable>
           </div>
 
           <div style={{ padding: '8px 16px 18px', display: 'flex', flexWrap: 'wrap', gap: 8 }}>

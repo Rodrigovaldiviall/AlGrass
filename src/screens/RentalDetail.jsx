@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { useSheetPull } from '../hooks/useSheetPull';
+import MapsLinkButton from '../components/MapsLinkButton';
+import Pressable from '../components/Pressable';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, WHATSAPP_NUMBER } from '../constants';
 import I from '../icons';
 import TabBar from '../components/TabBar';
@@ -536,11 +538,16 @@ export default function RentalDetail() {
               action={(isHost || userBooked) ? <WAChatButton /> : undefined}
             />
           )}
-          <InfoRow
-            icon={I.fieldIcon()}
-            primary={title}
-            secondary={game.address || undefined}
-          />
+          <Pressable
+            onPress={() => navigate('/venue', { state: { venue: { venueName: game.venueName, name: title, address: game.address, district: game.venueDistrict, lat: game.venueLat, lng: game.venueLng, chips } } })}
+            style={{ borderRadius: 12 }}>
+            <InfoRow
+              icon={I.fieldIcon()}
+              primary={title}
+              secondary={[game.address, game.venueDistrict].filter(Boolean).join(' · ') || undefined}
+              action={<MapsLinkButton lat={game.venueLat} lng={game.venueLng} address={game.address} />}
+            />
+          </Pressable>
         </div>
 
         {chips.length > 0 && (

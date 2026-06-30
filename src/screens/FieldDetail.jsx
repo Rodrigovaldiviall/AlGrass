@@ -9,6 +9,8 @@ import { FIELDS } from '../data/fields';
 import { GAME_DEFAULTS } from '../data/games';
 import TabBar from '../components/TabBar';
 import RatingBlock from '../components/RatingBlock';
+import MapsLinkButton from '../components/MapsLinkButton';
+import Pressable from '../components/Pressable';
 import { supabase } from '../lib/supabase';
 import { getVenueCoverUrl } from '../utils/venue';
 
@@ -49,6 +51,10 @@ function buildField(sel) {
     id:          sel.id,
     field:       sel.field,
     address:     sel.address || '',
+    venueLat:    sel.venueLat ?? null,
+    venueLng:    sel.venueLng ?? null,
+    venueDistrict: sel.venueDistrict ?? null,
+    venueName:   sel.venueName ?? null,
     date:        sel.date || formatDateEs(sel.dateKey),
     time:        `${sel.time} ${sel.ampm}`,
     duration:    GAME_DEFAULTS.duration,
@@ -426,11 +432,16 @@ export default function FieldDetail() {
             secondary={`${g.time} · ${g.duration}`}
             action={<WAChatButton />}
           />
-          <InfoRow
-            icon={I.fieldIcon()}
-            primary={g.field}
-            secondary={g.address}
-          />
+          <Pressable
+            onPress={() => navigate('/venue', { state: { venue: { venueName: g.venueName, name: g.field, address: g.address, district: g.venueDistrict, lat: g.venueLat, lng: g.venueLng, chips: g.chips } } })}
+            style={{ borderRadius: 12 }}>
+            <InfoRow
+              icon={I.fieldIcon()}
+              primary={g.field}
+              secondary={[g.address, g.venueDistrict].filter(Boolean).join(' · ') || undefined}
+              action={<MapsLinkButton lat={g.venueLat} lng={g.venueLng} address={g.address} />}
+            />
+          </Pressable>
         </div>
 
         <div style={{ padding: '8px 16px 18px', display: 'flex', flexWrap: 'wrap', gap: 8 }}>

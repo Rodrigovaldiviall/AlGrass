@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { getVenues } from '../services/venueService';
+import MapLocateControl from '../components/MapLocateControl';
 import { RED, ORANGE } from '../constants';
 import logo from '../assets/logo.webp';
 
@@ -34,9 +35,6 @@ export default function MapView({ city, games = [], selectedVenueId = null, shee
   const onClearRef = useRef(onClearSelection);
   const onViewRef = useRef(onViewChange);
   const [venues, setVenues] = useState([]);
-  const userDotRef = useRef(null);   // L.circleMarker (punto azul)
-  const userHaloRef = useRef(null);  // L.circle (precisión)
-  const [geoMsg, setGeoMsg] = useState(null); // mensaje transitorio (permiso/fuera de ciudad)
 
   // Restauración de cámara: solo si center/zoom son válidos (números finitos).
   const validRestore = Array.isArray(initialCenter) && initialCenter.length === 2
@@ -121,66 +119,10 @@ export default function MapView({ city, games = [], selectedVenueId = null, shee
     if (pt.y > targetY) map.panBy([0, pt.y - targetY], { animate: true });
   }, [selectedVenueId, venues]); // eslint-disable-line react-hooks/exhaustive-deps -- venues: reaplica la compensación cuando cargan tras una restauración
 
-  // Auto-ocultar el mensaje transitorio.
-  useEffect(() => {
-    if (!geoMsg) return;
-    const t = setTimeout(() => setGeoMsg(null), 2800);
-    return () => clearTimeout(t);
-  }, [geoMsg]);
-
-  // 📍 Geolocalización nativa. Capa informativa: no toca ciudad/filtros/distritos/venue.
-  function locateUser() {
-    const map = mapRef.current;
-    if (!map) return;
-    if (!navigator.geolocation) { setGeoMsg('Tu navegador no soporta ubicación'); return; }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const { latitude, longitude, accuracy } = pos.coords;
-        const ll = [latitude, longitude];
-        // Punto azul + halo de precisión (crear o actualizar).
-        if (!userDotRef.current) {
-          userHaloRef.current = L.circle(ll, { radius: accuracy, color: '#1E78FF', weight: 1, fillColor: '#1E78FF', fillOpacity: 0.12 }).addTo(map);
-          userDotRef.current = L.circleMarker(ll, { radius: 7, color: '#fff', weight: 3, fillColor: '#1E78FF', fillOpacity: 1 }).addTo(map);
-        } else {
-          userHaloRef.current.setLatLng(ll).setRadius(accuracy);
-          userDotRef.current.setLatLng(ll);
-        }
-        // La ciudad es la referencia: solo recentrar si la ubicación cae dentro del área de la ciudad.
-        const pts = venues.filter(v => v.lat != null && v.lng != null).map(v => [v.lat, v.lng]);
-        const inside = pts.length === 0 || L.latLngBounds(pts).pad(0.25).contains(L.latLng(latitude, longitude));
-        if (inside) map.setView(ll, Math.max(map.getZoom(), 15));
-        else setGeoMsg(`Tu ubicación está fuera de ${city}`);
-      },
-      (err) => {
-        setGeoMsg(err.code === 1 ? 'Activa los permisos de ubicación' : 'No pudimos obtener tu ubicación');
-      },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
-    );
-  }
-
   return (
     <div style={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', isolation: 'isolate' }}>
       <div ref={containerRef} style={{ flex: 1, width: '100%', minHeight: 0 }} />
-      <button onClick={locateUser} aria-label="Mi ubicación" style={{
-        position: 'absolute', top: 12, right: 12, zIndex: 600,
-        width: 40, height: 40, borderRadius: 999, border: 'none',
-        background: '#fff', boxShadow: '0 2px 10px rgba(0,0,0,0.22)',
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none',
-      }}>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-          <circle cx="12" cy="12" r="4" stroke="#1B1B1F" strokeWidth="2"/>
-          <path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="#1B1B1F" strokeWidth="2" strokeLinecap="round"/>
-        </svg>
-      </button>
-      {geoMsg && (
-        <div style={{
-          position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)', zIndex: 600,
-          maxWidth: '78%', padding: '8px 14px', borderRadius: 999,
-          background: 'rgba(27,27,31,0.92)', color: '#fff', fontSize: 12.5, fontWeight: 600,
-          textAlign: 'center', boxShadow: '0 2px 10px rgba(0,0,0,0.25)', pointerEvents: 'none',
-        }}>{geoMsg}</div>
-      )}
+      <MapLocateControl mapRef={mapRef} venues={venues} cityLabel={city} />
     </div>
   );
 }
