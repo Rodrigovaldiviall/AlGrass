@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import logo from '../assets/logo.webp';
 import desktopHero from '../assets/desktop-hero.webp';
+import qrImg from '../assets/algrass-qr.png';
 
 const BLUE     = '#3F5FE0';
 const INTRO_KEY = 'algrass_intro_seen';
@@ -127,7 +128,7 @@ function OnboardingOverlay({ onDone }) {
 // mobile overlay so edits stay in sync. onStart === IntroScreen.handleDone.
 function DesktopLanding({ onStart }) {
   return (
-    <div style={{ position: 'absolute', inset: 0, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', fontFamily: "'Inter', -apple-system, 'SF Pro Text', system-ui, sans-serif" }}>
+    <div style={{ position: 'absolute', inset: 0, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '2.5vw', overflow: 'hidden', fontFamily: "'Inter', -apple-system, 'SF Pro Text', system-ui, sans-serif" }}>
       {/* Hero stage — wrapper fits the image; capped so it never overflows top/bottom */}
       <div style={{ position: 'relative', display: 'inline-block', maxWidth: '106vw', maxHeight: '100vh' }}>
         <img
@@ -138,7 +139,6 @@ function DesktopLanding({ onStart }) {
 
         {/* Content overlaid on the right zone of the image, vertically centered, within bounds */}
         <div style={{ position: 'absolute', top: 0, bottom: 0, right: '6%', width: '38%', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'flex-start' }}>
-          <img src={logo} alt="AlGrass" style={{ width: 74, height: 74, objectFit: 'contain', marginBottom: 18, filter: 'drop-shadow(0 2px 12px rgba(0,0,0,0.28))' }} />
           <h1 style={{ margin: '0 0 12px', fontSize: 38, fontWeight: 700, color: '#fff', letterSpacing: -1.1, lineHeight: 1.08, textShadow: '0 2px 18px rgba(0,0,0,0.45)' }}>
             {INTRO_TITLE}
           </h1>
@@ -166,6 +166,20 @@ function DesktopLanding({ onStart }) {
             {INTRO_CTA}
           </button>
         </div>
+      </div>
+
+      {/* Tercera columna: promoción de uso desde el celular + QR (placeholder) */}
+      <div style={{ flexShrink: 0, width: 220, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 8 }}>
+        <div style={{ maxWidth: 220, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <p style={{ margin: 0, fontSize: 19, fontWeight: 700, lineHeight: 1.25, color: '#1B1B1F', letterSpacing: -0.3 }}>
+            También puedes continuar desde tu celular.
+          </p>
+          <p style={{ margin: 0, fontSize: 14, fontWeight: 400, lineHeight: 1.5, color: '#1B1B1F' }}>
+            Escanea este código QR para disfrutar de una mejor experiencia.
+          </p>
+        </div>
+        <img src={logo} alt="AlGrass" style={{ width: 140, height: 140, objectFit: 'contain' }} />
+        <img src={qrImg} alt="Código QR AlGrass" style={{ width: 180, height: 180, objectFit: 'contain', display: 'block' }} />
       </div>
     </div>
   );

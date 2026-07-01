@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB } from '../constants';
 import I from '../icons';
@@ -5,6 +6,15 @@ import InfoRow from '../components/InfoRow';
 import AmenityChips from '../components/AmenityChips';
 import MapsLinkButton from '../components/MapsLinkButton';
 import VenueMiniMap from '../components/VenueMiniMap';
+
+// Caché del último venue (sessionStorage) — mismo principio que RentalDetail/_readRDCache:
+// conserva el último estado real para no caer a placeholder mientras se resuelve la navegación.
+function _readVenueCache() {
+  try { return JSON.parse(sessionStorage.getItem('vd_last')) || null; } catch { return null; }
+}
+function _writeVenueCache(venue) {
+  try { sessionStorage.setItem('vd_last', JSON.stringify(venue)); } catch {}
+}
 
 function Section({ title, children }) {
   return (
@@ -18,7 +28,10 @@ function Section({ title, children }) {
 export default function VenueDetail() {
   const navigate = useNavigate();
   const location = useLocation();
-  const v = location.state?.venue ?? null;
+  // state cuando la navegación trae el venue; caché (último real) durante la transición de "atrás".
+  const stateVenue = location.state?.venue ?? null;
+  const v = stateVenue ?? _readVenueCache();
+  useEffect(() => { if (stateVenue) _writeVenueCache(stateVenue); }, [stateVenue]);
 
   const back = () => navigate(location.state?.backPath ?? -1);
 
