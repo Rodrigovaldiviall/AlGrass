@@ -21,6 +21,7 @@ import { getAvatarUrl } from '../utils/avatar';
 import { getVenueCoverUrl } from '../utils/venue';
 import { deriveGameState, requiredPlayers, gameStartDate, gameEndDate, isGamePast, isGameStarted, deriveAttendance } from '../utils/deriveGameState';
 import { joinWaitlist, leaveWaitlist, getMyWaitlistGameIds } from '../services/waitlistService';
+import { useGlobalRoles } from '../hooks/useGlobalRoles';
 const ROSTER_KEY_GD = 'pichanga_game_rosters';
 
 
@@ -742,7 +743,7 @@ function PlayerModal({ player, onClose, isHost = false }) {
 }
 
 // ── ModifySheet
-function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0 }) {
+function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, onReserveSlots, reserveSlotsLabel = '' }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
@@ -759,7 +760,7 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
       <div className="sheet-panel" ref={rootRef} onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(20px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? `translateY(${dragY}px)` : 'translateY(100%)', transition: dragging ? 'none' : 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
         <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 20px' }} />
         <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 16, textAlign: 'center', letterSpacing: -0.2 }}>
-          {isHost ? 'Gestionar el partido' : 'Gestionar la reserva'}
+          {isHost ? 'Gestionar el partido' : 'Gestionar mi reserva'}
         </div>
         {!isHost && (
           <button onClick={onPaymentDetail} style={rowStyle}>
@@ -784,6 +785,15 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
           </div>
           {canAdd && chevron()}
         </button>
+        {showReserveSlots && (
+          <button onClick={onReserveSlots} style={rowStyle}>
+            <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Reservar cupos</span>
+            <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
+              <span style={{ fontSize: 13, color: SUB }}>{reserveSlotsLabel}</span>
+            </div>
+            {chevron()}
+          </button>
+        )}
         {isHost ? (
           invitedCount > 0 && (
             <button onClick={onCancel} style={{ ...rowStyle, marginBottom: 0 }}>
@@ -803,6 +813,165 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── ReserveSlotsSheet — UX del flujo "Reservar cupos".
+// TODO(backend): inscritos, disponibles, reservedInitial, publicAvailable y active
+// vendrán de la RPC / estado real. Aquí son datos temporales de demo; la UI NO
+// recalcula ningún número (salvo el estado local temporal del stepper).
+function ReserveSlotsSheet({ inscritos = 0, disponibles = 0, reservedInitial = 0, publicAvailable = 0, active = true, onClose }) {
+  const [open, setOpen] = useState(false);
+  const [reservados, setReservados] = useState(reservedInitial);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
+  function dismiss() { setOpen(false); setTimeout(onClose, 220); }
+  const { rootRef, dragY, dragging } = useSheetPull({ onClose: dismiss });
+
+  // Hay cambios pendientes mientras el contador difiera del valor confirmado por el
+  // backend (reservedInitial). Se mantiene aunque el usuario "vuelva" a otro valor
+  // distinto del confirmado (p. ej. 2 → 6 → 5 sigue siendo pendiente respecto a 2).
+  const dirty = reservados !== reservedInitial;
+
+  function handleAccept() {
+    // TODO(backend): única llamada de guardado. Según la respuesta de la RPC:
+    //   éxito → el valor confirmado pasa a ser `reservados` (el botón desaparece);
+    //   fallo por falta de cupos públicos → failReservation().
+    // Sin backend aún, simulamos el rechazo para poder validar la alerta visualmente.
+    failReservation();
+  }
+  function failReservation() {
+    setReservados(reservedInitial); // restaurar al último valor confirmado
+    setError(true);                 // mostrar el recuadro de alerta
+  }
+
+  // TODO(backend): link real de la reserva.
+  const SHARE_LINK = 'https://algrass.com/join/AB12-CD34-EF56';
+  function flashCopied() { setCopied(true); setTimeout(() => setCopied(false), 1500); }
+  function copyLink() { navigator.clipboard?.writeText(SHARE_LINK).then(flashCopied).catch(() => {}); }
+  function shareLink() { shareOrCopy({ url: SHARE_LINK, title: 'AlGrass', onCopied: flashCopied }); }
+
+  // Reglas del stepper (SOLO demo visual; validación real la impone el backend):
+  //  −  nunca baja de `inscritos`  →  deshabilitado cuando reservados ≤ inscritos.
+  //  +  si hay overflow (inscritos > reservados) el primer + salta a inscritos+1;
+  //     si no, incrementa de uno en uno.
+  const decDisabled = !active || reservados <= inscritos;
+  const incDisabled = !active;
+  function dec() { if (decDisabled) return; setError(false); setReservados(r => (r > inscritos ? r - 1 : r)); }
+  function inc() { if (incDisabled) return; setError(false); setReservados(r => (r < inscritos ? inscritos + 1 : r + 1)); }
+
+  // Barra: escala = max(reservados, inscritos). Caja = capacidad reservada; relleno
+  // = inscritos. Overflow ⇒ el relleno se extiende fuera de la caja.
+  const scaleMax = Math.max(reservados, inscritos, 1);
+  const boxPct   = (reservados / scaleMax) * 100;
+  const fillPct  = (inscritos  / scaleMax) * 100;
+  const boxColor  = active ? '#1B1B1F' : '#C7C7CC';
+  const fillColor = active ? BLUE       : '#C7C7CC';
+
+  const stepBtn = (onClick, disabled, plus) => (
+    <button onClick={onClick} disabled={disabled}
+      style={{ width: 32, height: 32, borderRadius: '50%', border: `1.6px solid ${disabled ? '#D6D6DC' : BLUE}`, background: 'transparent', cursor: disabled ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, opacity: disabled ? 0.5 : 1, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <path d={plus ? 'M8 4v8M4 8h8' : 'M4 8h8'} stroke={disabled ? '#9A9AA0' : BLUE} strokeWidth="1.8" strokeLinecap="round"/>
+      </svg>
+    </button>
+  );
+
+  return (
+    <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease', pointerEvents: open ? 'auto' : 'none' }}>
+      <div className="sheet-panel" ref={rootRef} onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(20px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? `translateY(${dragY}px)` : 'translateY(100%)', transition: dragging ? 'none' : 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
+        <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 20px' }} />
+        <div style={{ position: 'relative', marginBottom: 16 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, textAlign: 'center', letterSpacing: -0.2 }}>
+            Reserva de cupos
+          </div>
+          <button onClick={shareLink} aria-label="Compartir" style={{ position: 'absolute', top: '50%', right: 0, transform: 'translateY(-50%)', width: 30, height: 30, borderRadius: '50%', background: SOFT, border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+              <path d="M12 3v11M12 3L8 7M12 3l4 4" stroke={TEXT} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M6 11v8a1 1 0 001 1h10a1 1 0 001-1v-8" stroke={TEXT} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+        </div>
+
+        {/* Inscritos / Disponibles */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+          <div style={{ fontSize: 15, color: TEXT }}><b style={{ fontWeight: 700 }}>{inscritos}</b> Inscritos</div>
+          <div style={{ fontSize: 15, color: TEXT }}><b style={{ fontWeight: 700 }}>{disponibles}</b> Disponibles</div>
+        </div>
+
+        {/* Barra */}
+        <div style={{ position: 'relative', height: 30, marginBottom: 20 }}>
+          {reservados === 0 ? (
+            // Sin cupos reservados: solo la línea gris.
+            <div style={{ position: 'absolute', left: 0, right: 0, top: '50%', height: 4, transform: 'translateY(-50%)', background: HAIR, borderRadius: 2 }} />
+          ) : (
+            <>
+              {/* Rectángulo (sin línea detrás): fondo gris claro + borde */}
+              <div style={{ position: 'absolute', left: 0, top: 0, height: 30, width: `${boxPct}%`, background: SOFT, border: `1.5px solid ${boxColor}`, borderRadius: 7, boxSizing: 'border-box' }} />
+              {/* Progreso azul (inscritos); en overflow se extiende fuera del rectángulo */}
+              <div style={{ position: 'absolute', left: 0, top: 2, height: 26, width: `${fillPct}%`, background: fillColor, borderRadius: 6 }} />
+              {/* Fracción centrada dentro del rectángulo */}
+              <div style={{ position: 'absolute', left: 0, top: 0, height: 30, width: `${boxPct}%`, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: active ? TEXT : '#9A9AA0' }}>{inscritos}/{reservados}</span>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Stepper — centrado, con la etiqueta debajo */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, marginBottom: 14 }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 14 }}>
+            {stepBtn(dec, decDisabled, false)}
+            <span style={{ minWidth: 22, textAlign: 'center', fontSize: 16, fontWeight: 700, color: active ? TEXT : '#9A9AA0' }}>{reservados}</span>
+            {stepBtn(inc, incDisabled, true)}
+          </div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Cupos reservados</div>
+        </div>
+
+        {/* Cupos públicos disponibles (valor del backend; la UI no lo recalcula) */}
+        <div style={{ fontSize: 13, color: SUB, textAlign: 'center' }}>
+          Solo quedan {publicAvailable} cupos públicos disponibles
+        </div>
+
+        {/* Link para compartir — fila completa táctil; toca cualquier parte para copiar */}
+        <div onClick={copyLink} style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 10, background: SOFT, border: `1px solid ${HAIR}`, borderRadius: 12, padding: '11px 14px', cursor: 'pointer' }}>
+          <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {SHARE_LINK}
+          </span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+            <rect x="9" y="9" width="11" height="11" rx="2" stroke={SUB} strokeWidth="1.7"/>
+            <path d="M6 15H5a2 2 0 01-2-2V5a2 2 0 012-2h8a2 2 0 012 2v1" stroke={SUB} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </div>
+
+        {/* Recuadro de alerta de validación (mismo lenguaje visual de error de la app) */}
+        {error && (
+          <div style={{ marginTop: 16, display: 'flex', gap: 12, alignItems: 'flex-start', background: '#FCEAEB', border: `1px solid ${DANGER}33`, borderRadius: 14, padding: '12px 14px' }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, marginTop: 1 }}>
+              <circle cx="12" cy="12" r="10" stroke={DANGER} strokeWidth="1.8"/>
+              <path d="M15 9l-6 6M9 9l6 6" stroke={DANGER} strokeWidth="1.8" strokeLinecap="round"/>
+            </svg>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: DANGER, letterSpacing: -0.1 }}>No se logró actualizar la reserva.</div>
+              <div style={{ fontSize: 13, color: TEXT, marginTop: 3, lineHeight: 1.4 }}>Ya no existen suficientes cupos públicos disponibles. Inténtalo nuevamente.</div>
+            </div>
+          </div>
+        )}
+
+        {/* Aceptar: única acción que guardará en el backend. Siempre visible;
+            deshabilitado mientras no haya cambios (evita el salto de layout). */}
+        <button onClick={dirty ? handleAccept : undefined} disabled={!dirty}
+          style={{ marginTop: 16, width: '100%', height: 46, borderRadius: 14, background: dirty ? ORANGE : SOFT, color: dirty ? '#1B1B1F' : '#9A9AA0', border: 'none', cursor: dirty ? 'pointer' : 'default', fontSize: 15, fontWeight: 700, fontFamily: 'inherit', letterSpacing: -0.1, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+          Aceptar
+        </button>
+      </div>
+      {copied && (
+        <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.75)', color: '#fff', padding: '8px 18px', borderRadius: 20, fontSize: 14, fontWeight: 500, zIndex: 9999, pointerEvents: 'none', whiteSpace: 'nowrap' }}>
+          ¡Link copiado!
+        </div>
+      )}
     </div>
   );
 }
@@ -1268,6 +1437,10 @@ export default function GameDetail() {
   const [showWaitlistAuth, setShowWaitlistAuth] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [modifyOpen, setModifyOpen] = useState(false);
+  const [reserveSlotsOpen, setReserveSlotsOpen] = useState(false);
+  const { isCaptain, isCaptainGold } = useGlobalRoles();
+  // TODO(backend): datos reales de la reserva de cupos.
+  const resMock = { inscritos: 2, disponibles: 7, reserved: 5, publicAvailable: 7, active: true };
   const [cancelOpen,  setCancelOpen]  = useState(false);
   const [paymentDetailOpen, setPaymentDetailOpen] = useState(false);
   const [hostCancelInvitedOpen, setHostCancelInvitedOpen] = useState(false);
@@ -1821,6 +1994,19 @@ export default function GameDetail() {
           isHost={isHost}
           canAddPlayers={hostWindowOpen}
           invitedCount={invitedByHost.length}
+          showReserveSlots={!isHost && (isCaptain || isCaptainGold)}
+          onReserveSlots={() => { setModifyOpen(false); setReserveSlotsOpen(true); }}
+          reserveSlotsLabel={`${resMock.inscritos}/${resMock.reserved}`}
+        />
+      )}
+      {reserveSlotsOpen && (
+        <ReserveSlotsSheet
+          inscritos={resMock.inscritos}
+          disponibles={resMock.disponibles}
+          reservedInitial={resMock.reserved}
+          publicAvailable={resMock.publicAvailable}
+          active={resMock.active}
+          onClose={() => setReserveSlotsOpen(false)}
         />
       )}
       {hostCancelInvitedOpen && (

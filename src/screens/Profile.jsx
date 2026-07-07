@@ -13,11 +13,13 @@ import { abbreviateName, ensureUserCode, formatDateLabel } from '../utils/format
 import { GAMES } from '../data/games';
 import { deriveGameState, isGamePast, isGameStarted, gameStartDate } from '../utils/deriveGameState';
 import { GameMetaLine } from '../components/GameMetaLine';
+import CaptainSlotsBadge from '../components/CaptainSlotsBadge';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import { saveRating, fetchMyRatings, upsertRatingRows, markPopupShown, getLocalRatings, setLocalRatings } from '../services/ratingService';
 import { getMyWaitlistGamesFull } from '../services/waitlistService';
 import { useForegroundTick } from '../hooks/useForegroundTick';
 import { uploadAvatar, getAvatarUrl } from '../utils/avatar';
+import { useGlobalRoles } from '../hooks/useGlobalRoles';
 
 const USER = {
   name: 'Rodrigo',
@@ -557,6 +559,7 @@ function StatItem({ value, label }) {
 // ── ProfileCard ────────────────────────────────────────────────────────────
 
 function ProfileCard({ user, gamesPlayedCount, onEdit, isProfileComplete = false, isHostOrStaff = false, hasActivity = false }) {
+  const { isCaptain, isCaptainGold } = useGlobalRoles();
   const displayName = user.name || '';
   const posDisplay  = Array.isArray(user.positions) && user.positions.length > 0
     ? user.positions.join(' · ')
@@ -587,6 +590,14 @@ function ProfileCard({ user, gamesPlayedCount, onEdit, isProfileComplete = false
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: '0 0 40%' }}>
           <div style={{ position: 'relative', marginBottom: 8, width: 84, height: 84, borderRadius: '50%', boxShadow: isHostOrStaff ? `0 0 0 2.5px #fff, 0 0 0 5px ${ORANGE}` : undefined }}>
             <Avatar name={user.name} hue={user.avatarHue} size={84} photoUrl={user.photoDataUrl} avatarPath={user.avatarPath} avatarVersion={user.avatarVersion} />
+            {(isCaptain || isCaptainGold) && (
+              <div style={{ position: 'absolute', bottom: 2, left: 2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg width="31" height="31" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 3l7 3v5c0 4.2-2.9 7.6-7 8.8-4.1-1.2-7-4.6-7-8.8V6l7-3z" stroke={isCaptainGold ? '#D4A017' : '#3F5FE0'} strokeWidth="1.5" strokeLinejoin="round"/>
+                  <path d="M9 12l2 2 4-4" stroke={isCaptainGold ? '#D4A017' : '#3F5FE0'} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+            )}
             {isProfileComplete ? (
               <div style={{
                 position: 'absolute', bottom: 2, right: 2,
@@ -1684,6 +1695,7 @@ function GameRow({ game, onPress, muted = false, userId = null, highlighted = fa
             : <GameMetaLine format={game.format} durationMin={game.durationMin} totalSpots={game.totalSpots} womenOnly={game.womenOnly} parking={game.parking} covered={game.covered} filmed={game.filmed} />}
         </div>
       </div>
+      <div style={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}>
       {(() => {
         const PM = 76;
         const pillBase = { height: 26, minWidth: PM, padding: '0 10px', borderRadius: 999, fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' };
@@ -1776,6 +1788,13 @@ function GameRow({ game, onPress, muted = false, userId = null, highlighted = fa
         ), live && !isCampo && !isRental);
         return null;
       })()}
+      {game.status === 'reserved' && !isCampo && !isRental && (
+        <div style={{ position: 'absolute', top: -13, right: -8, pointerEvents: 'none' }}>
+          {/* TODO(backend): reserva de cupos real (used/total/gold). Mock temporal. */}
+          <CaptainSlotsBadge used={2} total={5} gold={false} />
+        </div>
+      )}
+      </div>
       <ChevIcon />
     </div>
   );

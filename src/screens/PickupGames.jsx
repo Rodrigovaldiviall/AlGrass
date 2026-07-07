@@ -16,6 +16,7 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { deriveGameState, requiredPlayers, isGameStarted, isGamePast } from '../utils/deriveGameState';
 import { GameMetaLine } from '../components/GameMetaLine';
+import CaptainSlotsBadge from '../components/CaptainSlotsBadge';
 import { abbreviateName, formatDateLabel } from '../utils/format';
 import { getMyWaitlistGameIds } from '../services/waitlistService';
 import { useForegroundTick } from '../hooks/useForegroundTick';
@@ -638,6 +639,8 @@ function SkeletonPill() {
 
 function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount, liveOpenSpots, isHost = false, pillReady = true, confirmedCountReady = true }) {
   const [pressed, setPressed] = useState(false);
+  // TODO(backend): reserva de cupos real (used/total/gold). Mock temporal.
+  const captainSlots = booked ? { used: 2, total: 5, gold: false } : null;
   return (
     <div role="button" tabIndex={0}
       onClick={onOpen}
@@ -676,11 +679,18 @@ function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount
           )}
         </div>
       </div>
-      {(!pillReady && !isHost) ? (
-        <SkeletonPill />
-      ) : (
-        <StatusPill openSpots={liveOpenSpots ?? g.openSpots} booked={booked} inWaitlist={inWaitlist} guestInfo={guestInfo} canceledCount={canceledCount} activeGuestCount={activeGuestCount} isHost={isHost} totalSpots={g.totalSpots ?? 0} countsReady={confirmedCountReady} live={isGameStarted(g.dateKey, g.time24) && !isGamePast(g.dateKey, g.time24, g.durationMin)} />
-      )}
+      <div style={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}>
+        {(!pillReady && !isHost) ? (
+          <SkeletonPill />
+        ) : (
+          <StatusPill openSpots={liveOpenSpots ?? g.openSpots} booked={booked} inWaitlist={inWaitlist} guestInfo={guestInfo} canceledCount={canceledCount} activeGuestCount={activeGuestCount} isHost={isHost} totalSpots={g.totalSpots ?? 0} countsReady={confirmedCountReady} live={isGameStarted(g.dateKey, g.time24) && !isGamePast(g.dateKey, g.time24, g.durationMin)} />
+        )}
+        {captainSlots && (
+          <div style={{ position: 'absolute', top: -13, right: -8, pointerEvents: 'none' }}>
+            <CaptainSlotsBadge used={captainSlots.used} total={captainSlots.total} gold={captainSlots.gold} />
+          </div>
+        )}
+      </div>
       <div style={{ pointerEvents: 'none', marginLeft: 6 }}>{I.chev()}</div>
     </div>
   );

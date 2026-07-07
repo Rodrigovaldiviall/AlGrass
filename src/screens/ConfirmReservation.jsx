@@ -10,6 +10,8 @@ import { supabase } from '../lib/supabase';
 import aprobarComprasYape from '../assets/Aprobar compras yape.webp';
 import codigoYape from '../assets/Código yape.webp';
 import { createReservation, createGamePlayer, createInvitedReservation, validatePromoCode, searchUsers, getWalletBalance } from '../services/reservationService';
+import { carriedGroup } from '../services/groupReservationService';
+import { useGlobalRoles } from '../hooks/useGlobalRoles';
 import { markWaitlistReserved } from '../services/waitlistService';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import { getAvatarUrl } from '../utils/avatar';
@@ -665,6 +667,7 @@ export default function ConfirmReservation() {
   const navigate = useNavigate();
   const { state } = useLocation();
   const { user: authUser } = useAuth();
+  const { isCaptain, isCaptainGold } = useGlobalRoles();
   const game = state?.game;
   const user = state?.user ?? { name: 'Usuario', email: 'usuario@email.com' };
   // Canonical display name: DB-fetched name from AuthContext takes precedence over navigation state
@@ -681,6 +684,7 @@ export default function ConfirmReservation() {
   }, [authUser?.id]); // eslint-disable-line
 
   const [guests, setGuests]         = useState([]);
+  const [reservedSlots, setReservedSlots] = useState(0); // UX de "Reserva de cupos" (capitán). Solo interfaz.
   const [subView, setSubView]       = useState('confirm');
   const [payOpen, setPayOpen]       = useState(false);
   const [paidPlayers, setPaidPlayers] = useState([]);
@@ -814,9 +818,12 @@ export default function ConfirmReservation() {
         const { data: resData, error } = await createInvitedReservation({ gameId, playersCount: guests.length, unitPrice });
         if (!error && resData) {
           const reservationId = resData.id;
-          if (game?.type === 'match' || !game?.type) await Promise.all(
-            guests.map(guest => createGamePlayer({ gameId, userId: guest.id, payerId: authUser?.id, reservationId, amount: 0, reservationType: 'invited', invitedByUserId: authUser?.id, hostUserId: game?.hostUserId ?? null }))
-          );
+          if (game?.type === 'match' || !game?.type) {
+            const groupId = await carriedGroup(authUser?.id, gameId);
+            await Promise.all(
+              guests.map(guest => createGamePlayer({ gameId, userId: guest.id, payerId: authUser?.id, reservationId, amount: 0, reservationType: 'invited', invitedByUserId: authUser?.id, hostUserId: game?.hostUserId ?? null, gameSlotReservationId: groupId }))
+            );
+          }
           supabase?.from('notifications').insert({
             recipient_user_id: authUser?.id,
             source_type: 'venue', delivery_type: 'automatic', category: 'reservation',
@@ -887,7 +894,8 @@ export default function ConfirmReservation() {
           if (skipped || error) { setFreeConfirming(false); return; }
           const reservationId = resData?.id ?? null;
           if (game?.type === 'match' || !game?.type) {
-            const gpResults = await Promise.all(guests.map(guest => createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice, hostUserId: game?.hostUserId ?? null })));
+            const groupId = await carriedGroup(authUser?.id, gameId);
+            const gpResults = await Promise.all(guests.map(guest => createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice, hostUserId: game?.hostUserId ?? null, gameSlotReservationId: groupId })));
             if (gpResults.some(r => r?.error?.message?.startsWith('GAME_FULL'))) { setFreeConfirming(false); setCapacityError('GAME_FULL'); return; }
           }
           supabase?.from('notifications').insert({
@@ -969,9 +977,10 @@ export default function ConfirmReservation() {
       const reservationId = resData?.id ?? null;
       const _hostId = game?.hostUserId ?? null;
       if (game?.type === 'match' || !game?.type) {
-        const { error: gpErr } = await createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet, hostUserId: _hostId });
+        const { error: gpErr } = await createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet, hostUserId: _hostId, gameSlotReservationId: game?.gameSlotReservationId ?? null });
         if (gpErr?.message?.startsWith('GAME_FULL')) { setFreeConfirming(false); setCapacityError('GAME_FULL'); return; }
-        await Promise.all(guests.map(guest => createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice, hostUserId: _hostId })));
+        const groupId = await carriedGroup(authUser?.id, game?.id);
+        await Promise.all(guests.map(guest => createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice, hostUserId: _hostId, gameSlotReservationId: groupId })));
       }
       const _tpl = guests.length > 0 ? 'reservation_confirmed_with_guests' : 'reservation_confirmed';
       const _tplText = guests.length > 0
@@ -1117,6 +1126,45 @@ export default function ConfirmReservation() {
           </div>
         )}
 
+        {isCaptain && !isCampo && !isRental && !addGuestsMode && !invitedMode && (
+          <div style={{ padding: '4px 16px 0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0' }}>
+              {/* Badge circular — placeholder; se reemplazará por la insignia de Capitán */}
+              <div style={{ width: 44, height: 44, borderRadius: '50%', background: SOFT, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <svg width="31" height="31" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 3l7 3v5c0 4.2-2.9 7.6-7 8.8-4.1-1.2-7-4.6-7-8.8V6l7-3z" stroke={isCaptainGold ? '#D4A017' : '#3F5FE0'} strokeWidth="1.5" strokeLinejoin="round"/>
+                  <path d="M9 12l2 2 4-4" stroke={isCaptainGold ? '#D4A017' : '#3F5FE0'} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                  <div style={{ fontSize: 15.5, fontWeight: 700, color: TEXT, letterSpacing: -0.2, whiteSpace: 'nowrap' }}>Reservar cupos</div>
+                  <div style={{ fontSize: 12.5, color: SUB, whiteSpace: 'nowrap' }}>Pagan ellos</div>
+                </div>
+                <div style={{ fontSize: 12.5, color: SUB, marginTop: 2, lineHeight: 1.4 }}>
+                  {isCaptainGold
+                    ? 'Hasta 24 h antes del partido'
+                    : 'Hasta 48 h antes del partido'}
+                </div>
+              </div>
+              <div style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 12 }}>
+                <button
+                  onClick={() => setReservedSlots(n => Math.max(0, n - 1))}
+                  disabled={reservedSlots === 0}
+                  style={{ width: 30, height: 30, borderRadius: '50%', border: `1.6px solid ${reservedSlots === 0 ? '#D6D6DC' : ORANGE}`, background: 'transparent', cursor: reservedSlots === 0 ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, opacity: reservedSlots === 0 ? 0.5 : 1, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 8h8" stroke={reservedSlots === 0 ? '#9A9AA0' : ORANGE} strokeWidth="1.8" strokeLinecap="round"/></svg>
+                </button>
+                <span style={{ minWidth: 20, textAlign: 'center', fontSize: 15.5, fontWeight: 700, color: TEXT }}>{reservedSlots}</span>
+                <button
+                  onClick={() => setReservedSlots(n => n + 1)}
+                  style={{ width: 30, height: 30, borderRadius: '50%', border: `1.6px solid ${ORANGE}`, background: 'transparent', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 4v8M4 8h8" stroke={ORANGE} strokeWidth="1.8" strokeLinecap="round"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {!isCampo && !isRental && guests.length > 0 && (
           <div style={{ padding: '8px 16px 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {guests.map(g => (
@@ -1140,13 +1188,14 @@ export default function ConfirmReservation() {
 
         {!isCampo && !isRental && (
           <div style={{ padding: '18px 16px 8px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
             {(() => {
               const noSlots = displaySpots === 0;
               const btnColor = noSlots ? '#C4C4CC' : ORANGE;
               return (
                 <button
                   onClick={noSlots ? undefined : () => setSubView('addplayers')}
-                  style={{ padding: '10px 14px', background: 'transparent', border: 'none', cursor: noSlots ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, color: btnColor, letterSpacing: -0.1, display: 'inline-flex', alignItems: 'center', gap: 8, WebkitTapHighlightColor: 'transparent', outline: 'none', opacity: noSlots ? 0.5 : 1 }}>
+                  style={{ padding: '10px 0', background: 'transparent', border: 'none', cursor: noSlots ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, color: btnColor, letterSpacing: -0.1, display: 'inline-flex', alignItems: 'center', gap: 8, WebkitTapHighlightColor: 'transparent', outline: 'none', opacity: noSlots ? 0.5 : 1 }}>
                   <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
                     <circle cx="10" cy="10" r="9" stroke={btnColor} strokeWidth="1.6"/>
                     <path d="M10 6v8M6 10h8" stroke={btnColor} strokeWidth="1.7" strokeLinecap="round"/>
@@ -1155,6 +1204,8 @@ export default function ConfirmReservation() {
                 </button>
               );
             })()}
+              <div style={{ fontSize: 12.5, color: SUB, whiteSpace: 'nowrap' }}>Pagas tú</div>
+            </div>
             {spotsLabel && (
               <div style={{ fontSize: 12.5, color: displaySpots === 0 ? DANGER : SUB }}>
                 {spotsLabel}
@@ -1235,6 +1286,12 @@ export default function ConfirmReservation() {
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
               <span>{isRental ? 'Campo' : 'Titular'}</span>
               <span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{unitStr}</span>
+            </div>
+          )}
+          {isCaptain && !invitedMode && !addGuestsMode && !isRental && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
+              <span>Cupos reservados ({reservedSlots})</span>
+              <span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>S/. 0.00</span>
             </div>
           )}
           {!invitedMode && !addGuestsMode && promoApplied && (

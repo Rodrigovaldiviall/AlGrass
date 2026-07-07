@@ -198,7 +198,7 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoDis
 }
 
 // Activates (or reactivates) a game_players slot via upsert on (game_id, user_id, payer_id).
-export async function createGamePlayer({ gameId, userId = null, payerId = null, reservationId = null, amount = 0, reservationType = 'normal', invitedByUserId = null, hostUserId = null }) {
+export async function createGamePlayer({ gameId, userId = null, payerId = null, reservationId = null, amount = 0, reservationType = 'normal', invitedByUserId = null, hostUserId = null, gameSlotReservationId = null }) {
   if (!supabase) return { skipped: true };
   const session = await getSession();
   if (!session?.user?.id) return { skipped: true };
@@ -221,6 +221,9 @@ export async function createGamePlayer({ gameId, userId = null, payerId = null, 
       joined_at:          new Date().toISOString(),
       reservation_type:   reservationType,
       invited_by_user_id: invitedByUserId,
+      // Fase A: grupo del jugador. Escritura CONDICIONAL — solo si hay valor, para
+      // no sobrescribir a null el gsr_id existente en una reactivación (pertenencia pegajosa).
+      ...(gameSlotReservationId != null ? { game_slot_reservation_id: gameSlotReservationId } : {}),
     }, { onConflict: 'game_id,user_id,payer_id' })
     .select('id')
     .single();
