@@ -821,7 +821,7 @@ export default function ConfirmReservation() {
           if (game?.type === 'match' || !game?.type) {
             const groupId = await carriedGroup(authUser?.id, gameId);
             await Promise.all(
-              guests.map(guest => createGamePlayer({ gameId, userId: guest.id, payerId: authUser?.id, reservationId, amount: 0, reservationType: 'invited', invitedByUserId: authUser?.id, hostUserId: game?.hostUserId ?? null, gameSlotReservationId: groupId }))
+              guests.map(guest => createGamePlayer({ gameId, userId: guest.id, payerId: authUser?.id, reservationId, amount: 0, reservationType: 'invited', invitedByUserId: authUser?.id, hostUserId: game?.hostUserId ?? null, gameSlotReservationId: groupId, countsReservedSlot: groupId != null }))
             );
           }
           supabase?.from('notifications').insert({
@@ -895,7 +895,7 @@ export default function ConfirmReservation() {
           const reservationId = resData?.id ?? null;
           if (game?.type === 'match' || !game?.type) {
             const groupId = await carriedGroup(authUser?.id, gameId);
-            const gpResults = await Promise.all(guests.map(guest => createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice, hostUserId: game?.hostUserId ?? null, gameSlotReservationId: groupId })));
+            const gpResults = await Promise.all(guests.map(guest => createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice, hostUserId: game?.hostUserId ?? null, gameSlotReservationId: groupId, countsReservedSlot: groupId != null })));
             if (gpResults.some(r => r?.error?.message?.startsWith('GAME_FULL'))) { setFreeConfirming(false); setCapacityError('GAME_FULL'); return; }
           }
           supabase?.from('notifications').insert({
@@ -977,10 +977,41 @@ export default function ConfirmReservation() {
       const reservationId = resData?.id ?? null;
       const _hostId = game?.hostUserId ?? null;
       if (game?.type === 'match' || !game?.type) {
-        const { error: gpErr } = await createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet, hostUserId: _hostId, gameSlotReservationId: game?.gameSlotReservationId ?? null });
+        // Titular: grupo/consumo con la info ya disponible en el componente.
+        //  · Capitán (lidera R1) → gsr = R1, counts = false (nunca true, aun reinscribiéndose).
+        //  · Link (llegó por link) → gsr = R1 del link, counts = true.
+        //  · Público → gsr = null, counts = false.
+        // La fila `confirmed` del titular aún no existe, así que carriedGroup solo puede
+        // resolver por LIDERAZGO: un valor no nulo ⇒ capitán que lidera R1. Si R1 todavía
+        // no existe (se creará luego en este checkout), ledGroup=null y se mantiene el
+        // comportamiento actual (gsr=null); el taggeo del capitán se hará en otra fase.
+        const ledGroup  = await carriedGroup(authUser?.id, game?.id);
+        const linkGroup = game?.gameSlotReservationId ?? null;
+        const { error: gpErr } = await createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet, hostUserId: _hostId, gameSlotReservationId: ledGroup ?? linkGroup, countsReservedSlot: ledGroup != null ? false : (linkGroup != null) });
         if (gpErr?.message?.startsWith('GAME_FULL')) { setFreeConfirming(false); setCapacityError('GAME_FULL'); return; }
         const groupId = await carriedGroup(authUser?.id, game?.id);
-        await Promise.all(guests.map(guest => createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice, hostUserId: _hostId, gameSlotReservationId: groupId })));
+        await Promise.all(guests.map(guest => createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice, hostUserId: _hostId, gameSlotReservationId: groupId, countsReservedSlot: groupId != null })));
+        // Checkout inicial del capitán: si el actor es captain/captain_gold, SIEMPRE se
+        // crea/actualiza R1 (aunque reservedSlots=0 → R1 inactive; >0 → active). Con el id
+        // de R1 se taggean ÚNICAMENTE las filas creadas en ESTE checkout (capitán + sus
+        // invitados de este checkout); NO se buscan ni modifican jugadores antiguos.
+        //   · Capitán  → gsr=R1, counts=NULL.
+        //   · Invitados de este checkout → gsr=R1, counts=FALSE (nazca R1 inactive o active).
+        // La transición FALSE→TRUE vendrá solo por consume_reserved_slot() en fases futuras.
+        console.log('[reserve_slots]', { isCaptain, isCaptainGold, reservedSlots });
+        if (isCaptain || isCaptainGold) {
+          console.log('[reserve_slots] calling rpc');
+          const { data: r1, error: rErr } = await supabase.rpc('reserve_slots', { p_game_id: game?.id, p_reserved_slots_total: reservedSlots });
+          console.log('[reserve_slots] rpc result', { data: r1, error: rErr });
+          const r1Id = (Array.isArray(r1) ? r1[0]?.id : r1?.id) ?? null;
+          if (!rErr && r1Id) {
+            console.log('[reserve_slots] retag', { r1Id });
+            await createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet, hostUserId: _hostId, gameSlotReservationId: r1Id, countsReservedSlot: null });
+            await Promise.all(guests.map(guest => createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice, hostUserId: _hostId, gameSlotReservationId: r1Id, countsReservedSlot: false })));
+          } else if (rErr) {
+            console.error('[reserve_slots] checkout', rErr);
+          }
+        }
       }
       const _tpl = guests.length > 0 ? 'reservation_confirmed_with_guests' : 'reservation_confirmed';
       const _tplText = guests.length > 0

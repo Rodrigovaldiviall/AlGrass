@@ -591,10 +591,10 @@ function ProfileCard({ user, gamesPlayedCount, onEdit, isProfileComplete = false
           <div style={{ position: 'relative', marginBottom: 8, width: 84, height: 84, borderRadius: '50%', boxShadow: isHostOrStaff ? `0 0 0 2.5px #fff, 0 0 0 5px ${ORANGE}` : undefined }}>
             <Avatar name={user.name} hue={user.avatarHue} size={84} photoUrl={user.photoDataUrl} avatarPath={user.avatarPath} avatarVersion={user.avatarVersion} />
             {(isCaptain || isCaptainGold) && (
-              <div style={{ position: 'absolute', bottom: 2, left: 2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <svg width="31" height="31" viewBox="0 0 24 24" fill="none">
-                  <path d="M12 3l7 3v5c0 4.2-2.9 7.6-7 8.8-4.1-1.2-7-4.6-7-8.8V6l7-3z" stroke={isCaptainGold ? '#D4A017' : '#3F5FE0'} strokeWidth="1.5" strokeLinejoin="round"/>
-                  <path d="M9 12l2 2 4-4" stroke={isCaptainGold ? '#D4A017' : '#3F5FE0'} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+              <div style={{ position: 'absolute', top: 0, right: 0, filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.3))' }}>
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" style={{ display: 'block' }}>
+                  <path d="M12 3l7 3v5c0 4.2-2.9 7.6-7 8.8-4.1-1.2-7-4.6-7-8.8V6l7-3z" fill={isCaptainGold ? '#F5B301' : '#E5383B'} stroke={isCaptainGold ? '#F5B301' : '#E5383B'} strokeWidth="1.2" strokeLinejoin="round"/>
+                  <path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
               </div>
             )}
@@ -1649,7 +1649,7 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
 
 // ── GameRow ────────────────────────────────────────────────────────────────
 
-function GameRow({ game, onPress, muted = false, userId = null, highlighted = false }) {
+function GameRow({ game, onPress, muted = false, userId = null, highlighted = false, captainGold = false }) {
   const [pressed, setPressed] = useState(false);
   const isCampo  = game.type === 'campo';
   const isRental = game.type === 'rental';
@@ -1790,8 +1790,8 @@ function GameRow({ game, onPress, muted = false, userId = null, highlighted = fa
       })()}
       {game.status === 'reserved' && !isCampo && !isRental && (
         <div style={{ position: 'absolute', top: -13, right: -8, pointerEvents: 'none' }}>
-          {/* TODO(backend): reserva de cupos real (used/total/gold). Mock temporal. */}
-          <CaptainSlotsBadge used={2} total={5} gold={false} />
+          {/* TODO(backend): reserva de cupos real (used/total). Mock temporal; color por rol. */}
+          <CaptainSlotsBadge used={2} total={5} gold={captainGold} />
         </div>
       )}
       </div>
@@ -2001,6 +2001,7 @@ function _readPFCache(userId) {
 export default function Profile() {
   const navigate = useNavigate();
   const { user, login } = useAuth();
+  const { isCaptainGold } = useGlobalRoles();
   const { isVenueStaff, isVenueManager, isGameHost } = useStaff();
   const location = useLocation();
   const { state } = location;
@@ -2942,7 +2943,7 @@ export default function Profile() {
                           key={g.id}
                           ref={isHighlighted ? highlightedRef : null}
                         >
-                          <GameRow game={g} onPress={() => openGameDetail(g)} userId={user?.id} highlighted={isHighlighted} />
+                          <GameRow game={g} onPress={() => openGameDetail(g)} userId={user?.id} highlighted={isHighlighted} captainGold={isCaptainGold} />
                         </div>
                         );
                       })}
@@ -2983,7 +2984,7 @@ export default function Profile() {
                         const isHighlighted = g.id === highlightedId || g.gameId === highlightedId;
                         return (
                         <div key={g.id} ref={isHighlighted ? highlightedRef : null}>
-                          <GameRow game={g} onPress={() => openGameDetail(g)} muted userId={user?.id} highlighted={isHighlighted} />
+                          <GameRow game={g} onPress={() => openGameDetail(g)} muted userId={user?.id} highlighted={isHighlighted} captainGold={isCaptainGold} />
                         </div>
                         );
                       })}

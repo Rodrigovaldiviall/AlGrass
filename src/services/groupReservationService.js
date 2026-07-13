@@ -50,3 +50,26 @@ export async function carriedGroup(actor, gameId) {
   // 3) null si no lidera ni tiene fila confirmed (o su fila no pertenece a grupo).
   return membership?.[0]?.game_slot_reservation_id ?? null;
 }
+
+// ============================================================================
+// getSlotReservation(gameId) — SOLO LECTURA (Fase 1)
+// ============================================================================
+// Snapshot para la UX "Reserva de cupos": reserva reutilizable del usuario (si
+// existe) + pool público. Todos los números vienen del backend (RPC DEFINER);
+// React no recalcula nada. Si no hay reserva → estado vacío (0).
+export async function getSlotReservation(gameId) {
+  if (!supabase || !gameId) return null;
+  const { data, error } = await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
+  if (error) { console.error('[getSlotReservation]', error); return null; }
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return { hasReservation: false, reservationId: null, status: null, total: 0, used: 0, remaining: 0, pool: 0 };
+  return {
+    hasReservation: !!row.has_reservation,
+    reservationId:  row.reservation_id ?? null,
+    status:         row.status ?? null,
+    total:          row.reserved_slots_total ?? 0,
+    used:           row.reserved_slots_used ?? 0,
+    remaining:      row.reserved_slots_remaining ?? 0,
+    pool:           row.pool ?? 0,
+  };
+}

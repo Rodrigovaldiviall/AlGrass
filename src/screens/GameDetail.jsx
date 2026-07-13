@@ -15,13 +15,14 @@ import TabBar from '../components/TabBar';
 import { useForegroundTick } from '../hooks/useForegroundTick';
 import RatingBlock from '../components/RatingBlock';
 import { useAuth } from '../context/AuthContext';
-import { cancelGamePlayer, cancelGuestPlayers, cancelInvitedPlayers } from '../services/reservationService';
+import { cancelGamePlayer, cancelGuestPlayers, cancelInvitedPlayers, createGamePlayer } from '../services/reservationService';
 import { supabase } from '../lib/supabase';
 import { getAvatarUrl } from '../utils/avatar';
 import { getVenueCoverUrl } from '../utils/venue';
 import { deriveGameState, requiredPlayers, gameStartDate, gameEndDate, isGamePast, isGameStarted, deriveAttendance } from '../utils/deriveGameState';
 import { joinWaitlist, leaveWaitlist, getMyWaitlistGameIds } from '../services/waitlistService';
 import { useGlobalRoles } from '../hooks/useGlobalRoles';
+import { getSlotReservation } from '../services/groupReservationService';
 const ROSTER_KEY_GD = 'pichanga_game_rosters';
 
 
@@ -821,7 +822,7 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
 // TODO(backend): inscritos, disponibles, reservedInitial, publicAvailable y active
 // vendrán de la RPC / estado real. Aquí son datos temporales de demo; la UI NO
 // recalcula ningún número (salvo el estado local temporal del stepper).
-function ReserveSlotsSheet({ inscritos = 0, disponibles = 0, reservedInitial = 0, publicAvailable = 0, active = true, onClose }) {
+function ReserveSlotsSheet({ inscritos = 0, disponibles = 0, reservedInitial = 0, publicAvailable = 0, active = true, onAccept, onClose }) {
   const [open, setOpen] = useState(false);
   const [reservados, setReservados] = useState(reservedInitial);
   const [copied, setCopied] = useState(false);
@@ -835,12 +836,11 @@ function ReserveSlotsSheet({ inscritos = 0, disponibles = 0, reservedInitial = 0
   // distinto del confirmado (p. ej. 2 → 6 → 5 sigue siendo pendiente respecto a 2).
   const dirty = reservados !== reservedInitial;
 
-  function handleAccept() {
-    // TODO(backend): única llamada de guardado. Según la respuesta de la RPC:
-    //   éxito → el valor confirmado pasa a ser `reservados` (el botón desaparece);
-    //   fallo por falta de cupos públicos → failReservation().
-    // Sin backend aún, simulamos el rechazo para poder validar la alerta visualmente.
-    failReservation();
+  async function handleAccept() {
+    // Única llamada de guardado: reserve_slots() + sincronización del grupo inicial
+    // (la maneja onAccept en el padre). Éxito → cerrar; fallo → alerta y restaurar.
+    const ok = await onAccept?.(reservados);
+    if (ok) dismiss(); else failReservation();
   }
   function failReservation() {
     setReservados(reservedInitial); // restaurar al último valor confirmado
@@ -1439,8 +1439,31 @@ export default function GameDetail() {
   const [modifyOpen, setModifyOpen] = useState(false);
   const [reserveSlotsOpen, setReserveSlotsOpen] = useState(false);
   const { isCaptain, isCaptainGold } = useGlobalRoles();
-  // TODO(backend): datos reales de la reserva de cupos.
-  const resMock = { inscritos: 2, disponibles: 7, reserved: 5, publicAvailable: 7, active: true };
+  // Fase 1 (solo lectura): snapshot real de la reserva de cupos + pool.
+  const [slotRes, setSlotRes] = useState(null);
+  useEffect(() => {
+    if (!(isCaptain || isCaptainGold) || !gameId) return;
+    let alive = true;
+    getSlotReservation(gameId).then(r => { if (alive) setSlotRes(r); });
+    return () => { alive = false; };
+  }, [isCaptain, isCaptainGold, gameId]);
+  const slots = slotRes ?? { hasReservation: false, status: null, total: 0, used: 0, remaining: 0, pool: 0 };
+  // Tarjeta editable solo si la reserva está ACTIVE; sin reserva → estado vacío editable.
+  const slotsActive = slots.hasReservation ? slots.status === 'active' : true;
+
+  // Gestionar mi reserva → Aceptar: crea/revive R1 y sincroniza el grupo inicial
+  // (capitán + todas las filas cuyo payer_id sea el capitán) a R1/false vía createGamePlayer.
+  async function acceptReserveSlots(count) {
+    const { data: r1, error } = await supabase.rpc('reserve_slots', { p_game_id: gameId, p_reserved_slots_total: count });
+    if (error) { console.error('[reserve_slots]', error); return false; }
+    const r1Id = (Array.isArray(r1) ? r1[0]?.id : r1?.id) ?? null;
+    if (!r1Id) return false;
+    const { data: groupRows } = await supabase.from('game_players')
+      .select('user_id, payer_id, amount, reservation_type, invited_by_user_id, reservation_id')
+      .eq('game_id', gameId).eq('payer_id', user?.id).eq('status', 'confirmed');
+    await Promise.all((groupRows ?? []).map(r => createGamePlayer({ gameId, userId: r.user_id, payerId: r.payer_id, reservationId: r.reservation_id, amount: r.amount, reservationType: r.reservation_type, invitedByUserId: r.invited_by_user_id, gameSlotReservationId: r1Id, countsReservedSlot: false })));
+    return true;
+  }
   const [cancelOpen,  setCancelOpen]  = useState(false);
   const [paymentDetailOpen, setPaymentDetailOpen] = useState(false);
   const [hostCancelInvitedOpen, setHostCancelInvitedOpen] = useState(false);
@@ -1996,17 +2019,19 @@ export default function GameDetail() {
           invitedCount={invitedByHost.length}
           showReserveSlots={!isHost && (isCaptain || isCaptainGold)}
           onReserveSlots={() => { setModifyOpen(false); setReserveSlotsOpen(true); }}
-          reserveSlotsLabel={`${resMock.inscritos}/${resMock.reserved}`}
+          reserveSlotsLabel={`${slots.used}/${slots.total}`}
         />
       )}
       {reserveSlotsOpen && (
         <ReserveSlotsSheet
-          inscritos={resMock.inscritos}
-          disponibles={resMock.disponibles}
-          reservedInitial={resMock.reserved}
-          publicAvailable={resMock.publicAvailable}
-          active={resMock.active}
-          onClose={() => setReserveSlotsOpen(false)}
+          key={`${slots.total}-${slots.used}-${slots.status}`}
+          inscritos={slots.used}
+          disponibles={slots.remaining}
+          reservedInitial={slots.total}
+          publicAvailable={slots.pool}
+          active={slotsActive}
+          onAccept={acceptReserveSlots}
+          onClose={() => { setReserveSlotsOpen(false); getSlotReservation(gameId).then(setSlotRes); }}
         />
       )}
       {hostCancelInvitedOpen && (

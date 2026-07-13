@@ -17,6 +17,7 @@ import { supabase } from '../lib/supabase';
 import { deriveGameState, requiredPlayers, isGameStarted, isGamePast } from '../utils/deriveGameState';
 import { GameMetaLine } from '../components/GameMetaLine';
 import CaptainSlotsBadge from '../components/CaptainSlotsBadge';
+import { useGlobalRoles } from '../hooks/useGlobalRoles';
 import { abbreviateName, formatDateLabel } from '../utils/format';
 import { getMyWaitlistGameIds } from '../services/waitlistService';
 import { useForegroundTick } from '../hooks/useForegroundTick';
@@ -637,10 +638,10 @@ function SkeletonPill() {
   );
 }
 
-function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount, liveOpenSpots, isHost = false, pillReady = true, confirmedCountReady = true }) {
+function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount, liveOpenSpots, isHost = false, pillReady = true, confirmedCountReady = true, captainGold = false }) {
   const [pressed, setPressed] = useState(false);
-  // TODO(backend): reserva de cupos real (used/total/gold). Mock temporal.
-  const captainSlots = booked ? { used: 2, total: 5, gold: false } : null;
+  // TODO(backend): reserva de cupos real (used/total). Mock temporal; color por rol.
+  const captainSlots = booked ? { used: 2, total: 5, gold: captainGold } : null;
   return (
     <div role="button" tabIndex={0}
       onClick={onOpen}
@@ -972,6 +973,7 @@ export default function PickupGames() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user }  = useAuth();
+  const { isCaptainGold } = useGlobalRoles();
 
   const _mapReturn = location.state?.mapReturn ?? null;       // contexto restaurado al volver de GameDetail
   // Estado persistido entre tabs (sessionStorage). Prioridad: mapReturn (detalle) → persistido (tab) → default.
@@ -1397,6 +1399,7 @@ export default function PickupGames() {
     return (
       <GameRow key={g.id} g={g}
         last={last}
+        captainGold={isCaptainGold}
         booked={myPlayerRowsReady && !isHost && st?.isBooked}
         inWaitlist={waitlistReady && !isHost && waitlistGameIds.has(g.id)}
         guestInfo={myPlayerRowsReady && !isHost && st?.isGuestConfirmed ? { paidBy: st.paidBy, payerCode: st.payerCode, guestId: st.guestId, activeGuestCount: st.activeGuestCount } : undefined}

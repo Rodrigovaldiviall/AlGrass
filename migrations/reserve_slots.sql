@@ -1,10 +1,11 @@
 -- ============================================================================
 -- FASE 4 — reserve_slots(p_game_id uuid, p_reserved_slots_total integer)
 -- ============================================================================
--- Reserva cupos (el GRUPO del capitán). Reutiliza la reserva REUTILIZABLE
--- existente si la hay: ACTIVE → la devuelve tal cual; RELEASED → la reactiva
--- ("volver a reservar cupos"). Solo crea una fila NUEVA (R2) si para ese
--- (partido, capitán) únicamente hay reservas terminales (expired/canceled) o ninguna.
+-- Gestiona la ÚNICA R1 del capitán (el GRUPO). Existe una sola fila por
+-- (game_id, reserved_by_user_id) sin importar el estado. Se busca esa R1: si no
+-- existe, se CREA; si existe, se ACTUALIZA la MISMA (nunca R2). El estado destino
+-- depende de la cantidad: p_reserved_slots_total = 0 → 'inactive' (total=0);
+-- > 0 → 'active' (total=N). Ciclo de vida: inactive / active / canceled.
 -- Bloqueo de capacidad: retira cupos del público. Sin efecto económico.
 --
 -- Autorización (revalidada aquí; nunca se confía en el frontend):
@@ -14,10 +15,6 @@
 -- reserved_by_role = MOTIVO real del beneficio: owner del venue del partido →
 --   'venue_owner' (prevalece, aun con rol global); si no, el rol global usado:
 --   captain_gold → captain → algrass_admin → algrass_staff.
---
--- expires_at: Venue Owner del venue del partido → NULL (prevalece, aun con rol
---   global); captain/captain_gold que NO es owner → game_start - 48h; staff/admin
---   que NO es owner → NULL.
 --
 -- Disponibilidad = total_spots - confirmados - held_activo (misma lógica que
 --   enforce_capacity()). Si p_reserved_slots_total no cabe → GAME_FULL.
@@ -49,12 +46,12 @@ declare
   v_is_staff         boolean;
   v_is_owner         boolean;
   v_role             text;
-  v_expires_at       timestamptz;
+  v_new_status       text;
   v_confirmed        integer;
   v_held             integer;
   v_public_available integer;
   v_existing         public.game_slot_reservations%rowtype;
-  v_reuse            boolean := false;
+  v_r1_exists        boolean;
   v_used             integer := 0;
   v_new_hold         integer;
   v_reservation      public.game_slot_reservations%rowtype;
@@ -64,8 +61,8 @@ begin
     raise exception 'AUTH_REQUIRED';
   end if;
 
-  -- 2) Cantidad válida.
-  if p_reserved_slots_total is null or p_reserved_slots_total <= 0 then
+  -- 2) Cantidad válida. 0 es válido (R1 nace/queda 'inactive'); negativo no.
+  if p_reserved_slots_total is null or p_reserved_slots_total < 0 then
     raise exception 'INVALID_SLOT_COUNT';
   end if;
 
@@ -125,20 +122,7 @@ begin
     raise exception 'NOT_AUTHORIZED';
   end if;
 
-  -- 7) expires_at. Solo captain/captain_gold (que por tanto NO son owner de este
-  --    venue) expiran a -48h. venue_owner, staff y admin → NULL.
-  if v_role in ('captain', 'captain_gold') then
-    v_expires_at := v_game_start - interval '48 hours';
-  else
-    v_expires_at := null;
-  end if;
-
-  -- 8) Ventana: no crear una reserva que nacería ya expirada (owner/staff/admin exentos por NULL).
-  if v_expires_at is not null and now() >= v_expires_at then
-    raise exception 'RESERVATION_WINDOW_CLOSED';
-  end if;
-
-  -- 9) Precondición general de reserve_slots(): solo un capitán INSCRITO
+  -- 7) Precondición general de reserve_slots(): solo un capitán INSCRITO
   --    (confirmado) en el partido puede crear o reactivar una reserva de cupos.
   if not exists (
     select 1 from public.game_players
@@ -149,28 +133,24 @@ begin
     raise exception 'CAPTAIN_NOT_ENROLLED';
   end if;
 
-  -- 10) Reutilización. Como MÁXIMO una reserva REUTILIZABLE (status active|released)
-  --     por (game_id, actor), garantizado por el índice único parcial. Se bloquea.
+  -- 8) R1 ÚNICA por (game_id, reserved_by_user_id): se busca SIN filtrar por estado
+  --    (garantizado único por el índice incondicional). Se bloquea la fila si existe.
   select * into v_existing
     from public.game_slot_reservations
    where game_id = p_game_id
      and reserved_by_user_id = v_actor
-     and status in ('active', 'released')
    for update;
 
-  if found then
-    if v_existing.status = 'active' then
-      -- Ya tiene reserva ACTIVA → se reutiliza tal cual (idempotente). Cambiar el
-      -- total es competencia de modify_reserved_slots() (futura).
-      return v_existing;
-    end if;
-    -- status = 'released' → se reactivará ("volver a reservar cupos"), misma R1.
-    v_reuse := true;
-    v_used  := v_existing.reserved_slots_used;   -- conserva su grupo actual
-  end if;
+  -- Se captura AQUÍ si la R1 existía: los SELECT agregados posteriores (COUNT/SUM)
+  -- sobrescriben FOUND, así que no se puede confiar en FOUND más abajo.
+  v_r1_exists := found;
 
-  -- 11) Disponibilidad pública = total - confirmados - held de OTROS grupos que
-  --     retienen (solo status='active'; se excluye la propia reserva).
+  -- Estado destino según la cantidad: 0 → 'inactive'; > 0 → 'active'.
+  v_new_status := case when p_reserved_slots_total > 0 then 'active' else 'inactive' end;
+
+  -- 9) Capacidad (GAME_FULL). held = remaining de OTROS grupos activos (se excluye la
+  --    propia R1). Con total=0 el hold resultante es 0 → nunca falla. No se modifica
+  --    reserved_slots_used (solo se lee para el cálculo).
   select count(*)::integer
     into v_confirmed
     from public.game_players
@@ -184,53 +164,38 @@ begin
      and id is distinct from v_existing.id;
 
   v_public_available := coalesce(v_total_spots, 0) - v_confirmed - v_held;
-
-  -- Cupos GARANTIZADOS a retener tras (re)reservar = remaining resultante. En una
-  -- reactivación de grupo ya poblado (used>0) solo se retiene lo que falte.
-  v_new_hold := greatest(p_reserved_slots_total - v_used, 0);
+  v_used             := coalesce(v_existing.reserved_slots_used, 0);
+  v_new_hold         := greatest(p_reserved_slots_total - v_used, 0);
   if v_new_hold > v_public_available then
     raise exception 'GAME_FULL';
   end if;
 
-  if v_reuse then
-    -- 12a) Reactivar la reserva RELEASED (misma R1: mismo link, grupo y used).
-    --      Se limpia el snapshot released_* porque vuelve a retener cupos.
+  -- 10) Una única R1: si existe, se ACTUALIZA la misma fila; si no, se CREA.
+  --     Nunca R2. No se toca reserved_slots_used ni reserved_slots_remaining (generada).
+  if v_r1_exists then
     update public.game_slot_reservations
-       set status                            = 'active',
-           released_at                       = null,
-           released_by_user_id               = null,
-           released_reserved_slots_used      = null,
-           released_reserved_slots_remaining = null,
-           reserved_slots_total              = p_reserved_slots_total,
-           expires_at                        = v_expires_at,
-           updated_at                        = now()
+       set status               = v_new_status,
+           reserved_slots_total = p_reserved_slots_total,
+           updated_at           = now()
      where id = v_existing.id
     returning * into v_reservation;
     return v_reservation;
   end if;
 
-  -- 12b) No hay reutilizable (solo terminales expired/canceled, o ninguna) →
-  --      nueva reserva R2. reserved_slots_remaining es GENERADA (used=0 → =total).
   insert into public.game_slot_reservations (
     game_id,
     reserved_by_user_id,
     reserved_by_role,
     status,
     reserved_slots_total,
-    reserved_slots_used,
-    expires_at,
-    released_at,
     created_at,
     updated_at
   ) values (
     p_game_id,
     v_actor,
     v_role,
-    'active',
+    v_new_status,
     p_reserved_slots_total,
-    0,
-    v_expires_at,
-    null,
     now(),
     now()
   )
