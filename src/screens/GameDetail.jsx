@@ -21,6 +21,8 @@ import { getAvatarUrl } from '../utils/avatar';
 import { getVenueCoverUrl } from '../utils/venue';
 import { deriveGameState, requiredPlayers, gameStartDate, gameEndDate, isGamePast, isGameStarted, deriveAttendance } from '../utils/deriveGameState';
 import { joinWaitlist, leaveWaitlist, getMyWaitlistGameIds } from '../services/waitlistService';
+import ReserveSlotsSheet from '../components/ReserveSlotsSheet';
+import { useGlobalRoles } from '../hooks/useGlobalRoles';
 const ROSTER_KEY_GD = 'pichanga_game_rosters';
 
 
@@ -742,7 +744,7 @@ function PlayerModal({ player, onClose, isHost = false }) {
 }
 
 // ── ModifySheet
-function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0 }) {
+function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, onReserveSlots }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
@@ -784,6 +786,14 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
           </div>
           {canAdd && chevron()}
         </button>
+        {showReserveSlots && (
+          <button onClick={onReserveSlots} style={rowStyle}>
+            <div style={{ flex: 1 }}>
+              <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Reservar cupos</span>
+            </div>
+            {chevron()}
+          </button>
+        )}
         {isHost ? (
           invitedCount > 0 && (
             <button onClick={onCancel} style={{ ...rowStyle, marginBottom: 0 }}>
@@ -1268,6 +1278,24 @@ export default function GameDetail() {
   const [showWaitlistAuth, setShowWaitlistAuth] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [modifyOpen, setModifyOpen] = useState(false);
+  const [reserveSlotsOpen, setReserveSlotsOpen] = useState(false);
+  const [slotRes, setSlotRes] = useState(null);
+  const { isCaptain, isCaptainGold } = useGlobalRoles();
+  // Punto de entrada "Reservar cupos": carga datos (get_slot_reservation), abre el
+  // sheet y guarda vía reserve_slots. GameDetail no contiene lógica de negocio.
+  async function openReserveSlots() {
+    setModifyOpen(false);
+    const { data } = await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
+    setSlotRes(Array.isArray(data) ? data[0] : data);
+    setReserveSlotsOpen(true);
+  }
+  async function saveReserveSlots(total) {
+    const { error } = await supabase.rpc('reserve_slots', { p_game_id: gameId, p_reserved_slots_total: total });
+    if (error) { console.error('[reserve_slots]', error); return false; }
+    const { data } = await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
+    setSlotRes(Array.isArray(data) ? data[0] : data);
+    return true;
+  }
   const [cancelOpen,  setCancelOpen]  = useState(false);
   const [paymentDetailOpen, setPaymentDetailOpen] = useState(false);
   const [hostCancelInvitedOpen, setHostCancelInvitedOpen] = useState(false);
@@ -1821,6 +1849,18 @@ export default function GameDetail() {
           isHost={isHost}
           canAddPlayers={hostWindowOpen}
           invitedCount={invitedByHost.length}
+          showReserveSlots={!isHost && (isCaptain || isCaptainGold)}
+          onReserveSlots={openReserveSlots}
+        />
+      )}
+      {reserveSlotsOpen && slotRes && (
+        <ReserveSlotsSheet
+          inscritos={slotRes.reserved_slots_used ?? 0}
+          reservedInitial={slotRes.reserved_slots_total ?? 0}
+          publicAvailable={slotRes.pool ?? 0}
+          shareLink="https://algrass.com/join/AB12-CD34-EF56"
+          onAccept={saveReserveSlots}
+          onClose={() => setReserveSlotsOpen(false)}
         />
       )}
       {hostCancelInvitedOpen && (

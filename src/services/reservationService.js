@@ -198,7 +198,7 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoDis
 }
 
 // Activates (or reactivates) a game_players slot via upsert on (game_id, user_id, payer_id).
-export async function createGamePlayer({ gameId, userId = null, payerId = null, reservationId = null, amount = 0, reservationType = 'normal', invitedByUserId = null, hostUserId = null }) {
+export async function createGamePlayer({ gameId, userId = null, payerId = null, reservationId = null, amount = 0, reservationType = 'normal', invitedByUserId = null, hostUserId = null, gameSlotReservationId = null, countsReservedSlot = undefined, referredByUserId = null }) {
   if (!supabase) return { skipped: true };
   const session = await getSession();
   if (!session?.user?.id) return { skipped: true };
@@ -221,6 +221,13 @@ export async function createGamePlayer({ gameId, userId = null, payerId = null, 
       joined_at:          new Date().toISOString(),
       reservation_type:   reservationType,
       invited_by_user_id: invitedByUserId,
+      // V6 · info de Reserva de Cupos. Escritura CONDICIONAL: la función es un
+      // persistidor ciego (la decisión vive en captainGroupService). counts usa
+      // centinela undefined (null es un valor con significado); gsr/referred se
+      // omiten si son null para no pisar y no fallar si la columna aún no existe.
+      ...(gameSlotReservationId != null ? { game_slot_reservation_id: gameSlotReservationId } : {}),
+      ...(countsReservedSlot !== undefined ? { counts_reserved_slot: countsReservedSlot } : {}),
+      ...(referredByUserId != null ? { referred_by_user_id: referredByUserId } : {}),
     }, { onConflict: 'game_id,user_id,payer_id' })
     .select('id')
     .single();

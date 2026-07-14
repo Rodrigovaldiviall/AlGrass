@@ -10,6 +10,7 @@ import { supabase } from '../lib/supabase';
 import aprobarComprasYape from '../assets/Aprobar compras yape.webp';
 import codigoYape from '../assets/Código yape.webp';
 import { createReservation, createGamePlayer, createInvitedReservation, validatePromoCode, searchUsers, getWalletBalance } from '../services/reservationService';
+import { resolveCaptainGroupAssignment } from '../services/captainGroupService';
 import { markWaitlistReserved } from '../services/waitlistService';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import { getAvatarUrl } from '../utils/avatar';
@@ -814,9 +815,15 @@ export default function ConfirmReservation() {
         const { data: resData, error } = await createInvitedReservation({ gameId, playersCount: guests.length, unitPrice });
         if (!error && resData) {
           const reservationId = resData.id;
-          if (game?.type === 'match' || !game?.type) await Promise.all(
-            guests.map(guest => createGamePlayer({ gameId, userId: guest.id, payerId: authUser?.id, reservationId, amount: 0, reservationType: 'invited', invitedByUserId: authUser?.id, hostUserId: game?.hostUserId ?? null }))
-          );
+          if (game?.type === 'match' || !game?.type) {
+            const { data: _slotRes } = await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
+            await Promise.all(
+              guests.map(guest => {
+                const _assign = resolveCaptainGroupAssignment(_slotRes, { actorUserId: authUser?.id, enrolleeUserId: guest.id, linkOwnerUserId: null });
+                return createGamePlayer({ gameId, userId: guest.id, payerId: authUser?.id, reservationId, amount: 0, reservationType: 'invited', invitedByUserId: authUser?.id, hostUserId: game?.hostUserId ?? null, gameSlotReservationId: _assign.gameSlotReservationId, countsReservedSlot: _assign.countsReservedSlot, referredByUserId: _assign.referredByUserId });
+              })
+            );
+          }
           supabase?.from('notifications').insert({
             recipient_user_id: authUser?.id,
             source_type: 'venue', delivery_type: 'automatic', category: 'reservation',
@@ -887,7 +894,11 @@ export default function ConfirmReservation() {
           if (skipped || error) { setFreeConfirming(false); return; }
           const reservationId = resData?.id ?? null;
           if (game?.type === 'match' || !game?.type) {
-            const gpResults = await Promise.all(guests.map(guest => createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice, hostUserId: game?.hostUserId ?? null })));
+            const { data: _slotRes } = await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
+            const gpResults = await Promise.all(guests.map(guest => {
+              const _assign = resolveCaptainGroupAssignment(_slotRes, { actorUserId: authUser?.id, enrolleeUserId: guest.id, linkOwnerUserId: null });
+              return createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice, hostUserId: game?.hostUserId ?? null, gameSlotReservationId: _assign.gameSlotReservationId, countsReservedSlot: _assign.countsReservedSlot, referredByUserId: _assign.referredByUserId });
+            }));
             if (gpResults.some(r => r?.error?.message?.startsWith('GAME_FULL'))) { setFreeConfirming(false); setCapacityError('GAME_FULL'); return; }
           }
           supabase?.from('notifications').insert({
@@ -969,9 +980,16 @@ export default function ConfirmReservation() {
       const reservationId = resData?.id ?? null;
       const _hostId = game?.hostUserId ?? null;
       if (game?.type === 'match' || !game?.type) {
-        const { error: gpErr } = await createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet, hostUserId: _hostId });
+        // V6 · titular: RPC → captainGroupService → createGamePlayer. Toda la
+        // decisión vive en el servicio; el checkout solo transporta la metadata.
+        const { data: _slotRes } = await supabase.rpc('get_slot_reservation', { p_game_id: game?.id });
+        const _assign = resolveCaptainGroupAssignment(_slotRes, { actorUserId: authUser?.id, enrolleeUserId: authUser?.id, linkOwnerUserId: null });
+        const { error: gpErr } = await createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet, hostUserId: _hostId, gameSlotReservationId: _assign.gameSlotReservationId, countsReservedSlot: _assign.countsReservedSlot, referredByUserId: _assign.referredByUserId });
         if (gpErr?.message?.startsWith('GAME_FULL')) { setFreeConfirming(false); setCapacityError('GAME_FULL'); return; }
-        await Promise.all(guests.map(guest => createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice, hostUserId: _hostId })));
+        await Promise.all(guests.map(guest => {
+          const _assignGuest = resolveCaptainGroupAssignment(_slotRes, { actorUserId: authUser?.id, enrolleeUserId: guest.id, linkOwnerUserId: null });
+          return createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice, hostUserId: _hostId, gameSlotReservationId: _assignGuest.gameSlotReservationId, countsReservedSlot: _assignGuest.countsReservedSlot, referredByUserId: _assignGuest.referredByUserId });
+        }));
       }
       const _tpl = guests.length > 0 ? 'reservation_confirmed_with_guests' : 'reservation_confirmed';
       const _tplText = guests.length > 0
