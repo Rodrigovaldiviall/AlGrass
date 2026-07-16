@@ -27,6 +27,7 @@ const GAME_SELECT = `
   price_total,
   current_players,
   total_spots,
+  public_availability,
   format,
   duration_min,
   host_user_id,
@@ -60,7 +61,9 @@ function mapGame(g) {
   const venue     = field?.venues;
   // Priority: games.total_spots → fields.total_spots
   const totalSpots = g.total_spots ?? field?.total_spots ?? 0;
-  const openSpots  = Math.max(0, totalSpots - (g.current_players ?? 0));
+  // Disponibilidad pública: valor entregado por el backend (fuente única
+  // public.public_availability). React NO recalcula; solo lee.
+  const openSpots  = g.public_availability ?? 0;
   return {
     id:          g.id,
     type:        g.type                             ?? '',

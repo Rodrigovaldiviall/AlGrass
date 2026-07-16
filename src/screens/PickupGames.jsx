@@ -496,7 +496,7 @@ function DateStrip({ dates, selectedKey, onSelect, scrollerRef, cellRefs, eventD
 
 // ── List rows ──────────────────────────────────────────────────────────────
 
-function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount = 0, isHost = false, totalSpots = 0, countsReady = false, live = false }) {
+function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount = 0, isHost = false, totalSpots = 0, countsReady = false, live = false, confirmedCount = 0 }) {
   const PILL_MIN = 64;
   // Indicador de partido en curso (mismo lugar que la campana de waitlist): icono de transmisión a la izquierda.
   const liveWrap = (node) => live ? (
@@ -508,7 +508,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
     </div>
   ) : node;
   if (isHost) {
-    const confirmed = totalSpots - openSpots;
+    const confirmed = confirmedCount;
     return liveWrap(
       <div className="game-status-pill" style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', width: PILL_MIN, padding: '4px 8px', borderRadius: 999, background: ORANGE, flexShrink: 0 }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: '#1B1B1F', lineHeight: 1.2 }}>Organiza</span>
@@ -636,7 +636,7 @@ function SkeletonPill() {
   );
 }
 
-function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount, liveOpenSpots, isHost = false, pillReady = true, confirmedCountReady = true }) {
+function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount, liveOpenSpots, isHost = false, pillReady = true, confirmedCountReady = true, confirmedCount = 0 }) {
   const [pressed, setPressed] = useState(false);
   return (
     <div role="button" tabIndex={0}
@@ -679,7 +679,7 @@ function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount
       {(!pillReady && !isHost) ? (
         <SkeletonPill />
       ) : (
-        <StatusPill openSpots={liveOpenSpots ?? g.openSpots} booked={booked} inWaitlist={inWaitlist} guestInfo={guestInfo} canceledCount={canceledCount} activeGuestCount={activeGuestCount} isHost={isHost} totalSpots={g.totalSpots ?? 0} countsReady={confirmedCountReady} live={isGameStarted(g.dateKey, g.time24) && !isGamePast(g.dateKey, g.time24, g.durationMin)} />
+        <StatusPill openSpots={liveOpenSpots ?? g.openSpots} booked={booked} inWaitlist={inWaitlist} guestInfo={guestInfo} canceledCount={canceledCount} activeGuestCount={activeGuestCount} isHost={isHost} totalSpots={g.totalSpots ?? 0} confirmedCount={confirmedCount} countsReady={confirmedCountReady} live={isGameStarted(g.dateKey, g.time24) && !isGamePast(g.dateKey, g.time24, g.durationMin)} />
       )}
       <div style={{ pointerEvents: 'none', marginLeft: 6 }}>{I.chev()}</div>
     </div>
@@ -1166,14 +1166,6 @@ export default function PickupGames() {
     return map;
   }, [myPlayerRows, user?.id, payerNames]);
 
-  const liveOpenSpotsMap = useMemo(() => {
-    const map = new Map();
-    games.forEach(g => {
-      const confirmed = confirmedCountMap.get(g.id) ?? 0;
-      map.set(g.id, Math.max(0, (g.totalSpots ?? 0) - confirmed));
-    });
-    return map;
-  }, [games, confirmedCountMap]);
 
   const hasHostedInFeed = useMemo(
     () => !!user?.id && games.some(g => g.hostUserId === user.id),
@@ -1214,7 +1206,7 @@ export default function PickupGames() {
       if (flt.filmed          && !g.filmed)    return false;
       if (flt.master45        && !g.master45)  return false;
       if (flt.suplentes       && g.totalSpots <= requiredPlayers(g.format)) return false;
-      if (flt.minSpots !== null && (liveOpenSpotsMap.get(g.id) ?? g.openSpots) < flt.minSpots) return false;
+      if (flt.minSpots !== null && (g.openSpots ?? 0) < flt.minSpots) return false;
       if (flt.formatos.length && !flt.formatos.includes(g.format)) return false;
       if (flt.dias.length) {
         const [_y, _mo, _d] = g.dateKey.split('-').map(Number);
@@ -1232,7 +1224,7 @@ export default function PickupGames() {
       return true;
     });
     return result;
-  }, [flt, userCity, games, liveOpenSpotsMap]);
+  }, [flt, userCity, games]);
 
   // Lista: filtro DURO de distrito sobre la base. El distrito es el único filtro especial.
   const filteredGames = useMemo(
@@ -1392,10 +1384,11 @@ export default function PickupGames() {
         guestInfo={myPlayerRowsReady && !isHost && st?.isGuestConfirmed ? { paidBy: st.paidBy, payerCode: st.payerCode, guestId: st.guestId, activeGuestCount: st.activeGuestCount } : undefined}
         canceledCount={myPlayerRowsReady && !isHost && st?.relationship === 'canceled-with-guests' ? st.activeGuestCount : undefined}
         activeGuestCount={myPlayerRowsReady ? (st?.activeGuestCount ?? 0) : 0}
-        liveOpenSpots={confirmedCountReady ? liveOpenSpotsMap.get(g.id) : g.openSpots}
+        liveOpenSpots={g.openSpots}
         isHost={isHost}
         pillReady={pillReady}
         confirmedCountReady={confirmedCountReady}
+        confirmedCount={confirmedCountMap.get(g.id) ?? 0}
         onOpen={() => {
           if (st?.isGuestConfirmed) {
             navigate(`/game/${g.id}`, { state: { game: { ...g, paidBy: st.paidBy, paidByCode: st.payerCode, guestId: st.guestId }, infoMode: true, backPath: '/games', mapReturn: { view, selectedVenue, sheetExpanded: snapIndex === 0 } } });

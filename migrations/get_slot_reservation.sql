@@ -34,9 +34,6 @@ set search_path = public
 as $$
 declare
   v_actor         uuid := auth.uid();
-  v_total         integer;
-  v_confirmed     integer;
-  v_held          integer;
   v_res           public.game_slot_reservations%rowtype;
   v_has           boolean := false;
   v_member_id     uuid;
@@ -46,12 +43,8 @@ begin
     raise exception 'AUTH_REQUIRED';
   end if;
 
-  -- Capacidad del partido (misma fuente que reserve_slots).
-  select coalesce(g.total_spots, f.total_spots)
-    into v_total
-    from public.games g
-    left join public.fields f on f.id = g.field_id
-   where g.id = p_game_id;
+  -- Existencia del partido (GAME_NOT_FOUND).
+  perform 1 from public.games g where g.id = p_game_id;
   if not found then
     raise exception 'GAME_NOT_FOUND';
   end if;
@@ -63,17 +56,6 @@ begin
      and gsr.reserved_by_user_id = v_actor
    limit 1;
   v_has := found;
-
-  -- Confirmados del partido y held de grupos ACTIVOS (idéntico a enforce_capacity).
-  select count(*)::integer
-    into v_confirmed
-    from public.game_players gp
-   where gp.game_id = p_game_id and gp.status = 'confirmed';
-
-  select coalesce(sum(gsr.reserved_slots_remaining), 0)::integer
-    into v_held
-    from public.game_slot_reservations gsr
-   where gsr.game_id = p_game_id and gsr.status = 'active';
 
   -- V6 · PERTENENCIA del actor: la SlotReservation vinculada en su fila.
   -- DEFINER: el status se lee aunque la reserva sea de otro capitán (RLS bypass).
@@ -101,7 +83,7 @@ begin
     case when v_has then v_res.reserved_slots_total      else 0 end,
     case when v_has then v_res.reserved_slots_used        else 0 end,
     case when v_has then v_res.reserved_slots_remaining   else 0 end,
-    greatest(coalesce(v_total, 0) - v_confirmed - v_held, 0),
+    public.public_availability(p_game_id),
     v_member_id,
     v_member_status;
 end;

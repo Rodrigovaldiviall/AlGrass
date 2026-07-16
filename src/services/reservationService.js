@@ -295,7 +295,7 @@ export async function cancelGamePlayer(gameId, { skipNotification = false } = {}
   // Atomic claim: only the call that flips confirmed→canceled proceeds to refund.
   const { data: claimed, error: cancelErr } = await supabase
     .from('game_players')
-    .update({ status: 'canceled', canceled_at: new Date().toISOString() })
+    .update({ status: 'canceled', canceled_at: new Date().toISOString(), counts_reserved_slot: false })
     .eq('id', row.id)
     .eq('status', 'confirmed')
     .select('id, amount, payer_id');
@@ -410,7 +410,7 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
   // Atomic per-slot claim: refund only the slots this call actually transitioned.
   const { data: claimed, error: cancelErr } = await supabase
     .from('game_players')
-    .update({ status: 'canceled', canceled_at: new Date().toISOString() })
+    .update({ status: 'canceled', canceled_at: new Date().toISOString(), counts_reserved_slot: false })
     .in('id', ids)
     .eq('status', 'confirmed')
     .select('id, user_id, amount');
@@ -618,7 +618,7 @@ export async function cancelInvitedPlayers(gameId, invitedUserIds, unitPrice = 0
   const ids = rows.map(r => r.id);
   const { error } = await supabase
     .from('game_players')
-    .update({ status: 'canceled', canceled_at: new Date().toISOString() })
+    .update({ status: 'canceled', canceled_at: new Date().toISOString(), counts_reserved_slot: false })
     .in('id', ids);
 
   if (error) { console.error('[cancelInvitedPlayers]', error); return { error }; }
