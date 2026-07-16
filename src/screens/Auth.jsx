@@ -276,7 +276,10 @@ export function AuthGate() {
       .or(`user_id.eq.${user.id},payer_id.eq.${user.id}`)
       .then(({ data }) => {
         if (cancelled) return;
-        setRelStatus(deriveGameState(data ?? [], user.id).isVisible ? 'blocked' : 'allowed');
+        // Un titular cancelado que conserva invitados (canceled-with-guests) SÍ puede
+        // reingresar: se excluye del bloqueo.
+        const rel = deriveGameState(data ?? [], user.id);
+        setRelStatus(rel.isVisible && rel.relationship !== 'canceled-with-guests' ? 'blocked' : 'allowed');
       });
     return () => { cancelled = true; };
   }, [user?.id, game?.id, game?.hostUserId, game?.type, game?.invitedMode, game?.addGuestsMode, waitlistMode]);

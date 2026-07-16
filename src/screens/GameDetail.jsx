@@ -8,7 +8,7 @@ import { faCommentSms, faTowerBroadcast } from '@fortawesome/free-solid-svg-icon
 import MapsLinkButton from '../components/MapsLinkButton';
 import Pressable from '../components/Pressable';
 import I from '../icons';
-import { shareOrCopy } from '../utils/share';
+import { shareOrCopy, buildGameShareUrl } from '../utils/share';
 import { GAMES, FIELD_INFO, GAME_DEFAULTS } from '../data/games';
 import { getActivePlayers, getRoster, removePlayers, setTitularCanceled as markTitularCanceled, deleteRoster, getGameById } from '../services/gameService';
 import TabBar from '../components/TabBar';
@@ -981,6 +981,14 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
             const shown = JSON.parse(localStorage.getItem('pichanga_shown_confirmations') || '{}');
             if (shown[gameId]) { delete shown[gameId]; localStorage.setItem('pichanga_shown_confirmations', JSON.stringify(shown)); }
           } catch {}
+          // V6: si el capitán YA tiene una R1 propia (has_reservation), desactivarla
+          // reutilizando la lógica existente de reserve_slots (total = 0) ANTES de la
+          // cancelación normal. Solo se comprueba has_reservation; la transición
+          // ACTIVE→INACTIVE y counts_reserved_slot TRUE→FALSE viven dentro de reserve_slots.
+          const { data: _sr } = await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
+          if (_sr?.[0]?.has_reservation) {
+            await supabase.rpc('reserve_slots', { p_game_id: gameId, p_reserved_slots_total: 0 });
+          }
           // titular first so cascade detection in cancelGuestPlayers sees titular as canceled
           try {
             const { skipped, error } = await cancelGamePlayer(gameId, { skipNotification: checkedGuests.size > 0 });
@@ -1193,6 +1201,14 @@ export default function GameDetail() {
   const mapReturn  = location.state?.mapReturn ?? null; // contexto de PickupGames (mapa/venue/sheet) a restaurar al volver
 
   const { user } = useAuth();
+
+  // Referral: si el link trae ?ref=<sharedByUserId>, lo persistimos en localStorage
+  // con clave AISLADA por partido (pending_game_referral:<gameId>) para que sobreviva
+  // cierre de app / reinicio / login OAuth. AÚN no se consume ni se borra.
+  useEffect(() => {
+    const ref = new URLSearchParams(location.search).get('ref');
+    if (ref) { try { localStorage.setItem(`pending_game_referral:${id}`, ref); } catch {} }
+  }, [location.search, id]);
 
   const [sbGame, setSbGame] = useState(null);
   const _cachedRoster = readRosterCache(id, user?.id);
@@ -1480,6 +1496,7 @@ export default function GameDetail() {
     const addGuestPrice = sbGame?.price ?? g.paymentBreakdown?.unitPrice ?? g.priceNumber;
     if (isHost) {
       navigate('/checkout', { state: {
+        referral: localStorage.getItem(`pending_game_referral:${id}`) ?? null,
         game: {
           id:           gameId,
           field:        g.field,
@@ -1503,6 +1520,7 @@ export default function GameDetail() {
       }});
     } else {
       navigate('/checkout', { state: {
+        referral: localStorage.getItem(`pending_game_referral:${id}`) ?? null,
         game: {
           id:            gameId,
           field:         g.field,
@@ -1564,7 +1582,7 @@ export default function GameDetail() {
           showShare={(!isFull || isBooked) && !isPastGame}
           onShare={() => {
             if (!gameId) return;
-            shareOrCopy({ url: `${window.location.origin}/game/${gameId}`, title: g.field, text: `${g.date} · ${g.time} ${g.ampm}`, onCopied: () => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); } });
+            shareOrCopy({ url: buildGameShareUrl(gameId, { sharedByUserId: user?.id }), title: g.field, text: `${g.date} · ${g.time} ${g.ampm}`, onCopied: () => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); } });
           }} />
         <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', background: '#fff' }}>
           <HeroImage coverPath={g?.venueCoverPath} coverVersion={g?.venueCoverVersion} />
@@ -1803,7 +1821,7 @@ export default function GameDetail() {
                   gameDetailBackPath: backPath,
                   hostUserId:  g.hostUserId,
                 };
-                navigate('/checkout', { state: { game: checkoutGame } });
+                navigate('/checkout', { state: { game: checkoutGame, referral: localStorage.getItem(`pending_game_referral:${id}`) ?? null } });
               }}
             />}
           </>
@@ -1829,7 +1847,7 @@ export default function GameDetail() {
                 onClick={() => {
                   setShowWaitlistAuth(false);
                   try { sessionStorage.setItem('pending_waitlist_game', gameId); } catch {}
-                  navigate('/checkout', { state: { waitlistMode: true, backPath: id ? `/game/${id}` : '/games' } });
+                  navigate('/checkout', { state: { waitlistMode: true, backPath: id ? `/game/${id}` : '/games', referral: localStorage.getItem(`pending_game_referral:${id}`) ?? null } });
                 }}
                 style={{ flex: 1, height: 46, borderRadius: 14, border: 'none', background: BLUE, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                 Ingresar
@@ -1858,7 +1876,7 @@ export default function GameDetail() {
           inscritos={slotRes.reserved_slots_used ?? 0}
           reservedInitial={slotRes.reserved_slots_total ?? 0}
           publicAvailable={slotRes.pool ?? 0}
-          shareLink="https://algrass.com/join/AB12-CD34-EF56"
+          shareLink={buildGameShareUrl(gameId, { sharedByUserId: user?.id })}
           onAccept={saveReserveSlots}
           onClose={() => setReserveSlotsOpen(false)}
         />
