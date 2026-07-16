@@ -24,7 +24,7 @@ import { TEXT, SUB, HAIR, SOFT, DANGER, ORANGE, BLUE } from '../constants';
 //   +  sube de uno en uno; se deshabilita cuando (reservados − inscritos) >= publicAvailable
 //      (evita seleccionar valores que reserve_slots rechazaría). La validación final es del backend.
 // ============================================================================
-export default function ReserveSlotsSheet({ inscritos = 0, reservedInitial = 0, publicAvailable = 0, shareLink = '', onAccept, onClose }) {
+export default function ReserveSlotsSheet({ inscritos = 0, reservedInitial = 0, publicAvailable = 0, poolPublico = 0, shareLink = '', onAccept, onClose }) {
   const [open, setOpen] = useState(false);
   const [reservados, setReservados] = useState(reservedInitial);
   const [copied, setCopied] = useState(false);
@@ -54,6 +54,12 @@ export default function ReserveSlotsSheet({ inscritos = 0, reservedInitial = 0, 
   const incDisabled = (reservados - inscritos) >= publicAvailable;
   function dec() { if (decDisabled) return; setError(false); setReservados(r => (r > 0 ? r - 1 : r)); }
   function inc() { if (incDisabled) return; setError(false); setReservados(r => r + 1); }
+
+  // Previsualización visual de la disponibilidad pública si se guardara el total actual.
+  // NO consulta ni escribe: es puro cálculo local. Al cerrar sin guardar el componente
+  // se desmonta y reabre con poolPublico real; al fallar reserve_slots (GAME_FULL) se
+  // restaura reservados=reservedInitial → el texto vuelve al valor real.
+  const poolPreview = Math.max(poolPublico - (reservados - reservedInitial), 0);
 
   // Derivados de la barra (previsualización del total elegido).
   const disponibles = Math.max(reservados - inscritos, 0);
@@ -119,7 +125,7 @@ export default function ReserveSlotsSheet({ inscritos = 0, reservedInitial = 0, 
 
         {/* Cupos públicos disponibles (valor del backend; la UI no lo recalcula) */}
         <div style={{ fontSize: 13, color: SUB, textAlign: 'center' }}>
-          Solo quedan {publicAvailable} cupos públicos disponibles
+          Solo quedan {poolPreview} cupos públicos disponibles
         </div>
 
         {/* Link para compartir — fila completa táctil; toca cualquier parte para copiar */}

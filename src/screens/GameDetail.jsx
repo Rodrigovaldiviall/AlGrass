@@ -744,7 +744,7 @@ function PlayerModal({ player, onClose, isHost = false }) {
 }
 
 // ── ModifySheet
-function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, onReserveSlots }) {
+function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, onReserveSlots, reservedUsed = 0, reservedTotal = 0 }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
@@ -788,8 +788,11 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
         </button>
         {showReserveSlots && (
           <button onClick={onReserveSlots} style={rowStyle}>
-            <div style={{ flex: 1 }}>
-              <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Reservar cupos</span>
+            <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Reservar cupos</span>
+            <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
+              {reservedTotal > 0 && (
+                <span style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{reservedUsed}/{reservedTotal}</span>
+              )}
             </div>
             {chevron()}
           </button>
@@ -1285,10 +1288,11 @@ export default function GameDetail() {
   const hasConfirmedTitular = useMemo(() => sbRoster.some(p => p.user_id === p.payer_id && p.status === 'confirmed'), [sbRoster]);
   const hasCanceledTitular  = useMemo(() => sbRoster.some(p => p.user_id === p.payer_id && p.status === 'canceled'),  [sbRoster]);
   const titularCanceled     = !hasConfirmedTitular && hasCanceledTitular;
-  const liveOpenSpots    = Math.max(0, g.totalSpots - confirmedRoster.length);
+  const liveOpenSpots    = g.openSpots ?? 0;   // V6: disponibilidad pública (public_availability), no recomputada
   const isFull = !infoMode && liveOpenSpots === 0;
-  const openSpots = liveOpenSpots;
-  const confirmed = g.totalSpots - openSpots;
+  const openSpots  = liveOpenSpots;                                       // Libres = public_availability
+  const confirmed  = confirmedRoster.length;                             // Jugadores = confirmados (roster game_players)
+  const reservados = Math.max(0, g.totalSpots - confirmed - openSpots);  // Reservados = Total − Jugadores − Libres (= held)
   const [inWaitlist,    setInWaitlist]    = useState(false);
   const [waitlistReady, setWaitlistReady] = useState(false);
   const [showWaitlistAuth, setShowWaitlistAuth] = useState(false);
@@ -1297,12 +1301,23 @@ export default function GameDetail() {
   const [reserveSlotsOpen, setReserveSlotsOpen] = useState(false);
   const [slotRes, setSlotRes] = useState(null);
   const { isCaptain, isCaptainGold } = useGlobalRoles();
-  // Punto de entrada "Reservar cupos": carga datos (get_slot_reservation), abre el
-  // sheet y guarda vía reserve_slots. GameDetail no contiene lógica de negocio.
+  // Al abrir "Gestionar mi reserva" precargamos slotRes con la MISMA RPC
+  // (get_slot_reservation), una sola vez, para mostrar el contador used/total.
+  function openModify() {
+    setModifyOpen(true);
+    if (isCaptain || isCaptainGold) {
+      supabase.rpc('get_slot_reservation', { p_game_id: gameId }).then(({ data }) => {
+        setSlotRes(Array.isArray(data) ? data[0] : data);
+      });
+    }
+  }
+  // "Reservar cupos": reutiliza el slotRes ya cargado (no re-llama la RPC si existe).
   async function openReserveSlots() {
     setModifyOpen(false);
-    const { data } = await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
-    setSlotRes(Array.isArray(data) ? data[0] : data);
+    if (!slotRes) {
+      const { data } = await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
+      setSlotRes(Array.isArray(data) ? data[0] : data);
+    }
     setReserveSlotsOpen(true);
   }
   async function saveReserveSlots(total) {
@@ -1696,11 +1711,12 @@ export default function GameDetail() {
           </Section>
 
           <Section title="Jugadores">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-              <span style={{ color: TEXT, fontSize: 'var(--gd-is, 13.5px)', fontWeight: 600 }}>{confirmed} confirmados</span>
-              <span style={{ color: SUB, fontSize: 'var(--gd-is, 13.5px)' }}>
-                {openSpots === 0 ? '0 cupos libres' : `${openSpots} ${openSpots === 1 ? 'cupo libre' : 'cupos libres'}`}
-              </span>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12 }}>
+              <span style={{ color: TEXT, fontSize: 'var(--gd-is, 13.5px)', fontWeight: 600 }}>Jugadores: {confirmed}</span>
+              {reservados > 0 && (
+                <span style={{ color: SUB, fontSize: 'var(--gd-is, 13.5px)' }}>Reservados: {reservados}</span>
+              )}
+              <span style={{ color: TEXT, fontSize: 'var(--gd-is, 13.5px)', fontWeight: 600 }}>Cupos libres: {openSpots}</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {liveRoster.map((p) => {
@@ -1756,7 +1772,7 @@ export default function GameDetail() {
           (!isPastGame && !isStarted) && (
             <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '12px 16px' }}>
               <button
-                onClick={() => setModifyOpen(true)}
+                onClick={openModify}
                 style={{ width: '100%', height: 46, borderRadius: 14, background: ORANGE, color: '#1B1B1F', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 700, fontFamily: 'inherit', letterSpacing: -0.1, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                 Gestionar el partido
               </button>
@@ -1772,7 +1788,7 @@ export default function GameDetail() {
             {(isBooked || guestsInRoster.length > 0) && !isStarted && (
               <div style={{ padding: '12px 16px' }}>
                 <button
-                  onClick={() => setModifyOpen(true)}
+                  onClick={openModify}
                   style={{ width: '100%', padding: '8px 16px', background: 'transparent', border: `1.5px solid ${BLUE}`, borderRadius: 12, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 600, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                   Gestionar mi reserva
                 </button>
@@ -1787,7 +1803,7 @@ export default function GameDetail() {
                 {!isStarted && (
                   <div style={{ padding: '12px 16px 0' }}>
                     <button
-                      onClick={() => setModifyOpen(true)}
+                      onClick={openModify}
                       style={{ width: '100%', padding: '8px 16px', background: 'transparent', border: `1.5px solid ${BLUE}`, borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                       Gestionar mi reserva
                     </button>
@@ -1869,13 +1885,16 @@ export default function GameDetail() {
           invitedCount={invitedByHost.length}
           showReserveSlots={!isHost && (isCaptain || isCaptainGold)}
           onReserveSlots={openReserveSlots}
+          reservedUsed={slotRes?.reserved_slots_used ?? 0}
+          reservedTotal={slotRes?.reserved_slots_total ?? 0}
         />
       )}
       {reserveSlotsOpen && slotRes && (
         <ReserveSlotsSheet
           inscritos={slotRes.reserved_slots_used ?? 0}
           reservedInitial={slotRes.reserved_slots_total ?? 0}
-          publicAvailable={slotRes.pool ?? 0}
+          publicAvailable={(slotRes.pool ?? 0) + (slotRes.reserved_slots_remaining ?? 0)}
+          poolPublico={slotRes.pool ?? 0}
           shareLink={buildGameShareUrl(gameId, { sharedByUserId: user?.id })}
           onAccept={saveReserveSlots}
           onClose={() => setReserveSlotsOpen(false)}

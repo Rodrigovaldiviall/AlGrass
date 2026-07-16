@@ -759,7 +759,14 @@ export default function ConfirmReservation() {
   const invitedMode   = game?.invitedMode   ?? false;
   const maxNewGuests  = game?.maxNewGuests  ?? 99;
   const rawSpots      = game?.openSpots;
-  const guestSlots    = (addGuestsMode || invitedMode) ? maxNewGuests : (rawSpots != null ? Math.max(0, rawSpots - 1) : undefined);
+  // Presupuesto de disponibilidad pública compartido entre invitados y reserva de cupos.
+  // Titular checkout: el titular ocupa 1 → presupuesto = public_available (rawSpots) − 1.
+  // addGuests/invited: titular ya inscrito → presupuesto = public_available (maxNewGuests).
+  const spotBudget    = (addGuestsMode || invitedMode) ? maxNewGuests : (rawSpots != null ? Math.max(0, rawSpots - 1) : undefined);
+  // FUENTE ÚNICA del máximo: presupuesto − lo que consume el OTRO selector.
+  const maxSelectable = (otherCount) => spotBudget == null ? undefined : Math.max(0, spotBudget - otherCount);
+  const guestSlots    = maxSelectable(reservedSlots);   // máx invitados (descuenta cupos)
+  const reservedMax   = maxSelectable(guests.length);   // máx reserva de cupos (descuenta invitados)
   const displaySpots  = guestSlots;
   const spotsLabel    = (() => {
     if (addGuestsMode || invitedMode) {
@@ -1190,7 +1197,7 @@ export default function ConfirmReservation() {
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                 {stepBtn(() => setReservedSlots(n => (n > 0 ? n - 1 : n)), reservedSlots <= 0, false)}
                 <span style={{ minWidth: 22, textAlign: 'center', fontSize: 16, fontWeight: 700, color: TEXT }}>{reservedSlots}</span>
-                {stepBtn(() => setReservedSlots(n => n + 1), false, true)}
+                {stepBtn(() => setReservedSlots(n => n + 1), reservedMax != null && reservedSlots >= reservedMax, true)}
               </div>
             </div>
           </div>
