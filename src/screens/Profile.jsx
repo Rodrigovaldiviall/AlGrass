@@ -18,6 +18,9 @@ import { saveRating, fetchMyRatings, upsertRatingRows, markPopupShown, getLocalR
 import { getMyWaitlistGamesFull } from '../services/waitlistService';
 import { useForegroundTick } from '../hooks/useForegroundTick';
 import { uploadAvatar, getAvatarUrl } from '../utils/avatar';
+import { useGlobalRoles } from '../hooks/useGlobalRoles';
+import CaptainSlotsBadge from '../components/CaptainSlotsBadge';
+import { buildCaptainSlotsMap } from '../utils/captainSlots';
 
 const USER = {
   name: 'Rodrigo',
@@ -557,6 +560,8 @@ function StatItem({ value, label }) {
 // ── ProfileCard ────────────────────────────────────────────────────────────
 
 function ProfileCard({ user, gamesPlayedCount, onEdit, isProfileComplete = false, isHostOrStaff = false, hasActivity = false }) {
+  // Estado de capitán desde la fuente de verdad V6 (roles ya existentes), no de lógica antigua.
+  const { isCaptain, isCaptainGold } = useGlobalRoles();
   const displayName = user.name || '';
   const posDisplay  = Array.isArray(user.positions) && user.positions.length > 0
     ? user.positions.join(' · ')
@@ -587,6 +592,14 @@ function ProfileCard({ user, gamesPlayedCount, onEdit, isProfileComplete = false
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: '0 0 40%' }}>
           <div style={{ position: 'relative', marginBottom: 8, width: 84, height: 84, borderRadius: '50%', boxShadow: isHostOrStaff ? `0 0 0 2.5px #fff, 0 0 0 5px ${ORANGE}` : undefined }}>
             <Avatar name={user.name} hue={user.avatarHue} size={84} photoUrl={user.photoDataUrl} avatarPath={user.avatarPath} avatarVersion={user.avatarVersion} />
+            {(isCaptain || isCaptainGold) && (
+              <div style={{ position: 'absolute', top: 0, right: 0, filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.3))' }}>
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" style={{ display: 'block' }}>
+                  <path d="M12 3l7 3v5c0 4.2-2.9 7.6-7 8.8-4.1-1.2-7-4.6-7-8.8V6l7-3z" fill={isCaptainGold ? '#F5B301' : '#E5383B'} stroke={isCaptainGold ? '#F5B301' : '#E5383B'} strokeWidth="1.2" strokeLinejoin="round"/>
+                  <path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+            )}
             {isProfileComplete ? (
               <div style={{
                 position: 'absolute', bottom: 2, right: 2,
@@ -1638,7 +1651,7 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
 
 // ── GameRow ────────────────────────────────────────────────────────────────
 
-function GameRow({ game, onPress, muted = false, userId = null, highlighted = false }) {
+function GameRow({ game, onPress, muted = false, userId = null, highlighted = false, captainGold = false }) {
   const [pressed, setPressed] = useState(false);
   const isCampo  = game.type === 'campo';
   const isRental = game.type === 'rental';
@@ -1684,6 +1697,7 @@ function GameRow({ game, onPress, muted = false, userId = null, highlighted = fa
             : <GameMetaLine format={game.format} durationMin={game.durationMin} totalSpots={game.totalSpots} womenOnly={game.womenOnly} parking={game.parking} covered={game.covered} filmed={game.filmed} />}
         </div>
       </div>
+      <div style={{ position: 'relative', display: 'inline-flex' }}>
       {(() => {
         const PM = 76;
         const pillBase = { height: 26, minWidth: PM, padding: '0 10px', borderRadius: 999, fontSize: 13, fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' };
@@ -1776,6 +1790,12 @@ function GameRow({ game, onPress, muted = false, userId = null, highlighted = fa
         ), live && !isCampo && !isRental);
         return null;
       })()}
+        {game.captainSlots && !isCampo && !isRental && (
+          <div style={{ position: 'absolute', top: -13, right: -8, pointerEvents: 'none' }}>
+            <CaptainSlotsBadge used={game.captainSlots.used} total={game.captainSlots.total} gold={captainGold} />
+          </div>
+        )}
+      </div>
       <ChevIcon />
     </div>
   );
@@ -1982,6 +2002,7 @@ function _readPFCache(userId) {
 export default function Profile() {
   const navigate = useNavigate();
   const { user, login } = useAuth();
+  const { isCaptainGold } = useGlobalRoles();
   const { isVenueStaff, isVenueManager, isGameHost } = useStaff();
   const location = useLocation();
   const { state } = location;
@@ -2250,6 +2271,7 @@ export default function Profile() {
         .from('game_players')
         .select(`
           game_id, user_id, payer_id, status, amount,
+          game_slot_reservations!game_slot_reservation_id ( reserved_slots_used, reserved_slots_total, reserved_by_user_id, status ),
           games:game_id ( date_key, time, format, total_spots, current_players, duration_min, host_user_id, type, game_amenities:amenities, fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, cover_image_path, cover_updated_at, venue_amenities:amenities ) ) )
         `)
         .or(`user_id.eq.${uid},payer_id.eq.${uid}`)
@@ -2457,9 +2479,13 @@ export default function Profile() {
       .filter(g => g.type === 'match' && g.paymentBreakdown)
       .map(g => [g.id, { paymentBreakdown: g.paymentBreakdown, price: g.price }])
   );
+  // Reserva de cupos del capitán por partido (fuente de verdad V6, vía el embed de
+  // myPlayerRows). used/total directos del backend; sin recalcular ni lógica de V5.
+  const captainSlotsByGame = buildCaptainSlotsMap(myPlayerRows, user?.id);
   const matchCards = deriveMatchCards(myPlayerRows, payerNames, user?.id).map(g => ({
     ...g,
     ...(matchFinancialMap.get(g.gameId) ?? {}),
+    captainSlots: captainSlotsByGame.get(g.gameId) ?? null,
   }));
   const activeRentalCards = rentalCards.map(g => g.paymentBreakdown ? { ...g, price: computeLivePrice(g) } : g);
 
@@ -2923,7 +2949,7 @@ export default function Profile() {
                           key={g.id}
                           ref={isHighlighted ? highlightedRef : null}
                         >
-                          <GameRow game={g} onPress={() => openGameDetail(g)} userId={user?.id} highlighted={isHighlighted} />
+                          <GameRow game={g} onPress={() => openGameDetail(g)} userId={user?.id} highlighted={isHighlighted} captainGold={isCaptainGold} />
                         </div>
                         );
                       })}
@@ -2964,7 +2990,7 @@ export default function Profile() {
                         const isHighlighted = g.id === highlightedId || g.gameId === highlightedId;
                         return (
                         <div key={g.id} ref={isHighlighted ? highlightedRef : null}>
-                          <GameRow game={g} onPress={() => openGameDetail(g)} muted userId={user?.id} highlighted={isHighlighted} />
+                          <GameRow game={g} onPress={() => openGameDetail(g)} muted userId={user?.id} highlighted={isHighlighted} captainGold={isCaptainGold} />
                         </div>
                         );
                       })}

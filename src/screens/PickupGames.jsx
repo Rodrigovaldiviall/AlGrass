@@ -20,6 +20,9 @@ import { abbreviateName, formatDateLabel } from '../utils/format';
 import { getMyWaitlistGameIds } from '../services/waitlistService';
 import { useForegroundTick } from '../hooks/useForegroundTick';
 import { useSheetPull } from '../hooks/useSheetPull';
+import { useGlobalRoles } from '../hooks/useGlobalRoles';
+import CaptainSlotsBadge from '../components/CaptainSlotsBadge';
+import { buildCaptainSlotsMap } from '../utils/captainSlots';
 
 // Mapa lazy: vive en su propio chunk; solo se descarga al pulsar "Mapa".
 const MapView = lazy(() => import('./MapView'));
@@ -636,7 +639,7 @@ function SkeletonPill() {
   );
 }
 
-function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount, liveOpenSpots, isHost = false, pillReady = true, confirmedCountReady = true, confirmedCount = 0 }) {
+function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount, liveOpenSpots, isHost = false, pillReady = true, confirmedCountReady = true, confirmedCount = 0, captainSlots = null, captainGold = false }) {
   const [pressed, setPressed] = useState(false);
   return (
     <div role="button" tabIndex={0}
@@ -676,11 +679,18 @@ function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount
           )}
         </div>
       </div>
-      {(!pillReady && !isHost) ? (
-        <SkeletonPill />
-      ) : (
-        <StatusPill openSpots={liveOpenSpots ?? g.openSpots} booked={booked} inWaitlist={inWaitlist} guestInfo={guestInfo} canceledCount={canceledCount} activeGuestCount={activeGuestCount} isHost={isHost} totalSpots={g.totalSpots ?? 0} confirmedCount={confirmedCount} countsReady={confirmedCountReady} live={isGameStarted(g.dateKey, g.time24) && !isGamePast(g.dateKey, g.time24, g.durationMin)} />
-      )}
+      <div style={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}>
+        {(!pillReady && !isHost) ? (
+          <SkeletonPill />
+        ) : (
+          <StatusPill openSpots={liveOpenSpots ?? g.openSpots} booked={booked} inWaitlist={inWaitlist} guestInfo={guestInfo} canceledCount={canceledCount} activeGuestCount={activeGuestCount} isHost={isHost} totalSpots={g.totalSpots ?? 0} confirmedCount={confirmedCount} countsReady={confirmedCountReady} live={isGameStarted(g.dateKey, g.time24) && !isGamePast(g.dateKey, g.time24, g.durationMin)} />
+        )}
+        {captainSlots && (
+          <div style={{ position: 'absolute', top: -13, right: -8, pointerEvents: 'none' }}>
+            <CaptainSlotsBadge used={captainSlots.used} total={captainSlots.total} gold={captainGold} />
+          </div>
+        )}
+      </div>
       <div style={{ pointerEvents: 'none', marginLeft: 6 }}>{I.chev()}</div>
     </div>
   );
@@ -962,6 +972,7 @@ export default function PickupGames() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user }  = useAuth();
+  const { isCaptainGold } = useGlobalRoles();
 
   const _mapReturn = location.state?.mapReturn ?? null;       // contexto restaurado al volver de GameDetail
   // Estado persistido entre tabs (sessionStorage). Prioridad: mapReturn (detalle) → persistido (tab) → default.
@@ -1015,7 +1026,10 @@ export default function PickupGames() {
     if (!supabase || !user?.id) return;
     supabase
       .from('game_players')
-      .select('game_id, user_id, payer_id, status')
+      // Embedding V6 (mismo round-trip, sin 2ª consulta): la R1 del capitán a la que
+      // pertenece la fila. RLS select-own hace que solo aparezca si reserved_by_user_id
+      // = auth.uid() (la propia). used/total salen tal cual del backend, sin recalcular.
+      .select('game_id, user_id, payer_id, status, game_slot_reservations!game_slot_reservation_id(reserved_slots_used, reserved_slots_total, reserved_by_user_id, status)')
       .or(`user_id.eq.${user.id},payer_id.eq.${user.id}`)
       .then(async ({ data, error }) => {
         if (error) return;
@@ -1166,6 +1180,14 @@ export default function PickupGames() {
     return map;
   }, [myPlayerRows, user?.id, payerNames]);
 
+
+  // Reserva de cupos del capitán por partido (fuente de verdad V6, vía el embed de
+  // myPlayerRows). used/total salen directos del backend; no se recalculan ni se usa
+  // lógica de V5. Solo se incluye la R1 propia ACTIVA (total>0) del usuario.
+  const captainSlotsMap = useMemo(
+    () => buildCaptainSlotsMap(myPlayerRows, user?.id),
+    [myPlayerRows, user?.id]
+  );
 
   const hasHostedInFeed = useMemo(
     () => !!user?.id && games.some(g => g.hostUserId === user.id),
@@ -1389,6 +1411,8 @@ export default function PickupGames() {
         pillReady={pillReady}
         confirmedCountReady={confirmedCountReady}
         confirmedCount={confirmedCountMap.get(g.id) ?? 0}
+        captainSlots={!isHost ? captainSlotsMap.get(g.id) ?? null : null}
+        captainGold={isCaptainGold}
         onOpen={() => {
           if (st?.isGuestConfirmed) {
             navigate(`/game/${g.id}`, { state: { game: { ...g, paidBy: st.paidBy, paidByCode: st.payerCode, guestId: st.guestId }, infoMode: true, backPath: '/games', mapReturn: { view, selectedVenue, sheetExpanded: snapIndex === 0 } } });
