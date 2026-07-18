@@ -8,7 +8,7 @@ const AuthContext = createContext(null);
 // Keys that belong to the device, not the user — preserved across logout.
 const _DEVICE_KEYS = new Set(['algrass_intro_seen', 'pichanga_welcome_seen', 'pichanga_coach_seen']);
 // Dynamic key prefixes (uid / gameId suffixes) scrubbed by scan.
-const _USER_PREFIXES = ['pf_player_rows_', 'pg_player_rows_', 'pg_waitlist_', 'gd_roster_'];
+const _USER_PREFIXES = ['pf_player_rows_', 'pg_player_rows_', 'pg_waitlist_', 'gd_roster_', 'pichanga_global_roles_'];
 // Static user-scoped localStorage keys.
 const _USER_STATIC = [
   'pichanga_user', 'pichanga_profile', 'pichanga_reservations', 'pichanga_rental_games',

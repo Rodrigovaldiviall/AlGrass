@@ -591,14 +591,6 @@ function ProfileCard({ user, gamesPlayedCount, onEdit, isProfileComplete = false
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: '0 0 40%' }}>
           <div style={{ position: 'relative', marginBottom: 8, width: 84, height: 84, borderRadius: '50%', boxShadow: isHostOrStaff ? `0 0 0 2.5px #fff, 0 0 0 5px ${ORANGE}` : undefined }}>
             <Avatar name={user.name} hue={user.avatarHue} size={84} photoUrl={user.photoDataUrl} avatarPath={user.avatarPath} avatarVersion={user.avatarVersion} />
-            {(isCaptain || isCaptainGold) && (
-              <div style={{ position: 'absolute', top: 0, right: 0, filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.3))' }}>
-                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" style={{ display: 'block' }}>
-                  <path d="M12 3l7 3v5c0 4.2-2.9 7.6-7 8.8-4.1-1.2-7-4.6-7-8.8V6l7-3z" fill={isCaptainGold ? '#F5B301' : '#E5383B'} stroke={isCaptainGold ? '#F5B301' : '#E5383B'} strokeWidth="1.2" strokeLinejoin="round"/>
-                  <path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-              </div>
-            )}
             {isProfileComplete ? (
               <div style={{
                 position: 'absolute', bottom: 2, right: 2,
@@ -648,6 +640,15 @@ function ProfileCard({ user, gamesPlayedCount, onEdit, isProfileComplete = false
           <StatItem value={posDisplay} label="Posición de juego" />
         </div>
       </div>
+      {(isCaptain || isCaptainGold) && (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${HAIR}`, display: 'flex', alignItems: 'center', gap: 5 }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.3))' }}>
+            <path d="M12 3l7 3v5c0 4.2-2.9 7.6-7 8.8-4.1-1.2-7-4.6-7-8.8V6l7-3z" fill={isCaptainGold ? '#F5B301' : '#E5383B'} stroke={isCaptainGold ? '#F5B301' : '#E5383B'} strokeWidth="1.2" strokeLinejoin="round"/>
+            <path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          <span style={{ fontSize: 12.5, color: RED, lineHeight: 1.4, whiteSpace: 'nowrap' }}>Capitán. Reserva cupos hasta 24h antes del partido.</span>
+        </div>
+      )}
     </div>
   );
 }

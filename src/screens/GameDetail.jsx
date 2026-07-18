@@ -23,6 +23,7 @@ import { deriveGameState, requiredPlayers, gameStartDate, gameEndDate, isGamePas
 import { joinWaitlist, leaveWaitlist, getMyWaitlistGameIds } from '../services/waitlistService';
 import ReserveSlotsSheet from '../components/ReserveSlotsSheet';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
+import SkeletonPill from '../components/SkeletonPill';
 import { useGlobalRoles } from '../hooks/useGlobalRoles';
 const ROSTER_KEY_GD = 'pichanga_game_rosters';
 
@@ -747,7 +748,7 @@ function PlayerModal({ player, onClose, isHost = false }) {
 }
 
 // ── ModifySheet
-function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, onReserveSlots, reservedUsed = 0, reservedTotal = 0 }) {
+function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, onReserveSlots, reserveSlotsDisabled = false, reservedUsed = 0, reservedTotal = 0 }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
@@ -764,7 +765,7 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
       <div className="sheet-panel" ref={rootRef} onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(20px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? `translateY(${dragY}px)` : 'translateY(100%)', transition: dragging ? 'none' : 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
         <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 20px' }} />
         <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 16, textAlign: 'center', letterSpacing: -0.2 }}>
-          {isHost ? 'Gestionar el partido' : 'Gestionar la reserva'}
+          {isHost ? 'Gestionar el partido' : 'Gestionar mi reserva'}
         </div>
         {!isHost && (
           <button onClick={onPaymentDetail} style={rowStyle}>
@@ -790,8 +791,14 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
           {canAdd && chevron()}
         </button>
         {showReserveSlots && (
-          <button onClick={onReserveSlots} style={rowStyle}>
-            <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Reservar cupos</span>
+          <button onClick={onReserveSlots} disabled={reserveSlotsDisabled}
+            style={{ ...rowStyle, cursor: reserveSlotsDisabled ? 'default' : 'pointer', opacity: reserveSlotsDisabled ? 0.45 : 1 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
+              <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Reservar cupos</span>
+              {reserveSlotsDisabled && (
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap' }}>- Debes estar inscrito</span>
+              )}
+            </div>
             <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
               {reservedTotal > 0 && (
                 <span style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{reservedUsed}/{reservedTotal}</span>
@@ -1782,9 +1789,12 @@ export default function GameDetail() {
               </button>
             </div>
           )
-        ) : !rosterReady ? (
-          /* ── Placeholder — reserves bar height until roster loads ── */
-          <div style={{ height: 70, background: '#fff', borderTop: `1px solid ${HAIR}` }} />
+        ) : !(spotsVerified && waitlistReady) ? (
+          /* ── Carga: mismo skeleton (pulse) del badge de la lista, hasta que el estado
+               de acciones sea DEFINITIVO. Evita el flash de espacio vacío / botón gris. ── */
+          <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '12px 16px' }}>
+            <SkeletonPill className="" style={{ width: '100%', height: 46, borderRadius: 14, minWidth: 0 }} />
+          </div>
         ) : (isBooked || infoMode) ? (
           /* ── Player: payment + gestionar ────────────────── */
           <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}` }}>
@@ -1888,6 +1898,7 @@ export default function GameDetail() {
           canAddPlayers={hostWindowOpen}
           invitedCount={invitedByHost.length}
           showReserveSlots={!isHost && (isCaptain || isCaptainGold)}
+          reserveSlotsDisabled={mySlotCanceled}
           onReserveSlots={openReserveSlots}
           reservedUsed={slotRes?.reserved_slots_used ?? 0}
           reservedTotal={slotRes?.reserved_slots_total ?? 0}

@@ -22,6 +22,7 @@ import { useForegroundTick } from '../hooks/useForegroundTick';
 import { useSheetPull } from '../hooks/useSheetPull';
 import { useGlobalRoles } from '../hooks/useGlobalRoles';
 import CaptainSlotsBadge from '../components/CaptainSlotsBadge';
+import SkeletonPill from '../components/SkeletonPill';
 import { buildCaptainSlotsMap } from '../utils/captainSlots';
 
 // Mapa lazy: vive en su propio chunk; solo se descarga al pulsar "Mapa".
@@ -628,16 +629,6 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
   );
 }
 
-function SkeletonPill() {
-  return (
-    <div className="game-status-pill" style={{
-      height: 22, minWidth: 64, borderRadius: 999,
-      background: '#E8E8EC',
-      animation: 'pulse 1.4s ease-in-out infinite',
-      flexShrink: 0,
-    }} />
-  );
-}
 
 function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount, activeGuestCount, liveOpenSpots, isHost = false, pillReady = true, confirmedCountReady = true, confirmedCount = 0, captainSlots = null, captainGold = false }) {
   const [pressed, setPressed] = useState(false);
