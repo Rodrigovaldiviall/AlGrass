@@ -1670,7 +1670,7 @@ export default function GameDetail() {
               icon={I.cal()}
               primary={g.date}
               secondary={`${g.time} ${g.ampm} · ${g.duration}`}
-              action={(isHost || isBooked || isGuest || guestsInRoster.length > 0) ? <WAChatButton /> : undefined}
+              action={(isHost || isBooked || isGuest || guestsInRoster.length > 0 || infoMode) ? <WAChatButton /> : undefined}
             />
             <Pressable
               onPress={() => navigate('/venue', { state: { venue: { venueName: g.venueName, name: g.fieldNumber, address: g.address, district: g.venueDistrict, lat: g.venueLat, lng: g.venueLng, chips: g.chips } } })}
