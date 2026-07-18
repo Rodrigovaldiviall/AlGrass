@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { TEXT, SUB, ORANGE, HAIR, SOFT } from '../constants';
 import { shareOrCopy } from '../utils/share';
 
-export default function ConfirmedOverlay({ game, onOK, shareLink = '', reservedSlots = 0, releaseHours = 48 }) {
+export default function ConfirmedOverlay({ game, onOK, shareLink = '', reservedSlots = 0, releaseHours = 48, title = '', lines = null, extraLine = '' }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const fmt = n => `S/. ${Number(n || 0).toFixed(2)}`;
@@ -34,7 +34,7 @@ export default function ConfirmedOverlay({ game, onOK, shareLink = '', reservedS
         position: 'relative',
       }}>
         {shareLink && (
-          <button onClick={shareLinkAction} aria-label="Compartir" style={{ position: 'absolute', top: 16, right: 16, width: 30, height: 30, borderRadius: '50%', background: SOFT, border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+          <button className="pressable" onClick={shareLinkAction} aria-label="Compartir" style={{ position: 'absolute', top: 16, right: 16, width: 30, height: 30, borderRadius: '50%', background: SOFT, border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
               <path d="M12 3v11M12 3L8 7M12 3l4 4" stroke={TEXT} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
               <path d="M6 11v8a1 1 0 001 1h10a1 1 0 001-1v-8" stroke={TEXT} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
@@ -47,7 +47,14 @@ export default function ConfirmedOverlay({ game, onOK, shareLink = '', reservedS
           </svg>
         </div>
         <div style={{ textAlign: 'center' }}>
-          {reservedSlots > 0 ? (
+          {title ? (
+            <>
+              <div style={{ fontSize: 22, fontWeight: 800, color: TEXT, letterSpacing: -0.4 }}>{title}</div>
+              {lines?.map((l, i) => (
+                <div key={i} style={{ fontSize: 15, color: SUB, marginTop: i === 0 ? 8 : 4, lineHeight: 1.5 }}>{l}</div>
+              ))}
+            </>
+          ) : reservedSlots > 0 ? (
             <>
               <div style={{ fontSize: 22, fontWeight: 800, color: TEXT, letterSpacing: -0.4 }}>Reserva y {reservedSlots} cupos confirmados</div>
               <div style={{ fontSize: 14, color: SUB, marginTop: 8, lineHeight: 1.5 }}>Estos cupos estarán reservados únicamente para tus invitados. Recuerda compartirles el enlace del partido.</div>
@@ -66,9 +73,12 @@ export default function ConfirmedOverlay({ game, onOK, shareLink = '', reservedS
               )}
             </>
           )}
+          {extraLine && (
+            <div style={{ fontSize: 15, color: SUB, marginTop: 8, lineHeight: 1.5 }}>{extraLine}</div>
+          )}
         </div>
         {shareLink && (
-          <div onClick={copyLink} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, background: SOFT, border: `1px solid ${HAIR}`, borderRadius: 12, padding: '11px 14px', cursor: 'pointer', boxSizing: 'border-box' }}>
+          <div className="pressable" onClick={copyLink} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, background: SOFT, border: `1px solid ${HAIR}`, borderRadius: 12, padding: '11px 14px', cursor: 'pointer', boxSizing: 'border-box' }}>
             <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {shareLink}
             </span>

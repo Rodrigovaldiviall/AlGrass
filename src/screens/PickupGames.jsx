@@ -1026,10 +1026,7 @@ export default function PickupGames() {
     if (!supabase || !user?.id) return;
     supabase
       .from('game_players')
-      // Embedding V6 (mismo round-trip, sin 2ª consulta): la R1 del capitán a la que
-      // pertenece la fila. RLS select-own hace que solo aparezca si reserved_by_user_id
-      // = auth.uid() (la propia). used/total salen tal cual del backend, sin recalcular.
-      .select('game_id, user_id, payer_id, status, game_slot_reservations!game_slot_reservation_id(reserved_slots_used, reserved_slots_total, reserved_by_user_id, status)')
+      .select('game_id, user_id, payer_id, status')
       .or(`user_id.eq.${user.id},payer_id.eq.${user.id}`)
       .then(async ({ data, error }) => {
         if (error) return;
@@ -1048,6 +1045,20 @@ export default function PickupGames() {
         try { sessionStorage.setItem(_PR_KEY(user.id), JSON.stringify({ rows, names, ts: Date.now() })); } catch {}
       });
   }, [user?.id, fgTick]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // R1 PROPIAS y ACTIVAS del capitán (fuente de verdad V6 del badge de cupos).
+  // Independiente de la pertenencia: el badge aparece con la reserva activa (total>0),
+  // aunque aún no haya inscritos. RLS select-own limita a las reservas del propio usuario.
+  const [captainR1Rows, setCaptainR1Rows] = useState([]);
+  useEffect(() => {
+    if (!supabase || !user?.id) { setCaptainR1Rows([]); return; }
+    supabase
+      .from('game_slot_reservations')
+      .select('game_id, reserved_slots_used, reserved_slots_total')
+      .eq('reserved_by_user_id', user.id)
+      .eq('status', 'active')
+      .then(({ data, error }) => { if (!error) setCaptainR1Rows(data ?? []); });
+  }, [user?.id, fgTick]);
 
   useEffect(() => {
     if (!supabase || games.length === 0) return;
@@ -1185,8 +1196,8 @@ export default function PickupGames() {
   // myPlayerRows). used/total salen directos del backend; no se recalculan ni se usa
   // lógica de V5. Solo se incluye la R1 propia ACTIVA (total>0) del usuario.
   const captainSlotsMap = useMemo(
-    () => buildCaptainSlotsMap(myPlayerRows, user?.id),
-    [myPlayerRows, user?.id]
+    () => buildCaptainSlotsMap(captainR1Rows),
+    [captainR1Rows]
   );
 
   const hasHostedInFeed = useMemo(

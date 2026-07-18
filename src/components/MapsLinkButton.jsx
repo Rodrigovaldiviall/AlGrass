@@ -14,6 +14,7 @@ export default function MapsLinkButton({ lat = null, lng = null, address = '', d
   return (
     <div style={{ position: 'relative', flexShrink: 0, marginRight: 24 }}>
       <button
+        className="pressable"
         onClick={(e) => { e.stopPropagation(); setOpen(v => !v); }}
         onPointerDown={(e) => e.stopPropagation()}
         onMouseEnter={() => setHover(true)}
@@ -26,7 +27,7 @@ export default function MapsLinkButton({ lat = null, lng = null, address = '', d
         <>
           <div onClick={(e) => { e.stopPropagation(); setOpen(false); }} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
           <div style={{ position: 'absolute', right: 0, ...(down ? { top: 'calc(100% + 8px)' } : { bottom: 'calc(100% + 8px)' }), zIndex: 100, background: '#fff', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', border: `1px solid ${HAIR}`, overflow: 'hidden', minWidth: 168 }}>
-            <a href={url} target="_blank" rel="noreferrer" onClick={(e) => { e.stopPropagation(); setOpen(false); }}
+            <a className="pressable" href={url} target="_blank" rel="noreferrer" onClick={(e) => { e.stopPropagation(); setOpen(false); }}
               style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '13px 16px', textDecoration: 'none' }}>
               <img src={logo} alt="" style={{ width: 40, height: 40, objectFit: 'contain', flexShrink: 0 }} />
               <span style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>Google Maps</span>

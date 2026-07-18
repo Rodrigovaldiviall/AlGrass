@@ -1096,6 +1096,8 @@ export default function ConfirmReservation() {
         discount:     (promoApplied?.discount ?? 0) + creditApplied,
         guestsCount:  guests.length,
         guestsTotal:  guestsTotal,
+        reservedSlots: reservedSlots,
+        releaseHours: releaseHours,
       }}});
     });
   }

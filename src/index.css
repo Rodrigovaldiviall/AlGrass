@@ -61,6 +61,12 @@ input:-webkit-autofill:hover {
   caret-color: #1B1B1F;
 }
 
+/* Feedback de pulsación unificado (estilo nativo iOS/Android): oscurecimiento sutil
+   mientras el dedo/mouse permanece presionado; vuelve al soltar. Un único patrón para
+   toda la app (compartir, copiar enlaces, abrir Maps/WhatsApp, etc.). */
+.pressable { -webkit-tap-highlight-color: transparent; transition: opacity .1s ease; }
+.pressable:active { opacity: 0.4; }
+
 @keyframes spin          { to   { transform: rotate(360deg); } }
 @keyframes intro-fade-up { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes intro-overlay-in { from { opacity: 0; } to { opacity: 1; } }

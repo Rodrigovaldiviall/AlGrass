@@ -14,6 +14,7 @@ import { GAMES } from '../data/games';
 import { deriveGameState, isGamePast, isGameStarted, gameStartDate } from '../utils/deriveGameState';
 import { GameMetaLine } from '../components/GameMetaLine';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
+import { buildGameShareUrl } from '../utils/share';
 import { saveRating, fetchMyRatings, upsertRatingRows, markPopupShown, getLocalRatings, setLocalRatings } from '../services/ratingService';
 import { getMyWaitlistGamesFull } from '../services/waitlistService';
 import { useForegroundTick } from '../hooks/useForegroundTick';
@@ -202,6 +203,29 @@ function deriveGuestGames(reservations) {
 }
 
 
+// Modelo de datos COMÚN de venue/campo para las match cards. `g` = partido embebido
+// (con g.fields.venues). Fuente única para que ambos flujos (jugador y organizador)
+// obtengan y propaguen venue, distrito, cover y amenities de forma idéntica.
+function venueCardFields(g) {
+  const field = g?.fields;
+  const venue = field?.venues;
+  return {
+    field:             venue?.name                        || '',
+    fieldName:         field?.name                        ?? '',
+    address:           venue?.address                     ?? '',
+    venueDistrict:     venue?.district                    ?? null,
+    format:            g?.format ?? field?.format         ?? '7v7',
+    filmed:            g?.game_amenities?.filmed           ?? false,
+    womenOnly:         g?.game_amenities?.women_only       ?? false,
+    master45:          g?.game_amenities?.master_45        ?? false,
+    covered:           field?.field_amenities?.covered     ?? false,
+    parking:           venue?.venue_amenities?.parking     ?? false,
+    showers:           venue?.venue_amenities?.showers     ?? false,
+    venueCoverPath:    venue?.cover_image_path             ?? null,
+    venueCoverVersion: venue?.cover_updated_at ? new Date(venue.cover_updated_at).getTime() : null,
+  };
+}
+
 function deriveMatchCards(myPlayerRows, payerNames, userId) {
   if (!userId || !myPlayerRows.length) return [];
   const byGame = {};
@@ -222,21 +246,9 @@ function deriveMatchCards(myPlayerRows, payerNames, userId) {
       durationMin:  g.duration_min ?? g.fields?.duration_min           ?? null,
       date:         formatDateLabel(g.date_key),
       time, ampm,
-      field:        g.fields?.venues?.name                              || '',
-      fieldName:    g.fields?.name                                      ?? '',
-      address:      g.fields?.venues?.address                          ?? '',
-      format:       g.format ?? g.fields?.format                       ?? '7v7',
+      ...venueCardFields(g),
       totalSpots,
       openSpots:    Math.max(0, totalSpots - (g.current_players        ?? 0)),
-      filmed:       g.game_amenities?.filmed                            ?? false,
-      womenOnly:    g.game_amenities?.women_only                        ?? false,
-      master45:     g.game_amenities?.master_45                         ?? false,
-      covered:      g.fields?.field_amenities?.covered                  ?? false,
-      parking:      g.fields?.venues?.venue_amenities?.parking          ?? false,
-      showers:      g.fields?.venues?.venue_amenities?.showers          ?? false,
-      venueCoverPath:    g.fields?.venues?.cover_image_path             ?? null,
-      venueCoverVersion: g.fields?.venues?.cover_updated_at
-        ? new Date(g.fields.venues.cover_updated_at).getTime() : null,
       hostUserId:   g.host_user_id                                      ?? null,
       type:         g.type                                              ?? 'match',
     };
@@ -371,7 +383,6 @@ function sbRentalFromGameRow(g, fin) {
 function sbHostedGameToRow(g) {
   const { time, ampm } = parseGameTime(g?.time);
   const field      = g?.fields;
-  const venue      = field?.venues;
   const totalSpots = g?.total_spots ?? field?.total_spots ?? 0;
   const openSpots  = Math.max(0, totalSpots - (g?.current_players ?? 0));
   return {
@@ -382,21 +393,9 @@ function sbHostedGameToRow(g) {
     date:        formatDateLabel(g.date_key),
     time,
     ampm,
-    field:             venue?.name                          || '',
-    fieldName:         field?.name                          ?? '',
-    address:           venue?.address                       ?? '',
-    format:            g.format ?? field?.format            ?? '7v7',
+    ...venueCardFields(g),
     totalSpots,
     openSpots,
-    filmed:            g.game_amenities?.filmed             ?? false,
-    womenOnly:         g.game_amenities?.women_only         ?? false,
-    master45:          g.game_amenities?.master_45          ?? false,
-    covered:           field?.field_amenities?.covered      ?? false,
-    parking:           venue?.venue_amenities?.parking      ?? false,
-    showers:           venue?.venue_amenities?.showers      ?? false,
-    venueCoverPath:    venue?.cover_image_path              ?? null,
-    venueCoverVersion: venue?.cover_updated_at
-      ? new Date(venue.cover_updated_at).getTime() : null,
     hostUserId:  g.host_user_id ?? null,
     status:      g.status ?? 'published',
     type:        g.type ?? 'game',
@@ -1688,7 +1687,10 @@ function GameRow({ game, onPress, muted = false, userId = null, highlighted = fa
         <div style={{ fontSize: 11, color: SUB, fontWeight: 500, lineHeight: 1.1 }}>{game.ampm}</div>
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, letterSpacing: -0.1 }}>{game.field}</div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, letterSpacing: -0.1 }}>
+          {game.field}
+          {game.venueDistrict && <span style={{ fontSize: 13, fontWeight: 500, color: SUB, marginLeft: 6 }}>· {game.venueDistrict}</span>}
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, color: SUB, fontSize: 12.5 }}>
           {isCampo
             ? <span style={{ fontWeight: 500 }}>Cancha completa</span>
@@ -2069,6 +2071,19 @@ export default function Profile() {
     setConfirmedGame(cg);
   }, [location.state]); // eslint-disable-line
 
+  // R1 PROPIAS y ACTIVAS del capitán (fuente de verdad V6 del badge de cupos).
+  // El badge aparece con la reserva activa (total>0) aunque no haya inscritos.
+  const [captainR1Rows, setCaptainR1Rows] = useState([]);
+  useEffect(() => {
+    if (!supabase || !user?.id) { setCaptainR1Rows([]); return; }
+    supabase
+      .from('game_slot_reservations')
+      .select('game_id, reserved_slots_used, reserved_slots_total')
+      .eq('reserved_by_user_id', user.id)
+      .eq('status', 'active')
+      .then(({ data, error }) => { if (!error) setCaptainR1Rows(data ?? []); });
+  }, [user?.id, confirmedGame?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [profileData,    setProfileData]    = useState(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(PROFILE_KEY)) || {};
@@ -2211,7 +2226,7 @@ export default function Profile() {
         .select(`
           id, date_key, time, type, status, duration_min, total_spots, host_user_id, format,
           game_amenities:amenities,
-          fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, cover_image_path, cover_updated_at, venue_amenities:amenities ) )
+          fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, district, cover_image_path, cover_updated_at, venue_amenities:amenities ) )
         `)
         .eq('booked_by_user_id', uid)
         .eq('type', 'rental')
@@ -2243,7 +2258,7 @@ export default function Profile() {
         .from('reservations')
         .select(`
           game_id, source, unit_price, promo_discount, credit_applied, total_amount,
-          games:game_id ( type, date_key, time, format, total_spots, current_players, duration_min, host_user_id, game_amenities:amenities, fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, cover_image_path, cover_updated_at, venue_amenities:amenities ) ) )
+          games:game_id ( type, date_key, time, format, total_spots, current_players, duration_min, host_user_id, game_amenities:amenities, fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, district, cover_image_path, cover_updated_at, venue_amenities:amenities ) ) )
         `)
         .eq('user_id', uid)
         .eq('status', 'spend')
@@ -2271,8 +2286,7 @@ export default function Profile() {
         .from('game_players')
         .select(`
           game_id, user_id, payer_id, status, amount,
-          game_slot_reservations!game_slot_reservation_id ( reserved_slots_used, reserved_slots_total, reserved_by_user_id, status ),
-          games:game_id ( date_key, time, format, total_spots, current_players, duration_min, host_user_id, type, game_amenities:amenities, fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, cover_image_path, cover_updated_at, venue_amenities:amenities ) ) )
+          games:game_id ( date_key, time, format, total_spots, current_players, duration_min, host_user_id, type, game_amenities:amenities, fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, district, cover_image_path, cover_updated_at, venue_amenities:amenities ) ) )
         `)
         .or(`user_id.eq.${uid},payer_id.eq.${uid}`)
         .then(async ({ data, error }) => {
@@ -2298,7 +2312,7 @@ export default function Profile() {
         .select(`
           id, date_key, time, format, total_spots, current_players, duration_min, status, host_user_id, type,
           game_amenities:amenities,
-          fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, cover_image_path, cover_updated_at, venue_amenities:amenities ) )
+          fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, district, cover_image_path, cover_updated_at, venue_amenities:amenities ) )
         `)
         .eq('host_user_id', uid)
         .in('type', ['match', 'rental'])
@@ -2386,7 +2400,7 @@ export default function Profile() {
       .select(`
         id, date_key, time, type, status, duration_min, total_spots, host_user_id, format,
         game_amenities:amenities,
-        fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, cover_image_path, cover_updated_at, venue_amenities:amenities ) )
+        fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, district, cover_image_path, cover_updated_at, venue_amenities:amenities ) )
       `)
       .eq('booked_by_user_id', uid)
       .eq('type', 'rental')
@@ -2416,7 +2430,7 @@ export default function Profile() {
       .from('reservations')
       .select(`
         game_id, source, unit_price, promo_discount, credit_applied, total_amount,
-        games:game_id ( type, date_key, time, format, total_spots, current_players, duration_min, host_user_id, game_amenities:amenities, fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, cover_image_path, cover_updated_at, venue_amenities:amenities ) ) )
+        games:game_id ( type, date_key, time, format, total_spots, current_players, duration_min, host_user_id, game_amenities:amenities, fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, district, cover_image_path, cover_updated_at, venue_amenities:amenities ) ) )
       `)
       .eq('user_id', uid)
       .eq('status', 'spend')
@@ -2440,7 +2454,7 @@ export default function Profile() {
       .from('game_players')
       .select(`
         game_id, user_id, payer_id, status, amount,
-        games:game_id ( date_key, time, format, total_spots, current_players, duration_min, host_user_id, type, game_amenities:amenities, fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, cover_image_path, cover_updated_at, venue_amenities:amenities ) ) )
+        games:game_id ( date_key, time, format, total_spots, current_players, duration_min, host_user_id, type, game_amenities:amenities, fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, district, cover_image_path, cover_updated_at, venue_amenities:amenities ) ) )
       `)
       .or(`user_id.eq.${uid},payer_id.eq.${uid}`)
       .then(async ({ data, error }) => {
@@ -2481,7 +2495,7 @@ export default function Profile() {
   );
   // Reserva de cupos del capitán por partido (fuente de verdad V6, vía el embed de
   // myPlayerRows). used/total directos del backend; sin recalcular ni lógica de V5.
-  const captainSlotsByGame = buildCaptainSlotsMap(myPlayerRows, user?.id);
+  const captainSlotsByGame = buildCaptainSlotsMap(captainR1Rows);
   const matchCards = deriveMatchCards(myPlayerRows, payerNames, user?.id).map(g => ({
     ...g,
     ...(matchFinancialMap.get(g.gameId) ?? {}),
@@ -2763,6 +2777,7 @@ export default function Profile() {
         field:        g.field,
         fieldName:    g.fieldName    ?? '',
         address:      g.address      ?? '',
+        venueDistrict: g.venueDistrict ?? null,
         format:       g.format       || '7v7',
         totalSpots:   g.totalSpots   ?? 0,
         openSpots:    g.openSpots    ?? 0,
@@ -3046,7 +3061,21 @@ export default function Profile() {
 
       <TabBar activeTab="perfil" />
 
-      {confirmedGame && <ConfirmedOverlay game={confirmedGame} onOK={handleOK} />}
+      {confirmedGame && (
+        <ConfirmedOverlay
+          game={confirmedGame}
+          extraLine={confirmedGame.reservedSlots > 0 ? (
+            <>
+              <div>Además, <b style={{ fontWeight: 700, color: TEXT }}>has reservado {confirmedGame.reservedSlots} {confirmedGame.reservedSlots === 1 ? 'cupo' : 'cupos'}</b> para este partido.</div>
+              <div style={{ marginTop: 8 }}>
+                Comparte el link con tus amigos. La reserva <span style={{ color: RED, textDecoration: 'underline' }}>se liberará hasta {confirmedGame.releaseHours ?? 48}h</span> antes del partido.
+              </div>
+            </>
+          ) : ''}
+          shareLink={buildGameShareUrl(confirmedGame.id, { sharedByUserId: user?.id })}
+          onOK={handleOK}
+        />
+      )}
       {!confirmedGame && gameToRate && (
         <RatingModal key={gameToRate.id} game={gameToRate} onRate={handleRate} onSkip={() => {
           const gId = gameToRate.gameId ?? gameToRate.id;

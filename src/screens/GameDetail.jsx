@@ -22,6 +22,7 @@ import { getVenueCoverUrl } from '../utils/venue';
 import { deriveGameState, requiredPlayers, gameStartDate, gameEndDate, isGamePast, isGameStarted, deriveAttendance } from '../utils/deriveGameState';
 import { joinWaitlist, leaveWaitlist, getMyWaitlistGameIds } from '../services/waitlistService';
 import ReserveSlotsSheet from '../components/ReserveSlotsSheet';
+import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import { useGlobalRoles } from '../hooks/useGlobalRoles';
 const ROSTER_KEY_GD = 'pichanga_game_rosters';
 
@@ -151,6 +152,7 @@ function Header({ field, openSpots, onBack, onShare, infoMode, showShare, live =
         ) : null}
         {showShare && (
           <button
+            className="pressable"
             onClick={onShare}
             style={{ width: 30, height: 26, marginRight: 10, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', WebkitTapHighlightColor: 'transparent' }}>
             {I.share('#fff')}
@@ -208,6 +210,7 @@ function WAChatButton() {
   return (
     <div style={{ position: 'relative', flexShrink: 0 }}>
       <button
+        className="pressable"
         onClick={() => setOpen(v => !v)}
         style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none', padding: '2px 0' }}>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ color: SUB }}>
@@ -221,7 +224,7 @@ function WAChatButton() {
         <>
           <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
           <div style={{ position: 'absolute', right: 0, bottom: 'calc(100% + 8px)', zIndex: 100, background: '#fff', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', border: `1px solid ${HAIR}`, overflow: 'hidden', minWidth: 252 }}>
-            <a href={`https://wa.me/${ph}`} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}
+            <a className="pressable" href={`https://wa.me/${ph}`} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}
               style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', textDecoration: 'none', borderBottom: `1px solid ${HAIR}` }}>
               <FontAwesomeIcon icon={faWhatsapp} style={{ fontSize: 22, color: '#25D366', flexShrink: 0 }} />
               <div>
@@ -229,7 +232,7 @@ function WAChatButton() {
                 <div style={{ fontSize: 12.5, color: SUB, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayPhone}</div>
               </div>
             </a>
-            <a href={`sms:+${ph}`} onClick={() => setOpen(false)}
+            <a className="pressable" href={`sms:+${ph}`} onClick={() => setOpen(false)}
               style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', textDecoration: 'none' }}>
               <FontAwesomeIcon icon={faCommentSms} style={{ fontSize: 22, color: BLUE, flexShrink: 0 }} />
               <span style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>SMS</span>
@@ -1299,6 +1302,7 @@ export default function GameDetail() {
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [modifyOpen, setModifyOpen] = useState(false);
   const [reserveSlotsOpen, setReserveSlotsOpen] = useState(false);
+  const [reserveConfirm, setReserveConfirm] = useState(null); // outcome tras guardar (ver ReserveSlotsSheet.onConfirmed)
   const [slotRes, setSlotRes] = useState(null);
   const { isCaptain, isCaptainGold } = useGlobalRoles();
   // Al abrir "Gestionar mi reserva" precargamos slotRes con la MISMA RPC
@@ -1897,7 +1901,32 @@ export default function GameDetail() {
           poolPublico={slotRes.pool ?? 0}
           shareLink={buildGameShareUrl(gameId, { sharedByUserId: user?.id })}
           onAccept={saveReserveSlots}
+          onConfirmed={setReserveConfirm}
           onClose={() => setReserveSlotsOpen(false)}
+        />
+      )}
+      {/* Confirmación final: entra cuando el sheet ya cerró. Reutiliza ConfirmedOverlay
+          (share/link/OK). Única pantalla para toda modificación de reserva de cupos. */}
+      {reserveConfirm && !reserveSlotsOpen && (
+        <ConfirmedOverlay
+          title={
+            reserveConfirm.total === 0 ? 'Cancelaste tu reserva de cupos'
+            : reserveConfirm.created  ? 'Reserva de cupos confirmada'
+            : 'Modificación confirmada'
+          }
+          lines={
+            reserveConfirm.total === 0
+              ? ['Los jugadores seguirán inscritos, pero si alguno cancela, el cupo se liberará al público.']
+              : [
+                  reserveConfirm.created
+                    ? `Has reservado ${reserveConfirm.total} ${reserveConfirm.total === 1 ? 'cupo' : 'cupos'} para este partido.`
+                    : 'Tu reserva de cupos fue actualizada correctamente.',
+                  'Comparte el link con tus amigos.',
+                  <span>Recuerda que los cupos <span style={{ color: RED, textDecoration: 'underline' }}>se liberarán {isCaptainGold ? 24 : 48}h</span> antes del partido.</span>,
+                ]
+          }
+          shareLink={buildGameShareUrl(gameId, { sharedByUserId: user?.id })}
+          onOK={() => setReserveConfirm(null)}
         />
       )}
       {hostCancelInvitedOpen && (

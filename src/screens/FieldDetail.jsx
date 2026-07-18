@@ -90,6 +90,7 @@ function Header({ field, onBack, onShare }) {
           <div style={{ color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{field}</div>
         </div>
         <button
+          className="pressable"
           onClick={onShare}
           style={{ width: 36, height: 36, marginRight: -6, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', WebkitTapHighlightColor: 'transparent' }}>
           {I.share('#fff')}
@@ -141,6 +142,7 @@ function WAChatButton() {
   return (
     <div style={{ position: 'relative', flexShrink: 0 }}>
       <button
+        className="pressable"
         onClick={() => setOpen(v => !v)}
         style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none', padding: '2px 0' }}>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ color: SUB }}>
@@ -154,7 +156,7 @@ function WAChatButton() {
         <>
           <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
           <div style={{ position: 'absolute', right: 0, bottom: 'calc(100% + 8px)', zIndex: 100, background: '#fff', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', border: `1px solid ${HAIR}`, overflow: 'hidden', minWidth: 252 }}>
-            <a href={`https://wa.me/${ph}`} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}
+            <a className="pressable" href={`https://wa.me/${ph}`} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}
               style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', textDecoration: 'none', borderBottom: `1px solid ${HAIR}` }}>
               <FontAwesomeIcon icon={faWhatsapp} style={{ fontSize: 22, color: '#25D366', flexShrink: 0 }} />
               <div>
@@ -162,7 +164,7 @@ function WAChatButton() {
                 <div style={{ fontSize: 12.5, color: SUB, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayPhone}</div>
               </div>
             </a>
-            <a href={`sms:+${ph}`} onClick={() => setOpen(false)}
+            <a className="pressable" href={`sms:+${ph}`} onClick={() => setOpen(false)}
               style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', textDecoration: 'none' }}>
               <FontAwesomeIcon icon={faCommentSms} style={{ fontSize: 22, color: BLUE, flexShrink: 0 }} />
               <span style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>SMS</span>
