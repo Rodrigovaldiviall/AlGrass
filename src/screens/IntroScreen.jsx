@@ -6,17 +6,19 @@ import qrImg from '../assets/algrass-qr.png';
 const BLUE     = '#3F5FE0';
 const INTRO_KEY = 'algrass_intro_seen';
 
+// Frases resaltadas: mismo texto en blanco, en negrita y subrayado.
+const HL = { color: '#fff', fontWeight: 700, textDecoration: 'underline' };
+
 const BULLETS = [
-  'Encuentra partidos de fútbol cerca de ti.',
-  'Únete e invita a tus amigos.',
-  'Reserva en segundos, sin llamadas.',
-  'Paga con Yape, tarjeta o billetera virtual.',
+  <>Cada uno paga su cupo. <span style={HL}>Chau a estar cobrando.</span></>,
+  <>¿Falta gente? ¿Te quedaste fuera de lista? ¿Solo quieres jugar? <span style={HL}>Igual juegas.</span></>,
+  <span style={HL}>Reserva al toque, cuando quieras.</span>,
 ];
 
 // Shared intro content — referenced by both the mobile overlay and the desktop landing
 // so future edits apply to both.
 const INTRO_TITLE    = 'Bienvenido a AlGrass';
-const INTRO_SUBTITLE = 'La app para unirte a partidos de fútbol organizados y reservar canchas.';
+const INTRO_SUBTITLE = 'Despreocúpate y juega.';
 const INTRO_CTA      = 'Empecemos';
 
 // ── Minimal glow dot for bullets ──────────────────────────────────────────
@@ -74,8 +76,8 @@ function OnboardingOverlay({ onDone }) {
         {/* Subtitle */}
         <p style={{
           margin: '0 0 28px',
-          fontSize: 14.5, lineHeight: 1.52,
-          color: 'rgba(255,255,255,0.66)',
+          fontSize: 20, fontWeight: 700, lineHeight: 1.5, whiteSpace: 'nowrap',
+          color: '#fff',
           textAlign: 'center', maxWidth: 270,
           animation: 'intro-item-in 0.7s cubic-bezier(0.22,0.61,0.36,1) 0.52s both',
         }}>
@@ -93,7 +95,7 @@ function OnboardingOverlay({ onDone }) {
               }}
             >
               <Dot />
-              <span style={{ fontSize: 15.5, color: 'rgba(255,255,255,0.80)', lineHeight: 1.48 }}>
+              <span style={{ fontSize: 17.5, color: 'rgba(255,255,255,0.80)', lineHeight: 1.48 }}>
                 {text}
               </span>
             </div>
@@ -142,14 +144,14 @@ function DesktopLanding({ onStart }) {
           <h1 style={{ margin: '0 0 12px', fontSize: 38, fontWeight: 700, color: '#fff', letterSpacing: -1.1, lineHeight: 1.08, textShadow: '0 2px 18px rgba(0,0,0,0.45)' }}>
             {INTRO_TITLE}
           </h1>
-          <p style={{ margin: '0 0 24px', fontSize: 15.5, lineHeight: 1.55, color: 'rgba(255,255,255,0.95)', maxWidth: 360, textShadow: '0 1px 14px rgba(0,0,0,0.50)' }}>
+          <p style={{ margin: '0 0 24px', fontSize: 21, fontWeight: 700, lineHeight: 1.5, whiteSpace: 'nowrap', color: '#fff', maxWidth: 360, textShadow: '0 1px 14px rgba(0,0,0,0.50)' }}>
             {INTRO_SUBTITLE}
           </p>
           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 30 }}>
             {BULLETS.map((text, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
                 <Dot />
-                <span style={{ fontSize: 15, color: '#fff', lineHeight: 1.45, textShadow: '0 1px 12px rgba(0,0,0,0.50)' }}>{text}</span>
+                <span style={{ fontSize: 17, color: '#fff', lineHeight: 1.45, textShadow: '0 1px 12px rgba(0,0,0,0.50)' }}>{text}</span>
               </div>
             ))}
           </div>

@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSheetPull } from '../hooks/useSheetPull';
 import { shareOrCopy } from '../utils/share';
-import { TEXT, SUB, HAIR, SOFT, DANGER, ORANGE, BLUE, GREEN } from '../constants';
+import { TEXT, SUB, HAIR, SOFT, DANGER, ORANGE, BLUE } from '../constants';
 
 // ============================================================================
 // ReserveSlotsSheet — UX "Reserva de cupos" (extraída de GameDetail, modelo V6).
@@ -24,7 +24,7 @@ import { TEXT, SUB, HAIR, SOFT, DANGER, ORANGE, BLUE, GREEN } from '../constants
 //   +  sube de uno en uno; se deshabilita cuando (reservados − inscritos) >= publicAvailable
 //      (evita seleccionar valores que reserve_slots rechazaría). La validación final es del backend.
 // ============================================================================
-export default function ReserveSlotsSheet({ inscritos = 0, reservedInitial = 0, publicAvailable = 0, poolPublico = 0, shareLink = '', onAccept, onConfirmed, onClose }) {
+export default function ReserveSlotsSheet({ inscritos = 0, reservedInitial = 0, publicAvailable = 0, poolPublico = 0, shareLink = '', releaseHours = 48, onAccept, onConfirmed, onClose }) {
   const [open, setOpen] = useState(false);
   const [reservados, setReservados] = useState(reservedInitial);
   const [copied, setCopied] = useState(false);
@@ -67,20 +67,20 @@ export default function ReserveSlotsSheet({ inscritos = 0, reservedInitial = 0, 
   function dec() { if (decDisabled) return; setError(false); setReservados(r => (r > 0 ? r - 1 : r)); }
   function inc() { if (incDisabled) return; setError(false); setReservados(r => r + 1); }
 
-  // Efecto EN TIEMPO REAL. Solo hay mensaje cuando el usuario cambió el valor original
-  // (dirty); al abrir o al volver al valor inicial, effect = null → sin mensaje.
-  const _curRemaining = Math.max(reservedInitial - inscritos, 0);
-  const _newRemaining = Math.max(reservados - inscritos, 0);
-  const _deltaAvailable = _newRemaining - _curRemaining;
-  const effect = !dirty
-    ? null
-    : reservados === 0
-    ? { kind: 'zero' }                                  // cancela por completo la reserva
-    : reservados < reservedInitial
-    ? { kind: 'reduce' }                                // reduce (mantiene reserva)
-    : _deltaAvailable > 0
-    ? { kind: 'ok', x: _deltaAvailable }                // genera nuevos cupos disponibles
-    : { kind: 'info' };                                 // aún no genera nuevos cupos disponibles
+  // "Y cupos disponibles" del indicador visual (max(total - inscritos, 0)).
+  const disponibles = Math.max(reservados - inscritos, 0);
+
+  // Resalte breve del contador "cupos disponibles" cada vez que su valor cambia,
+  // para guiar la vista al usar + / −. Solo efecto visual; no toca ningún cálculo.
+  const [dispFlash, setDispFlash] = useState(false);
+  const prevDispRef = useRef(disponibles);
+  useEffect(() => {
+    if (prevDispRef.current === disponibles) return;
+    prevDispRef.current = disponibles;
+    setDispFlash(true);
+    const t = setTimeout(() => setDispFlash(false), 400);
+    return () => clearTimeout(t);
+  }, [disponibles]);
 
   // Previsualización visual de la disponibilidad pública si se guardara el total actual.
   // NO consulta ni escribe: es puro cálculo local. Al cerrar sin guardar el componente
@@ -89,7 +89,6 @@ export default function ReserveSlotsSheet({ inscritos = 0, reservedInitial = 0, 
   const poolPreview = Math.max(poolPublico - (reservados - reservedInitial), 0);
 
   // Derivados de la barra (previsualización del total elegido).
-  const disponibles = Math.max(reservados - inscritos, 0);
   const scaleMax  = Math.max(reservados, inscritos, 1);
   const boxPct    = (reservados / scaleMax) * 100;                          // capacidad reservada (rectángulo hueco)
   const solidPct  = (Math.min(inscritos, reservados) / scaleMax) * 100;     // inscritos cubiertos por los cupos (azul sólido)
@@ -120,44 +119,19 @@ export default function ReserveSlotsSheet({ inscritos = 0, reservedInitial = 0, 
           </button>
         </div>
 
-        {/* Mensaje dinámico — debajo del título. Solo aparece al modificar el valor (dirty).
-            minHeight fijo → cambiar entre mensajes de distinta longitud NO desplaza el contenido.
+        {/* Mensaje fijo — siempre visible, no cambia al aumentar/disminuir cupos.
             Reutiliza el lenguaje visual de las alertas de la app (recuadro con fondo tenue). */}
-        {effect && (
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 16, padding: '10px 12px', borderRadius: 12, minHeight: 62, boxSizing: 'border-box',
-            background: effect.kind === 'ok' ? '#EAF7EF' : effect.kind === 'info' ? SOFT : '#FFF4E5',
-            border: `1px solid ${effect.kind === 'ok' ? GREEN + '33' : effect.kind === 'info' ? HAIR : ORANGE + '44'}` }}>
-            <span style={{ fontSize: 16, lineHeight: 1.2, flexShrink: 0 }}>{effect.kind === 'ok' ? '✅' : effect.kind === 'info' ? 'ℹ️' : '⚠️'}</span>
-            <div style={{ flex: 1, fontSize: 12.5, color: SUB, lineHeight: 1.45 }}>
-              {effect.kind === 'ok' && (
-                <div style={{ color: TEXT, fontWeight: 600 }}>Este cambio generará {effect.x} {effect.x === 1 ? 'cupo reservado disponible' : 'cupos reservados disponibles'}.</div>
-              )}
-              {effect.kind === 'info' && (
-                <>
-                  <div style={{ color: TEXT, fontWeight: 600 }}>Ya tienes {inscritos} {inscritos === 1 ? 'jugador inscrito' : 'jugadores inscritos'}.</div>
-                  <div style={{ marginTop: 3 }}>Aún no estás generando cupos reservados disponibles.</div>
-                </>
-              )}
-              {effect.kind === 'reduce' && (
-                <>
-                  <div style={{ color: TEXT, fontWeight: 600 }}>Estás reduciendo los cupos para tu grupo.</div>
-                  <div style={{ marginTop: 3 }}>Si un jugador cancela, ese cupo se podría liberar al público.</div>
-                </>
-              )}
-              {effect.kind === 'zero' && (
-                <>
-                  <div style={{ color: TEXT, fontWeight: 600 }}>Estás cancelando tu reserva de cupos.</div>
-                  <div style={{ marginTop: 3 }}>Los jugadores se mantienen inscritos, pero si alguno cancela, ese cupo se liberará al público.</div>
-                </>
-              )}
-            </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 16, padding: '10px 12px', borderRadius: 12, background: SOFT, border: `1px solid ${HAIR}` }}>
+          <span style={{ fontSize: 15, lineHeight: 1.3, flexShrink: 0 }}>🔒</span>
+          <div style={{ flex: 1, fontSize: 12.5, color: TEXT, fontWeight: 600, lineHeight: 1.45 }}>
+            Exclusivos para tu grupo hasta {releaseHours}h antes del partido, incluso si alguien cancela. Compártelo.
           </div>
-        )}
+        </div>
 
         {/* Inscritos / Disponibles */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
-          <div style={{ fontSize: 15, color: TEXT }}><b style={{ fontWeight: 700 }}>{inscritos}</b> Inscritos</div>
-          <div style={{ fontSize: 15, color: TEXT }}><b style={{ fontWeight: 700 }}>{disponibles}</b> Disponibles</div>
+          <div style={{ fontSize: 15, color: TEXT }}><b style={{ fontWeight: 700 }}>{inscritos}</b> amigos inscritos</div>
+          <div style={{ fontSize: 15, color: dispFlash ? BLUE : TEXT, transform: dispFlash ? 'scale(1.12)' : 'scale(1)', transformOrigin: 'right center', transition: 'color 0.2s ease, transform 0.2s ease' }}><b style={{ fontWeight: 700 }}>{disponibles}</b> cupos disponibles</div>
         </div>
 
         {/* Barra */}

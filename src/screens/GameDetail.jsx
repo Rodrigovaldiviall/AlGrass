@@ -1910,6 +1910,7 @@ export default function GameDetail() {
           reservedInitial={slotRes.reserved_slots_total ?? 0}
           publicAvailable={(slotRes.pool ?? 0) + (slotRes.reserved_slots_remaining ?? 0)}
           poolPublico={slotRes.pool ?? 0}
+          releaseHours={isCaptainGold ? 24 : 48}
           shareLink={buildGameShareUrl(gameId, { sharedByUserId: user?.id })}
           onAccept={saveReserveSlots}
           onConfirmed={setReserveConfirm}
