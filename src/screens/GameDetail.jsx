@@ -973,6 +973,12 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
             notifs.unshift({ id: 'notif-gc-' + _now, type: 'app', title: 'Algrass', gameDate: null, message: `${guestSelfName} canceló su reserva. El monto pagado ha retornado a tu crédito.`, time: String(_d.getHours()).padStart(2, '0') + ':' + String(_d.getMinutes()).padStart(2, '0'), dateKey: _d.toISOString().slice(0, 10), read: false, createdAt: _now });
             localStorage.setItem('pichanga_notifications_v2', JSON.stringify(notifs));
           } catch {}
+          // V6: mismo bloque que la rama del titular — si el usuario (capitán invitado)
+          // tiene una R1 propia, liberarla vía reserve_slots(0) ANTES de la cancelación.
+          const { data: _sr } = await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
+          if (_sr?.[0]?.has_reservation) {
+            await supabase.rpc('reserve_slots', { p_game_id: gameId, p_reserved_slots_total: 0 });
+          }
           const { skipped: s1, error: e1 } = await cancelGamePlayer(gameId);
           if (!s1 && e1) console.error('[cancel] guest self failed:', e1);
         }

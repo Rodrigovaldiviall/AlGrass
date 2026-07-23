@@ -386,7 +386,9 @@ export default function Notifications() {
     // Navegación parametrizable: mismo algoritmo para invitaciones y reservas propias;
     // solo cambia qué plantillas de cancelación pertenecen a cada tipo (CANCELLATION_TEMPLATES).
     const cancelTemplates = notif?.templateKey ? CANCELLATION_TEMPLATES[notif.templateKey] : null;
-    if (cancelTemplates && notif?.gameId) {
+    // Reserva de cupos: navegar al partido si el usuario sigue confirmado (sin cancelación).
+    const isSlotNav = notif?.templateKey === 'slots_reserved' || notif?.templateKey === 'slots_modified';
+    if ((cancelTemplates || isSlotNav) && notif?.gameId) {
       // "Reserva viva" = existe ≥1 game_player CONFIRMADO que me pertenece
       // (titular O invitados: user_id | payer_id | invited_by_user_id = yo). Reutiliza
       // el mismo lookup, ampliando el filtro (para un invitado equivale a su propio slot).
@@ -419,6 +421,13 @@ export default function Notifications() {
           navigate('/profile', { state: { highlightGame: notif.gameId } });
         }
       };
+
+      if (isSlotNav) {
+        // Reserva de cupos: si sigue confirmado en el partido (Próximos) → abrir, igual que
+        // las reservas. Si no, no hacer nada (no existe pantalla de cancelación de cupos).
+        openGameIfLive((await findAlive())?.games);
+        return;
+      }
 
       if (notif.templateKey === 'invited_by_player') {
         // Invitaciones: comportamiento ORIGINAL sin cambios (cancelación primero).
