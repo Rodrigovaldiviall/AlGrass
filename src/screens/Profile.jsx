@@ -12,9 +12,11 @@ import { supabase } from '../lib/supabase';
 import { abbreviateName, ensureUserCode, formatDateLabel } from '../utils/format';
 import { GAMES } from '../data/games';
 import { deriveGameState, isGamePast, isGameStarted, gameStartDate } from '../utils/deriveGameState';
+import { getVisibleBottom } from '../utils/layout';
 import { GameMetaLine } from '../components/GameMetaLine';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import { buildGameShareUrl } from '../utils/share';
+import { fetchPendingSlotExpiry, markSlotReservationNotified } from '../services/reservationService';
 import { saveRating, fetchMyRatings, upsertRatingRows, markPopupShown, getLocalRatings, setLocalRatings } from '../services/ratingService';
 import { getMyWaitlistGamesFull } from '../services/waitlistService';
 import { useForegroundTick } from '../hooks/useForegroundTick';
@@ -2085,6 +2087,14 @@ export default function Profile() {
       .then(({ data, error }) => { if (!error) setCaptainR1Rows(data ?? []); });
   }, [user?.id, confirmedGame?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // V6 · Popup de expiración automática de R1 (mismo patrón que Rating; backend =
+  // fuente de verdad, sin localStorage). Se resuelve al montar/cambiar de usuario.
+  const [slotExpiry, setSlotExpiry] = useState(null);
+  useEffect(() => {
+    if (!user?.id) { setSlotExpiry(null); return; }
+    fetchPendingSlotExpiry(user.id).then(setSlotExpiry);
+  }, [user?.id, confirmedGame?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [profileData,    setProfileData]    = useState(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(PROFILE_KEY)) || {};
@@ -2547,8 +2557,7 @@ export default function Profile() {
       const el = highlightedRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      const tabBar = document.querySelector('.tab-bar');
-      const visibleBottom = tabBar ? tabBar.getBoundingClientRect().top : window.innerHeight;
+      const visibleBottom = getVisibleBottom();
       const overBottom = rect.bottom - visibleBottom;
       const overTop = -rect.top;
       if (overBottom > 0 || overTop > 0) {
@@ -3067,9 +3076,9 @@ export default function Profile() {
           game={confirmedGame}
           extraLine={confirmedGame.reservedSlots > 0 ? (
             <>
-              <div>Además, <b style={{ fontWeight: 700, color: TEXT }}>has reservado {confirmedGame.reservedSlots} {confirmedGame.reservedSlots === 1 ? 'cupo' : 'cupos'}</b> para este partido.</div>
+              <div>Tu reserva incluye <b style={{ fontWeight: 700, color: TEXT }}>{(confirmedGame.guestsCount ?? 0) > 0 ? `${confirmedGame.guestsCount} ${confirmedGame.guestsCount === 1 ? 'invitado' : 'invitados'} y ` : ''}{confirmedGame.reservedSlots} {confirmedGame.reservedSlots === 1 ? 'cupo' : 'cupos'}</b>.</div>
               <div style={{ marginTop: 8 }}>
-                Comparte el link con tus amigos. La reserva <span style={{ color: RED, textDecoration: 'underline' }}>se liberará hasta {confirmedGame.releaseHours ?? 48}h</span> antes del partido.
+                Comparte el link antes de <span style={{ color: RED, textDecoration: 'underline' }}>{confirmedGame.releaseHours ?? 48}h</span> del partido.
               </div>
             </>
           ) : ''}
@@ -3077,7 +3086,30 @@ export default function Profile() {
           onOK={handleOK}
         />
       )}
-      {!confirmedGame && gameToRate && (
+      {!confirmedGame && slotExpiry && (
+        <ConfirmedOverlay
+          key={slotExpiry.id}
+          title="Cupos expirados."
+          lines={[`Recuerda que tienes hasta ${isCaptainGold ? 24 : 48} horas antes del partido para reservar.`]}
+          shareLink={buildGameShareUrl(slotExpiry.gameId, { sharedByUserId: user?.id })}
+          onOK={async () => {
+            // Marca esta R1 y encadena la siguiente en la MISMA sesión (patrón Rating):
+            // marcar → volver a consultar get_pending_slot_expiry() (LIMIT 1) → mostrar
+            // el siguiente overlay, o null si ya no quedan pendientes.
+            await markSlotReservationNotified(slotExpiry.id);
+            // Notificación persistente de expiración (mismo sistema; una vez por expiración).
+            supabase?.from('notifications').insert({
+              recipient_user_id: user?.id,
+              source_type: 'venue', delivery_type: 'automatic', category: 'reservation',
+              template_key: 'slots_expired', custom_text: null,
+              game_id: slotExpiry.gameId, venue_id: null,
+              sent_at: new Date().toISOString(),
+            }).then(({ error }) => { if (error) console.error('[notif] slots_expired failed:', error); });
+            setSlotExpiry(await fetchPendingSlotExpiry(user?.id));
+          }}
+        />
+      )}
+      {!confirmedGame && !slotExpiry && gameToRate && (
         <RatingModal key={gameToRate.id} game={gameToRate} onRate={handleRate} onSkip={() => {
           const gId = gameToRate.gameId ?? gameToRate.id;
           setRatings(prev => ({

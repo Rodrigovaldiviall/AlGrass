@@ -188,6 +188,16 @@ input:-webkit-autofill:hover {
 
   /* Game status pills: same width regardless of label */
   .game-status-pill { width: 96px !important; min-width: 96px !important; }
+
+  /* Checkout · método de pago más compacto en desktop (solo visual; móvil intacto).
+     !important sobre los estilos inline, mismo patrón que el resto de este bloque. */
+  .pay-body    { padding: 8px 14px 0 !important; }
+  .pay-shots   { gap: 108px !important; margin-bottom: 6px !important; justify-content: center !important; }
+  .pay-shot-img { max-height: 132px !important; width: auto !important; }
+  /* Contenedores de las 2 fotos: ancho ajustado a la imagen (solo desktop) */
+  .pay-shot-box { flex: 0 0 auto !important; }
+  /* Manito de "Aprobar compras": sobre el texto (solo desktop) */
+  .pay-tap-aprobar { left: 85% !important; }
 }
 
 /* PWA instalada (prueba): banda eliminada — .tab-sab sin altura ni estilos. */

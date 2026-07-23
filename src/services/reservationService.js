@@ -335,6 +335,7 @@ export async function cancelGamePlayer(gameId, { skipNotification = false } = {}
           category:          'refund',
           template_key:      'reservation_cancelled_credit_self',
           game_id:           gameId,
+          reservation_id:    row.reservation_id,
           created_by:        session.user.id,
           sent_at:           new Date().toISOString(),
         }).then(({ error }) => {
@@ -358,6 +359,7 @@ export async function cancelGamePlayer(gameId, { skipNotification = false } = {}
             template_key:      'reservation_cancelled_credit_owner',
             custom_text:       `Cancelaste la reserva. El crédito fue devuelto a ${payerFirst}.`,
             game_id:           gameId,
+            reservation_id:    row.reservation_id,
             created_by:        session.user.id,
             sent_at:           new Date().toISOString(),
           }).then(({ error }) => {
@@ -373,6 +375,7 @@ export async function cancelGamePlayer(gameId, { skipNotification = false } = {}
             template_key:      'guest_invitation_cancelled_credit',
             custom_text:       `${cancelerFirst} canceló su invitación. El crédito fue añadido a tu billetera.`,
             game_id:           gameId,
+            reservation_id:    row.reservation_id,
             created_by:        session.user.id,
             sent_at:           new Date().toISOString(),
           }).then(({ error }) => {
@@ -441,6 +444,9 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
 
   // Fetch payer + all guest names in one query for all notification types
   const guestRows = claimed.filter(r => r.user_id);
+  // Un batch puede abarcar varias reservas → mapa game_player.id → reservation_id
+  // (reservation_id vive en `rows`, no en `claimed`).
+  const resByGpId = Object.fromEntries(rows.map(r => [r.id, r.reservation_id]));
   const allIds = [session.user.id, ...guestRows.map(r => r.user_id)];
   supabase.from('users_public').select('id, full_name').in('id', allIds)
     .then(({ data: users }) => {
@@ -451,28 +457,35 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
         const titularTemplate = selfAlsoCanceled
           ? 'reservation_cancelled_self_and_guests'
           : 'reservation_cancelled_guests_credit';
-        const guestNames = guestRows
-          .map(r => (byId[r.user_id] ?? '').split(' ')[0])
-          .filter(Boolean);
-        const guestNamesStr = guestNames.length === 0 ? 'tus invitados'
-          : guestNames.length === 1 ? guestNames[0]
-          : `${guestNames.slice(0, -1).join(', ')} y ${guestNames[guestNames.length - 1]}`;
-        const titularText = selfAlsoCanceled
-          ? `Cancelaste tu reserva y la de ${guestNamesStr}. El crédito fue añadido a tu billetera.`
-          : `Cancelaste la reserva de ${guestNamesStr}. El crédito fue añadido a tu billetera.`;
-        supabase.from('notifications').insert({
-          recipient_user_id: session.user.id,
-          source_type:       'venue',
-          delivery_type:     'automatic',
-          category:          'refund',
-          template_key:      titularTemplate,
-          custom_text:       titularText,
-          game_id:           gameId,
-          created_by:        session.user.id,
-          sent_at:           new Date().toISOString(),
-        }).then(({ error }) => {
-          if (error) console.error('[notif]', titularTemplate, 'failed for titular:', session.user.id, error);
-          else console.log('[notif]', titularTemplate, 'inserted for titular:', session.user.id);
+        // Agrupar por reservation_id: una notificación-resumen por reserva distinta
+        // (mismo template y texto; solo cambia el subconjunto de invitados).
+        const groups = {};
+        guestRows.forEach(r => { const rid = resByGpId[r.id]; (groups[rid] ??= []).push(r); });
+        Object.entries(groups).forEach(([rid, groupRows]) => {
+          const guestNames = groupRows
+            .map(r => (byId[r.user_id] ?? '').split(' ')[0])
+            .filter(Boolean);
+          const guestNamesStr = guestNames.length === 0 ? 'tus invitados'
+            : guestNames.length === 1 ? guestNames[0]
+            : `${guestNames.slice(0, -1).join(', ')} y ${guestNames[guestNames.length - 1]}`;
+          const titularText = selfAlsoCanceled
+            ? `Cancelaste tu reserva y la de ${guestNamesStr}. El crédito fue añadido a tu billetera.`
+            : `Cancelaste la reserva de ${guestNamesStr}. El crédito fue añadido a tu billetera.`;
+          supabase.from('notifications').insert({
+            recipient_user_id: session.user.id,
+            source_type:       'venue',
+            delivery_type:     'automatic',
+            category:          'refund',
+            template_key:      titularTemplate,
+            custom_text:       titularText,
+            game_id:           gameId,
+            reservation_id:    rid,
+            created_by:        session.user.id,
+            sent_at:           new Date().toISOString(),
+          }).then(({ error }) => {
+            if (error) console.error('[notif]', titularTemplate, 'failed for titular:', session.user.id, error);
+            else console.log('[notif]', titularTemplate, 'inserted for titular:', session.user.id);
+          });
         });
       }
 
@@ -486,6 +499,7 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
           template_key:      'guest_invitation_cancelled_by_owner',
           custom_text:       `${payerFirst} canceló tu invitación.`,
           game_id:           gameId,
+          reservation_id:    resByGpId[r.id],
           created_by:        session.user.id,
           sent_at:           new Date().toISOString(),
         }).then(({ error }) => {
@@ -773,4 +787,23 @@ export async function sendNextDayReminders() {
 
   console.log(`[reminders] queued ${sent} next_day_reminder notifications`);
   return { sent, tomorrowKey };
+}
+
+// ── V6 · Expiración automática de Reserva de Cupos (popup una sola vez) ──────────
+// Mismo patrón que Rating (backend = fuente de verdad, sin localStorage): la RPC
+// get_pending_slot_expiry() ya devuelve, en SQL, la R1 pendiente (released_reason
+// 'automatic', expiry_notified_at IS NULL, partido aún no iniciado), una a la vez.
+export async function fetchPendingSlotExpiry(userId) {
+  if (!supabase || !userId) return null;
+  const { data, error } = await supabase.rpc('get_pending_slot_expiry');
+  if (error) { console.warn('[slotExpiry] fetch:', error.message); return null; }
+  const row = Array.isArray(data) ? data[0] : data;
+  return row ? { id: row.reservation_id, gameId: row.game_id } : null;
+}
+
+// Marca el popup como mostrado (guard atómico is null en la RPC). Idempotente.
+export async function markSlotReservationNotified(reservationId) {
+  if (!supabase || !reservationId) return;
+  const { error } = await supabase.rpc('mark_slot_reservation_notified', { p_reservation_id: reservationId });
+  if (error) console.warn('[slotExpiry] mark:', error.message);
 }

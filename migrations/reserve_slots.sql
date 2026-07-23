@@ -23,8 +23,11 @@
 -- Disponibilidad = total_spots - confirmados - held_activo (misma lógica que
 --   enforce_capacity()). Si p_reserved_slots_total no cabe → GAME_FULL.
 --
--- No crea triggers. No modifica enforce_capacity(). Solo toca game_players
--- (counts_reserved_slot) en el caso total = 0.
+-- No crea triggers. No modifica enforce_capacity(). En el caso total = 0 la
+-- liberación (incl. game_players.counts_reserved_slot) se delega en el PUNTO ÚNICO
+-- release_slot_reservation(...), compartido con la expiración automática del cron.
+-- Al NACER la R1 se fija expires_at (deadline de liberación automática); no se
+-- recalcula después.
 -- ============================================================================
 
 drop function if exists public.reserve_slots(uuid, integer);
@@ -149,6 +152,14 @@ begin
   -- sobrescriben FOUND, así que no se puede confiar en FOUND más abajo.
   v_r1_exists := found;
 
+  -- V6 · Expiración automática: una R1 liberada por el cron (released_reason =
+  -- 'automatic') NO puede volver a reservar cupos para ese partido; la prioridad
+  -- terminó. Se bloquea crear/reactivar/modificar sobre ella (el front además
+  -- deshabilita el botón; esto es la barrera de backend, autoritativa).
+  if v_r1_exists and v_existing.released_reason = 'automatic' then
+    raise exception 'SLOT_RESERVATION_EXPIRED';
+  end if;
+
   -- Estado destino según la cantidad: 0 → 'inactive'; > 0 → 'active'.
   v_new_status := case when p_reserved_slots_total > 0 then 'active' else 'inactive' end;
 
@@ -177,30 +188,26 @@ begin
   -- 10) Escritura V6. Si existe R1 → UPDATE; si no y total>0 → INSERT.
   if v_r1_exists then
     if p_reserved_slots_total = 0 then
-      -- V6 · reducir a 0: el grupo deja de proteger cupos.
-      update public.game_slot_reservations
-         set status               = 'inactive',
-             reserved_slots_total = 0,
-             reserved_slots_used  = 0,
-             updated_at           = now()
-       where id = v_existing.id
-      returning * into v_reservation;
-
-      -- Todos los game_players del grupo dejan de consumir cupos reservados.
-      -- SOLO counts_reserved_slot: no se toca game_slot_reservation_id, status,
-      -- reservation_id, invited_by ni referred_by_user_id.
-      update public.game_players
-         set counts_reserved_slot = false
-       where game_slot_reservation_id = v_existing.id
-         and counts_reserved_slot = true;
-
+      -- V6 · reducir a 0: liberación MANUAL del capitán. Reutiliza el PUNTO ÚNICO de
+      -- escritura de liberación (mismo resultado que la expiración automática; la
+      -- única diferencia es released_reason). Toda la escritura (status/inactive,
+      -- totales a 0, last_released_slots, released_reason/at, y counts_reserved_slot
+      -- de los game_players) vive en release_slot_reservation.
+      perform public.release_slot_reservation(v_existing.id, 'manual_cancel_slots');
+      select * into v_reservation
+        from public.game_slot_reservations
+       where id = v_existing.id;
       return v_reservation;
     end if;
 
     -- total > 0: comportamiento actual (no toca reserved_slots_used ni counts).
+    -- Ciclo de vida: peak conserva el mayor total histórico. NO se tocan
+    -- released_reason ni released_at: representan la ÚLTIMA liberación (histórico),
+    -- no el estado actual, y persisten aunque la R1 se reactive.
     update public.game_slot_reservations
        set status               = v_new_status,
            reserved_slots_total = p_reserved_slots_total,
+           peak_reserved_slots  = greatest(coalesce(peak_reserved_slots, v_existing.reserved_slots_total), p_reserved_slots_total),
            updated_at           = now()
      where id = v_existing.id
     returning * into v_reservation;
@@ -218,6 +225,17 @@ begin
     reserved_by_role,
     status,
     reserved_slots_total,
+    -- Ciclo de vida: initial se fija SOLO al nacer (nunca vuelve a cambiar);
+    -- peak arranca igual al total inicial. released_reason/released_at/
+    -- last_released_slots quedan NULL (la R1 nace activa, no liberada).
+    initial_reserved_slots,
+    peak_reserved_slots,
+    -- expires_at: deadline FIJO de liberación automática, escrito SOLO al nacer y
+    -- nunca recalculado. Ventana por reserved_by_role:
+    --   captain_gold → game_start − 24h
+    --   captain      → game_start − 48h
+    --   venue_owner / algrass_admin / algrass_staff → game_start (sin adelanto)
+    expires_at,
     created_at,
     updated_at
   ) values (
@@ -226,6 +244,13 @@ begin
     v_role,
     v_new_status,
     p_reserved_slots_total,
+    p_reserved_slots_total,
+    p_reserved_slots_total,
+    v_game_start - (case v_role
+                      when 'captain_gold' then interval '24 hours'
+                      when 'captain'      then interval '48 hours'
+                      else interval '0 hours'   -- venue_owner / algrass_admin / algrass_staff → game_start
+                    end),
     now(),
     now()
   )

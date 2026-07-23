@@ -14,6 +14,7 @@ import { resolveCaptainGroupAssignment } from '../services/captainGroupService';
 import { markWaitlistReserved } from '../services/waitlistService';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import { getAvatarUrl } from '../utils/avatar';
+import { gameStartDate } from '../utils/deriveGameState';
 import { useGlobalRoles } from '../hooks/useGlobalRoles';
 
 const ROSTER_KEY = 'pichanga_game_rosters';
@@ -511,7 +512,7 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
         </div>
 
         {/* Scrollable body */}
-        <div ref={scrollRef} className="no-sb" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'none', padding: '10px 16px 0' }}>
+        <div ref={scrollRef} className="no-sb pay-body" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'none', padding: '10px 16px 0' }}>
           <div style={{ paddingBottom: 10 }}>
             <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, letterSpacing: -0.3 }}>Método de pago</div>
             <div style={{ marginTop: 2, fontSize: 13, color: SUB }}>
@@ -530,13 +531,13 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
             <div style={{ marginTop: 6, marginBottom: 6, borderRadius: 10, background: `${YAPE}15`, padding: '7px 12px' }}>
               <div style={{ fontSize: 12.5, color: TEXT, lineHeight: 1.55 }}>Ingresa a tu Yape, selecciona <strong style={{ color: YAPE }}>"Aprobar compras"</strong>, copia el <strong style={{ color: YAPE }}>"Código de aprobación"</strong> y pégalo aquí.</div>
             </div>
-            <div style={{ display: 'flex', gap: 10, marginBottom: 8 }}>
-              <div style={{ flex: 1, padding: 4, borderRadius: 12, background: `${YAPE}18`, border: `1px solid ${YAPE}40`, textAlign: 'center', position: 'relative', overflow: 'hidden' }}>
-                <img src={aprobarComprasYape} alt="Aprobar compras Yape" style={{ width: '100%', height: 'auto', maxHeight: 200, objectFit: 'contain', objectPosition: 'top', display: 'block', borderRadius: 9 }} />
-                <span style={{ position: 'absolute', bottom: '18%', left: '84%', transform: 'translateX(-50%)', fontSize: 18, animation: 'yape-tap 2s ease-in-out infinite', pointerEvents: 'none', userSelect: 'none' }}>👆</span>
+            <div className="pay-shots" style={{ display: 'flex', gap: 10, marginBottom: 8 }}>
+              <div className="pay-shot-box" style={{ flex: 1, padding: 4, borderRadius: 12, background: `${YAPE}18`, border: `1px solid ${YAPE}40`, textAlign: 'center', position: 'relative', overflow: 'hidden' }}>
+                <img className="pay-shot-img" src={aprobarComprasYape} alt="Aprobar compras Yape" style={{ width: '100%', height: 'auto', maxHeight: 200, objectFit: 'contain', objectPosition: 'top', display: 'block', borderRadius: 9 }} />
+                <span className="pay-tap-aprobar" style={{ position: 'absolute', bottom: '18%', left: '84%', transform: 'translateX(-50%)', fontSize: 18, animation: 'yape-tap 2s ease-in-out infinite', pointerEvents: 'none', userSelect: 'none' }}>👆</span>
               </div>
-              <div style={{ flex: 1, padding: 4, borderRadius: 12, background: `${YAPE}18`, border: `1px solid ${YAPE}40`, textAlign: 'center', position: 'relative', overflow: 'hidden' }}>
-                <img src={codigoYape} alt="Código Yape" style={{ width: '100%', height: 'auto', maxHeight: 200, objectFit: 'contain', objectPosition: 'top', display: 'block', borderRadius: 9 }} />
+              <div className="pay-shot-box" style={{ flex: 1, padding: 4, borderRadius: 12, background: `${YAPE}18`, border: `1px solid ${YAPE}40`, textAlign: 'center', position: 'relative', overflow: 'hidden' }}>
+                <img className="pay-shot-img" src={codigoYape} alt="Código Yape" style={{ width: '100%', height: 'auto', maxHeight: 200, objectFit: 'contain', objectPosition: 'top', display: 'block', borderRadius: 9 }} />
                 <span style={{ position: 'absolute', bottom: '10%', left: '43%', transform: 'translateX(-50%)', fontSize: 18, animation: 'yape-tap 2s ease-in-out 0.4s infinite', pointerEvents: 'none', userSelect: 'none' }}>👆</span>
               </div>
             </div>
@@ -791,6 +792,10 @@ export default function ConfirmReservation() {
 
   // Reserva de cupos (UX de checkout para capitanes). releaseHours según rol.
   const releaseHours = isCaptainGold ? 24 : 48;
+  // Misma regla temporal que GameDetail: dentro de las 24/48h previas no se crea/modifica
+  // reserva de cupos. El backend (reserve_slots) sigue siendo la verdad.
+  const _slotGameStart = gameStartDate(game?.dateKey, game?.time24);
+  const slotReservationClosed = !!_slotGameStart && Date.now() >= _slotGameStart.getTime() - releaseHours * 3600_000;
   const captainColor = isCaptainGold ? '#F5B301' : '#E5383B';
   const stepBtn = (onClick, disabled, plus) => (
     <button onClick={onClick} disabled={disabled}
@@ -863,7 +868,7 @@ export default function ConfirmReservation() {
             source_type: 'venue', delivery_type: 'automatic', category: 'reservation',
             template_key: 'reservation_confirmed_with_guests',
             custom_text: 'Tu reserva incluye invitados. Recuérdales la hora y lugar.',
-            game_id: gameId, venue_id: game?.venueId ?? null,
+            game_id: gameId, venue_id: game?.venueId ?? null, reservation_id: reservationId,
             sent_at: new Date().toISOString(),
           }).then(({ error }) => {
             if (error) console.error('[notif] reservation_confirmed_with_guests (invited) failed:', error);
@@ -941,7 +946,7 @@ export default function ConfirmReservation() {
             source_type: 'venue', delivery_type: 'automatic', category: 'reservation',
             template_key: 'reservation_confirmed_with_guests',
             custom_text: `Añadiste a ${guestNamesText(guests)} a tu reserva. Recuérdales la hora y lugar.`,
-            game_id: gameId, venue_id: game?.venueId ?? null,
+            game_id: gameId, venue_id: game?.venueId ?? null, reservation_id: reservationId,
             sent_at: new Date().toISOString(),
           }).then(({ error }) => {
             if (error) console.error('[notif] reservation_confirmed_with_guests (addGuests) failed:', error);
@@ -1036,15 +1041,26 @@ export default function ConfirmReservation() {
         }));
       }
       const _tpl = guests.length > 0 ? 'reservation_confirmed_with_guests' : 'reservation_confirmed';
-      const _tplText = guests.length > 0
-        ? 'Tu reserva incluye invitados. Recuérdales la hora y lugar.'
-        : 'Tu reserva ha sido confirmada. ¡Hasta la cancha!';
+      let _tplText;
+      if (reservedSlots > 0) {
+        // Checkout + Reserva de Cupos: UNA sola notificación, enriquecida (Casos 2/3).
+        const _cupos   = `${reservedSlots} ${reservedSlots === 1 ? 'cupo' : 'cupos'}`;
+        const _incluye = guests.length > 0
+          ? `${guests.length} ${guests.length === 1 ? 'invitado' : 'invitados'} y ${_cupos}`
+          : _cupos;
+        const _plural  = (reservedSlots + guests.length) > 1;
+        _tplText = `Tu reserva incluye ${_incluye}. Compártelo${_plural ? 's' : ''} con tus amigos antes de ${releaseHours} h del partido.`;
+      } else {
+        _tplText = guests.length > 0
+          ? 'Tu reserva incluye invitados. Recuérdales la hora y lugar.'
+          : 'Tu reserva ha sido confirmada. ¡Hasta la cancha!';
+      }
       supabase?.from('notifications').insert({
         recipient_user_id: authUser?.id,
         source_type: 'venue', delivery_type: 'automatic', category: 'reservation',
         template_key: _tpl,
         custom_text:  _tplText,
-        game_id: game?.id, venue_id: game?.venueId ?? null,
+        game_id: game?.id, venue_id: game?.venueId ?? null, reservation_id: reservationId,
         sent_at: new Date().toISOString(),
       }).then(({ error }) => {
         if (error) console.error('[notif]', _tpl, 'failed:', error);
@@ -1186,20 +1202,20 @@ export default function ConfirmReservation() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0' }}>
               <div style={{ width: 46, height: 46, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <svg width="46" height="46" viewBox="0 0 24 24" fill="none">
-                  <path d="M12 3l7 3v5c0 4.2-2.9 7.6-7 8.8-4.1-1.2-7-4.6-7-8.8V6l7-3z" fill={captainColor} stroke={captainColor} strokeWidth="1.2" strokeLinejoin="round"/>
+                  <path d="M12 3l7 3v5c0 4.2-2.9 7.6-7 8.8-4.1-1.2-7-4.6-7-8.8V6l7-3z" fill={slotReservationClosed ? '#C7C7CC' : captainColor} stroke={slotReservationClosed ? '#C7C7CC' : captainColor} strokeWidth="1.2" strokeLinejoin="round"/>
                 </svg>
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-                  <span style={{ fontSize: 15.5, fontWeight: 700, color: TEXT, letterSpacing: -0.2, whiteSpace: 'nowrap' }}>Reserva cupos</span>
-                  <span style={{ fontSize: 12, color: SUB, whiteSpace: 'nowrap', flexShrink: 0 }}>Pagan ellos</span>
+                  <span style={{ fontSize: 15.5, fontWeight: 700, color: slotReservationClosed ? '#9A9AA0' : TEXT, letterSpacing: -0.2, whiteSpace: 'nowrap' }}>Reserva cupos</span>
+                  <span style={{ fontSize: 12, color: slotReservationClosed ? '#C7C7CC' : SUB, whiteSpace: 'nowrap', flexShrink: 0 }}>Pagan ellos</span>
                 </div>
-                <div style={{ fontSize: 12.5, color: SUB, marginTop: 1 }}>Hasta {releaseHours}h del partido</div>
+                <div style={{ fontSize: 12.5, color: slotReservationClosed ? '#C7C7CC' : SUB, marginTop: 1 }}>Hasta {releaseHours}h antes del partido</div>
               </div>
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                {stepBtn(() => setReservedSlots(n => (n > 0 ? n - 1 : n)), reservedSlots <= 0, false)}
-                <span style={{ minWidth: 22, textAlign: 'center', fontSize: 16, fontWeight: 700, color: TEXT }}>{reservedSlots}</span>
-                {stepBtn(() => setReservedSlots(n => n + 1), reservedMax != null && reservedSlots >= reservedMax, true)}
+                {stepBtn(() => setReservedSlots(n => (n > 0 ? n - 1 : n)), slotReservationClosed || reservedSlots <= 0, false)}
+                <span style={{ minWidth: 22, textAlign: 'center', fontSize: 16, fontWeight: 700, color: slotReservationClosed ? '#9A9AA0' : TEXT }}>{reservedSlots}</span>
+                {stepBtn(() => setReservedSlots(n => n + 1), slotReservationClosed || (reservedMax != null && reservedSlots >= reservedMax), true)}
               </div>
             </div>
           </div>

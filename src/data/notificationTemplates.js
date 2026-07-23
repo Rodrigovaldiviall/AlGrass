@@ -29,6 +29,36 @@ export const notificationTemplates = {
     imageType:   'venue_image',
   },
 
+  // ── Reserva de Cupos (Gestionar mi reserva / expiración) ────────────────────
+
+  slots_reserved: {
+    title:       'Cupos reservados',
+    body:        'Reservaste cupos para tu grupo. Compártelos con tus amigos.',
+    sourceLabel: 'Tu partido',
+    imageType:   'venue_image',
+  },
+
+  slots_modified: {
+    title:       'Cupos modificados',
+    body:        'Actualizaste tus cupos reservados. Compártelos con tus amigos.',
+    sourceLabel: 'Tu partido',
+    imageType:   'venue_image',
+  },
+
+  slots_cancelled: {
+    title:       'Cupos cancelados',
+    body:        'Los cupos reservados volvieron a estar disponibles para cualquier jugador.',
+    sourceLabel: 'Tu partido',
+    imageType:   'venue_image',
+  },
+
+  slots_expired: {
+    title:       'Cupos expirados',
+    body:        'Tus cupos reservados expiraron y volvieron a estar disponibles para cualquier jugador.',
+    sourceLabel: 'Tu partido',
+    imageType:   'venue_image',
+  },
+
   guest_reservation_confirmed: {
     title:       'Estás en el partido',
     body:        'Tu lugar fue confirmado. Revisa los detalles antes de ir.',

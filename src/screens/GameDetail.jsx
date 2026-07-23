@@ -748,7 +748,7 @@ function PlayerModal({ player, onClose, isHost = false }) {
 }
 
 // ── ModifySheet
-function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, onReserveSlots, reserveSlotsDisabled = false, reservedUsed = 0, reservedTotal = 0 }) {
+function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, onReserveSlots, reserveSlotsDisabled = false, reserveSlotsHint = 'Debes estar inscrito', reservedUsed = 0, reservedTotal = 0 }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
@@ -796,7 +796,7 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
               <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Reservar cupos</span>
               {reserveSlotsDisabled && (
-                <span style={{ fontSize: 12.5, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap' }}>- Debes estar inscrito</span>
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap' }}>- {reserveSlotsHint}</span>
               )}
             </div>
             <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
@@ -1317,14 +1317,29 @@ export default function GameDetail() {
   function openModify() {
     setModifyOpen(true);
     if (isCaptain || isCaptainGold) {
-      supabase.rpc('get_slot_reservation', { p_game_id: gameId }).then(({ data }) => {
-        setSlotRes(Array.isArray(data) ? data[0] : data);
+      // get_slot_reservation (used/total/pool) + released_reason de la R1 propia por
+      // SELECT directo (RLS select-own) — así no se modifica esa RPC caliente. El
+      // released_reason distingue una R1 auto-expirada ('automatic') para deshabilitar
+      // "Reservar cupos". Solo al abrir "Gestionar mi reserva" (acción de capitán).
+      Promise.all([
+        supabase.rpc('get_slot_reservation', { p_game_id: gameId }),
+        supabase.from('game_slot_reservations')
+          .select('released_reason')
+          .eq('game_id', gameId)
+          .eq('reserved_by_user_id', user?.id)
+          .maybeSingle(),
+      ]).then(([{ data }, { data: r1 }]) => {
+        const base = Array.isArray(data) ? data[0] : data;
+        setSlotRes(base ? { ...base, released_reason: r1?.released_reason ?? null } : base);
       });
     }
   }
   // "Reservar cupos": reutiliza el slotRes ya cargado (no re-llama la RPC si existe).
   async function openReserveSlots() {
     setModifyOpen(false);
+    // Ventana de liberación alcanzada: no abrir el sheet (además del botón ya deshabilitado).
+    // Regla temporal, independiente del estado de la R1.
+    if (slotReservationClosed) return;
     if (!slotRes) {
       const { data } = await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
       setSlotRes(Array.isArray(data) ? data[0] : data);
@@ -1332,8 +1347,31 @@ export default function GameDetail() {
     setReserveSlotsOpen(true);
   }
   async function saveReserveSlots(total) {
+    const prevTotal = slotRes?.reserved_slots_total ?? 0; // estado previo → crear vs modificar
     const { error } = await supabase.rpc('reserve_slots', { p_game_id: gameId, p_reserved_slots_total: total });
-    if (error) { console.error('[reserve_slots]', error); return false; }
+    if (error) {
+      console.error('[reserve_slots]', error);
+      // Distingue la expiración automática del error real de capacidad (mensaje distinto).
+      return error.message?.includes('SLOT_RESERVATION_EXPIRED') ? 'expired' : false;
+    }
+    // Notificación persistente (mismo sistema que el checkout): crear / modificar / cancelar.
+    let template_key, custom_text = null;
+    if (total === 0) {
+      template_key = 'slots_cancelled';
+    } else if (prevTotal === 0) {
+      template_key = 'slots_reserved';
+      custom_text = `Reservaste ${total} ${total === 1 ? 'cupo' : 'cupos'}. Compártelo${total === 1 ? '' : 's'} con tus amigos antes de ${releaseHours} h del partido.`;
+    } else {
+      template_key = 'slots_modified';
+      custom_text = `Ahora tienes ${total} ${total === 1 ? 'cupo' : 'cupos'} reservados. Compártelo${total === 1 ? '' : 's'} con tus amigos antes de ${releaseHours} h del partido.`;
+    }
+    supabase?.from('notifications').insert({
+      recipient_user_id: user?.id,
+      source_type: 'venue', delivery_type: 'automatic', category: 'reservation',
+      template_key, custom_text,
+      game_id: gameId, venue_id: null,
+      sent_at: new Date().toISOString(),
+    }).then(({ error: nErr }) => { if (nErr) console.error('[notif]', template_key, 'failed:', nErr); });
     const { data } = await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
     setSlotRes(Array.isArray(data) ? data[0] : data);
     return true;
@@ -1347,6 +1385,11 @@ export default function GameDetail() {
 
   const gameStart = useMemo(() => gameStartDate(g.dateKey, g.time24), [g.dateKey, g.time24]);
   const gameEnd   = useMemo(() => gameEndDate(g.dateKey, g.time24, g.durationMin), [g.dateKey, g.time24, g.durationMin]);
+  // Regla temporal de liberación (idéntica a reserve_slots): captain_gold → 24h, captain → 48h
+  // antes del inicio. Dentro de esa ventana los cupos pasan a público: no se crean ni modifican
+  // reservas, exista o no una R1 (activa/cancelada/expirada). Se basa en el tiempo, no en la R1.
+  const releaseHours = isCaptainGold ? 24 : 48;
+  const slotReservationClosed = !!gameStart && now >= new Date(gameStart.getTime() - releaseHours * 3600_000);
   // Attendance window: [game_start - 15min, game_end)
   const attendanceOpen = infoMode && !!gameStart && !!gameEnd
     && now >= new Date(gameStart.getTime() - 15 * 60_000)
@@ -1898,7 +1941,8 @@ export default function GameDetail() {
           canAddPlayers={hostWindowOpen}
           invitedCount={invitedByHost.length}
           showReserveSlots={!isHost && (isCaptain || isCaptainGold)}
-          reserveSlotsDisabled={mySlotCanceled}
+          reserveSlotsDisabled={mySlotCanceled || slotReservationClosed}
+          reserveSlotsHint={slotReservationClosed && !mySlotCanceled ? 'Cupos liberados' : 'Debes estar inscrito'}
           onReserveSlots={openReserveSlots}
           reservedUsed={slotRes?.reserved_slots_used ?? 0}
           reservedTotal={slotRes?.reserved_slots_total ?? 0}
@@ -1910,7 +1954,7 @@ export default function GameDetail() {
           reservedInitial={slotRes.reserved_slots_total ?? 0}
           publicAvailable={(slotRes.pool ?? 0) + (slotRes.reserved_slots_remaining ?? 0)}
           poolPublico={slotRes.pool ?? 0}
-          releaseHours={isCaptainGold ? 24 : 48}
+          releaseHours={releaseHours}
           shareLink={buildGameShareUrl(gameId, { sharedByUserId: user?.id })}
           onAccept={saveReserveSlots}
           onConfirmed={setReserveConfirm}
@@ -1922,20 +1966,14 @@ export default function GameDetail() {
       {reserveConfirm && !reserveSlotsOpen && (
         <ConfirmedOverlay
           title={
-            reserveConfirm.total === 0 ? 'Cancelaste tu reserva de cupos'
-            : reserveConfirm.created  ? 'Reserva de cupos confirmada'
-            : 'Modificación confirmada'
+            reserveConfirm.total === 0 ? 'Cupos cancelados.'
+            : reserveConfirm.created  ? 'Cupos reservados.'
+            : 'Cupos modificados.'
           }
           lines={
             reserveConfirm.total === 0
-              ? ['Los jugadores seguirán inscritos, pero si alguno cancela, el cupo se liberará al público.']
-              : [
-                  reserveConfirm.created
-                    ? `Has reservado ${reserveConfirm.total} ${reserveConfirm.total === 1 ? 'cupo' : 'cupos'} para este partido.`
-                    : 'Tu reserva de cupos fue actualizada correctamente.',
-                  'Comparte el link con tus amigos.',
-                  <span>Recuerda que los cupos <span style={{ color: RED, textDecoration: 'underline' }}>se liberarán {isCaptainGold ? 24 : 48}h</span> antes del partido.</span>,
-                ]
+              ? [`Recuerda que tienes hasta ${releaseHours} horas antes del partido para reservar nuevamente.`]
+              : [`Reservaste ${reserveConfirm.total} ${reserveConfirm.total === 1 ? 'cupo' : 'cupos'}. Comparte el link con tus amigos antes de ${releaseHours}h del partido.`]
           }
           shareLink={buildGameShareUrl(gameId, { sharedByUserId: user?.id })}
           onOK={() => setReserveConfirm(null)}

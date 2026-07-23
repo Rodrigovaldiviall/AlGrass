@@ -11,10 +11,19 @@ import { supabase } from '../lib/supabase';
 import { renderNotification } from '../data/notificationTemplates';
 import { setNotifBadge, getNotifCount } from '../utils/notifBadge';
 import { isGamePast } from '../utils/deriveGameState';
+import { getVisibleBottom } from '../utils/layout';
 
 const LONG_MSG  = 100;
 const PAGE_SIZE = 20;
-const NOTIF_SELECT = 'id, template_key, custom_text, game_id, read_at, created_at, games:game_id(date_key, time, duration_min, fields:field_id(venues:venue_id(name)))';
+const NOTIF_SELECT = 'id, template_key, custom_text, game_id, reservation_id, read_at, created_at, games:game_id(date_key, time, duration_min, fields:field_id(venues:venue_id(name)))';
+
+// Plantillas de cancelación asociadas a cada tipo de notificación navegable.
+// El algoritmo de handlePress es único para todas; lo único que varía es este mapeo.
+const CANCELLATION_TEMPLATES = {
+  invited_by_player:                 ['guest_invitation_cancelled_by_owner', 'reservation_cancelled_credit_owner'],
+  reservation_confirmed:             ['reservation_cancelled_credit_self', 'reservation_cancelled_self_and_guests', 'reservation_cancelled_guests_credit'],
+  reservation_confirmed_with_guests: ['reservation_cancelled_credit_self', 'reservation_cancelled_self_and_guests', 'reservation_cancelled_guests_credit'],
+};
 
 const _DOW = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const _MON = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -42,8 +51,9 @@ function mapRow(row) {
     dateKey:     ymd(d.getTime()),
     read:        row.read_at != null,
     createdAt:   d.getTime(),
-    templateKey: row.template_key ?? null,
-    gameId:      row.game_id ?? null,
+    templateKey:    row.template_key ?? null,
+    gameId:         row.game_id ?? null,
+    reservationId:  row.reservation_id ?? null,
   };
 }
 
@@ -106,10 +116,19 @@ function AppIcon({ read }) {
 
 // ── Row — cada notificación en su propio card
 function NotificationRow({ n, expanded, onPress, highlighted = false }) {
-  const isLong     = n.message.length > LONG_MSG;
-  const isExpanded = expanded || !isLong;
+  const msgRef = useRef(null);
+  const [overflowing, setOverflowing] = useState(false);
+  const isExpanded = expanded && overflowing; // expandir solo si el texto excede 3 líneas
   const titleColor = TEXT;
   const msgColor   = '#3C3C44';
+
+  // Medir el desborde real contra el clamp de 3 líneas (solo en estado colapsado,
+  // para no entrar en bucle al expandir). título + hasta 3 filas → sin "Ver más".
+  useEffect(() => {
+    const el = msgRef.current;
+    if (!el || isExpanded) return;
+    setOverflowing(el.scrollHeight - el.clientHeight > 1);
+  }, [n.message, isExpanded]);
 
   return (
     <button
@@ -139,17 +158,17 @@ function NotificationRow({ n, expanded, onPress, highlighted = false }) {
           <span style={{ fontSize: 11, color: n.read ? '#C4C4CC' : SUB, flexShrink: 0 }}>{n.time}</span>
         </div>
 
-        <div style={{
+        <div ref={msgRef} style={{
           fontSize: 12.5, color: msgColor, lineHeight: 1.42,
           display: isExpanded ? 'block' : '-webkit-box',
-          WebkitLineClamp: isExpanded ? undefined : 2,
-          WebkitBoxOrient: isExpanded ? undefined : 'vertical',
+          WebkitLineClamp: isExpanded ? undefined : 3,
+          WebkitBoxOrient: 'vertical',
           overflow: isExpanded ? 'visible' : 'hidden',
         }}>
           {n.message}
         </div>
 
-        {isLong && (
+        {overflowing && (
           <span style={{ fontSize: 11, color: BLUE, fontWeight: 600, marginTop: 3, display: 'block' }}>
             {isExpanded ? 'Ver menos' : 'Ver más'}
           </span>
@@ -304,8 +323,7 @@ export default function Notifications() {
       const el = highlightedNotifRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      const tabBar = document.querySelector('.tab-bar');
-      const visibleBottom = tabBar ? tabBar.getBoundingClientRect().top : window.innerHeight;
+      const visibleBottom = getVisibleBottom();
       const overBottom = rect.bottom - visibleBottom;
       const overTop    = 80 - rect.top;
       if (overBottom > 0 || overTop > 0) {
@@ -365,35 +383,56 @@ export default function Notifications() {
       navigate(`/game/${notif.gameId}`);
       return;
     }
-    if (notif?.templateKey === 'invited_by_player' && notif?.gameId) {
-      // Paso 1: buscar cancelación asociada a esta invitación (datos ya en memoria)
-      const candidates = notifications.filter(n =>
-        (n.templateKey === 'guest_invitation_cancelled_by_owner' ||
-         n.templateKey === 'reservation_cancelled_credit_owner') &&
-        n.gameId === notif.gameId &&
-        n.createdAt > notif.createdAt
-      );
-      const related = candidates.reduce(
-        (closest, n) => !closest || n.createdAt < closest.createdAt ? n : closest,
-        null
-      );
-      if (related) {
-        setHighlightedNotifId(related.id);
+    // Navegación parametrizable: mismo algoritmo para invitaciones y reservas propias;
+    // solo cambia qué plantillas de cancelación pertenecen a cada tipo (CANCELLATION_TEMPLATES).
+    const cancelTemplates = notif?.templateKey ? CANCELLATION_TEMPLATES[notif.templateKey] : null;
+    if (cancelTemplates && notif?.gameId) {
+      // "Reserva viva" = existe ≥1 game_player CONFIRMADO que me pertenece
+      // (titular O invitados: user_id | payer_id | invited_by_user_id = yo). Reutiliza
+      // el mismo lookup, ampliando el filtro (para un invitado equivale a su propio slot).
+      const findAlive = async () => {
+        if (!supabase || !user?.id) return null;
+        let q = supabase
+          .from('game_players')
+          .select('games:game_id(date_key, time, duration_min)')
+          .eq('status', 'confirmed')
+          .limit(1);
+        // Nuevo modelo: identificar la reserva por reservation_id. Fallback (notifs
+        // antiguas sin reservation_id): lógica previa por game_id + relación de usuario.
+        q = notif.reservationId
+          ? q.eq('reservation_id', notif.reservationId)
+          : q.eq('game_id', notif.gameId).or(`user_id.eq.${user.id},payer_id.eq.${user.id},invited_by_user_id.eq.${user.id}`);
+        const { data } = await q.maybeSingle();
+        return data ?? null;
+      };
+      // Cancelación relacionada más cercana (idéntico: filter + reduce). Correlación por
+      // reservation_id; fallback por game_id si la notificación no lo tiene.
+      const matchesReservation = notif.reservationId
+        ? (n) => n.reservationId === notif.reservationId
+        : (n) => n.gameId === notif.gameId;
+      const findCancellation = () => notifications
+        .filter(n => cancelTemplates.includes(n.templateKey) && matchesReservation(n) && n.createdAt > notif.createdAt)
+        .reduce((closest, n) => !closest || n.createdAt < closest.createdAt ? n : closest, null);
+      // Abrir el partido solo si NO ha terminado (gate isGamePast intacto → Caso D).
+      const openGameIfLive = (row) => {
+        if (row && !isGamePast(row.date_key, row.time, row.duration_min)) {
+          navigate('/profile', { state: { highlightGame: notif.gameId } });
+        }
+      };
+
+      if (notif.templateKey === 'invited_by_player') {
+        // Invitaciones: comportamiento ORIGINAL sin cambios (cancelación primero).
+        const related = findCancellation();
+        if (related) { setHighlightedNotifId(related.id); return; }
+        openGameIfLive((await findAlive())?.games);
         return;
       }
-      // Paso 2: sin cancelación → consultar Supabase para slot confirmado + partido vivo
-      if (!supabase || !user?.id) return;
-      const { data: gpRow } = await supabase
-        .from('game_players')
-        .select('games:game_id(date_key, time, duration_min)')
-        .eq('game_id', notif.gameId)
-        .eq('user_id', user.id)
-        .eq('status', 'confirmed')
-        .maybeSingle();
-      if (gpRow && !isGamePast(gpRow.games?.date_key, gpRow.games?.time, gpRow.games?.duration_min)) {
-        navigate('/profile', { state: { highlightGame: notif.gameId } });
-      }
-      // Paso 4: partido terminado o sin slot activo → no hacer nada
+
+      // Reservas propias (nueva regla): "reserva viva" tiene prioridad sobre la cancelación.
+      const alive = await findAlive();          // Casos A/B: titular o invitado confirmado
+      if (alive) { openGameIfLive(alive.games); return; }
+      const related = findCancellation();       // Caso C: nada confirmado → cancelación más cercana
+      if (related) { setHighlightedNotifId(related.id); return; }
       return;
     }
     setExpandedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });

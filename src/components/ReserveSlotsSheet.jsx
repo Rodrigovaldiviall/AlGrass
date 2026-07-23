@@ -29,6 +29,7 @@ export default function ReserveSlotsSheet({ inscritos = 0, reservedInitial = 0, 
   const [reservados, setReservados] = useState(reservedInitial);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState(false);
+  const [errorExpired, setErrorExpired] = useState(false);
   const [saving, setSaving] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
@@ -45,16 +46,18 @@ export default function ReserveSlotsSheet({ inscritos = 0, reservedInitial = 0, 
     const next    = Math.max(reservados - inscritos, 0);
     const total   = reservados;
     const created = reservedInitial === 0;    // 0 → >0 = nueva reserva (no modificación)
-    setSaving(true); setError(false);
+    setSaving(true); setError(false); setErrorExpired(false);
     const ok = await onAccept?.(total);       // → reserve_slots (fuente de verdad V6)
     setSaving(false);
-    if (!ok) { failReservation(); return; }
+    // onAccept devuelve: true (ok) | 'expired' (SLOT_RESERVATION_EXPIRED) | false (otro error).
+    if (ok !== true) { failReservation(ok === 'expired'); return; }
     onConfirmed?.({ generatedNew: next > cur, total, remaining: next, created });
     dismiss();
   }
-  function failReservation() {
+  function failReservation(expired = false) {
     setReservados(reservedInitial); // restaurar al último valor confirmado
     setError(true);                 // mostrar el recuadro de alerta
+    setErrorExpired(expired);       // expirada → mensaje específico; si no, el de capacidad
   }
 
   function flashCopied() { setCopied(true); setTimeout(() => setCopied(false), 1500); }
@@ -191,8 +194,12 @@ export default function ReserveSlotsSheet({ inscritos = 0, reservedInitial = 0, 
               <path d="M15 9l-6 6M9 9l6 6" stroke={DANGER} strokeWidth="1.8" strokeLinecap="round"/>
             </svg>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: DANGER, letterSpacing: -0.1 }}>No se logró actualizar la reserva.</div>
-              <div style={{ fontSize: 13, color: TEXT, marginTop: 3, lineHeight: 1.4 }}>Ya no existen suficientes cupos públicos disponibles. Inténtalo nuevamente.</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: DANGER, letterSpacing: -0.1 }}>{errorExpired ? 'No se logró realizar la reserva.' : 'No se logró actualizar la reserva.'}</div>
+              <div style={{ fontSize: 13, color: TEXT, marginTop: 3, lineHeight: 1.4 }}>
+                {errorExpired
+                  ? `No es posible realizar reservas antes de ${releaseHours} horas antes del partido.`
+                  : 'Ya no existen suficientes cupos públicos disponibles. Inténtalo nuevamente.'}
+              </div>
             </div>
           </div>
         )}
