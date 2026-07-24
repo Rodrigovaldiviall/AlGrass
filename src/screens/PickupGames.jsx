@@ -982,11 +982,11 @@ export default function PickupGames() {
     else {
       try { localStorage.setItem(COACH_KEY, '1'); } catch {}
       setCoachStep(null);
-      // Shared Link: terminado el tutorial, ir al partido del enlace.
-      if (location.state?.sharedOnboarding) {
-        const ctx = sharedLink.read();
-        if (ctx?.gameId) navigate(`/game/${ctx.gameId}`);
-      }
+      // Shared Link pendiente: terminado el tutorial (mismo onboarding que el orgánico),
+      // el destino final es el partido del enlace. NO se consume ni borra el contexto
+      // (se reutiliza luego para referral / R1 / analytics). Sin ctx → se queda en /games.
+      const ctx = sharedLink.read();
+      if (ctx?.gameId) navigate(`/game/${ctx.gameId}`);
     }
   }
 
@@ -995,13 +995,6 @@ export default function PickupGames() {
   useEffect(() => {
     if (location.state?.showCitySheet) { setCitySheetOpen(true); setCityOnboarding(true); }
   }, [location.state?.showCitySheet]);
-  // Shared Link: onboarding SIN CitySheet → disparar el MISMO tutorial (coach).
-  // Si el coach ya se vio, ir directo al partido (no dejar al usuario en /games).
-  useEffect(() => {
-    if (!location.state?.sharedOnboarding) return;
-    if (!localStorage.getItem(COACH_KEY)) setCoachStep(0);
-    else { const ctx = sharedLink.read(); if (ctx?.gameId) navigate(`/game/${ctx.gameId}`); }
-  }, [location.state?.sharedOnboarding]); // eslint-disable-line react-hooks/exhaustive-deps
   const fgTick = useForegroundTick();
   const [games, setGames]     = useState(() => _gamesCache);
   const [loading, setLoading] = useState(_gamesCache.length === 0);

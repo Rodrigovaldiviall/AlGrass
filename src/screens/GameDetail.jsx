@@ -17,6 +17,7 @@ import RatingBlock from '../components/RatingBlock';
 import { useAuth } from '../context/AuthContext';
 import { cancelGamePlayer, cancelGuestPlayers, cancelInvitedPlayers } from '../services/reservationService';
 import { supabase } from '../lib/supabase';
+import * as sharedLink from '../lib/sharedLink';
 import { getAvatarUrl } from '../utils/avatar';
 import { getVenueCoverUrl } from '../utils/venue';
 import { deriveGameState, requiredPlayers, gameStartDate, gameEndDate, isGamePast, isGameStarted, deriveAttendance } from '../utils/deriveGameState';
@@ -1417,6 +1418,27 @@ export default function GameDetail() {
       if (fetched) setSbGame(fetched);
     });
   }, [gameId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Shared Link: al abrir el partido del enlace, si su ciudad difiere de la del
+  // perfil, actualizar el contexto de ciudad de la app (mismo write que
+  // handleCityChange) para que "volver atrás" muestre los partidos de esa ciudad.
+  // NO consume ni borra el sharedLinkContext (se reutiliza en referral/R1/analytics).
+  useEffect(() => {
+    // Regla: el Shared Link permanece SOLO almacenado durante el onboarding. Excluye el
+    // montaje inicial de GameDetail bajo el Intro (ruta /game/:id de la entrada): solo
+    // actúa cuando el usuario ya pasó el Intro (destino final tras advanceCoach, o returning).
+    if (!localStorage.getItem('algrass_intro_seen')) return;
+    const ctx = sharedLink.read();
+    const city = sbGame?.city;
+    if (!ctx || ctx.gameId !== gameId || !city) return;
+    try {
+      const p = JSON.parse(localStorage.getItem('pichanga_profile')) || {};
+      if (p.city !== city) {
+        localStorage.setItem('pichanga_profile', JSON.stringify({ ...p, city }));
+        if (user?.id) supabase.from('users').update({ city }).eq('id', user.id);
+      }
+    } catch {}
+  }, [gameId, sbGame?.city, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!gameId) return;
