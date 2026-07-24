@@ -93,7 +93,8 @@ function StaffModalBridge() {
 }
 
 const Welcome      = lazy(() => import('./screens/Welcome'));
-const PickupGames  = lazy(() => import('./screens/PickupGames'));
+const loadPickupGames = () => import('./screens/PickupGames'); // loader compartido (preload sin duplicar)
+const PickupGames  = lazy(loadPickupGames);
 const GameDetail   = lazy(() => import('./screens/GameDetail'));
 const AuthScreen   = lazy(() => import('./screens/Auth'));
 const AuthGate     = lazy(() => import('./screens/Auth').then(m => ({ default: m.AuthGate })));
@@ -168,6 +169,16 @@ function IntroGate() {
       sharedLink.setCity(g.city);
     });
     return () => { cancelled = true; };
+  }, [introDone]);
+
+  // Preload transparente del chunk de PickupGames durante el Intro: cuando se
+  // navegue a /games ya estará en caché → la transición commitea sin ventana de
+  // suspensión (elimina el destello de GameDetail). Fire-and-forget: si falla, cae
+  // al comportamiento actual; el módulo deduplica la descarga; sin warnings si el
+  // usuario abandona el Intro antes de que termine.
+  useEffect(() => {
+    if (introDone) return;
+    loadPickupGames().catch(() => {});
   }, [introDone]);
 
   if (introDone) return null;
