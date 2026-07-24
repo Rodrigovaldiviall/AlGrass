@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useEffect, useRef } from 'react';
+import { lazy, Suspense, useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { StaffProvider, useStaff } from './context/StaffContext';
@@ -147,9 +147,6 @@ function IntroGate() {
     } catch { return true; }
   });
 
-  // Contexto Shared Link determinado UNA vez (en onStart) y reutilizado en onDone.
-  const sharedCtxRef = useRef(null);
-
   // Shared Link: si el usuario nuevo entró por un enlace, resolver la ciudad del
   // partido DURANTE el intro y escribirla en el perfil (mismo mecanismo que
   // handleCityChange: pichanga_profile.city), para que ya esté disponible antes de
@@ -175,18 +172,13 @@ function IntroGate() {
     <IntroScreen
       onStart={() => {
         try { localStorage.setItem(WELCOME_KEY, '1'); } catch {}
-        // Determinar UNA vez si hay contexto Shared Link (reutilizado en onDone).
-        sharedCtxRef.current = sharedLink.read();
-        // Shared Link: navegar al INICIO del fade → GameDetail se desmonta antes de
-        // que el intro se transparente (elimina el destello). Detrás del fade queda
-        // /games con el tutorial. Solo esta rama.
-        if (sharedCtxRef.current) navigate('/games', { state: { sharedOnboarding: true } });
       }}
       onDone={() => {
         setIntroDone(true);
-        // Orgánico (sin contexto): navega al final del fade con showCitySheet, igual
-        // que hoy. Shared Link ya navegó en onStart → no repetir.
-        if (!sharedCtxRef.current) setTimeout(() => navigate('/games', { state: { showCitySheet: true } }), 0);
+        // Shared Link → onboarding sin CitySheet (ciudad ya resuelta). Sin contexto
+        // → comportamiento actual idéntico (showCitySheet).
+        const state = sharedLink.read() ? { sharedOnboarding: true } : { showCitySheet: true };
+        setTimeout(() => navigate('/games', { state }), 0);
       }}
     />
   );
