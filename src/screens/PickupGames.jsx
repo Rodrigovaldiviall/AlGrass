@@ -14,6 +14,7 @@ import VenueBottomSheet from '../components/VenueBottomSheet';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import * as sharedLink from '../lib/sharedLink';
 import { deriveGameState, requiredPlayers, isGameStarted, isGamePast } from '../utils/deriveGameState';
 import { GameMetaLine } from '../components/GameMetaLine';
 import { abbreviateName, formatDateLabel } from '../utils/format';
@@ -978,7 +979,15 @@ export default function PickupGames() {
   const [coachStep, setCoachStep] = useState(null);
   function advanceCoach() {
     if (coachStep < COACH_STEPS.length - 1) { setCoachStep(s => s + 1); }
-    else { try { localStorage.setItem(COACH_KEY, '1'); } catch {} setCoachStep(null); }
+    else {
+      try { localStorage.setItem(COACH_KEY, '1'); } catch {}
+      setCoachStep(null);
+      // Shared Link: terminado el tutorial, ir al partido del enlace.
+      if (location.state?.sharedOnboarding) {
+        const ctx = sharedLink.read();
+        if (ctx?.gameId) navigate(`/game/${ctx.gameId}`);
+      }
+    }
   }
 
   const [showCitySheet, setShowCitySheet]   = useState(false);
@@ -986,6 +995,13 @@ export default function PickupGames() {
   useEffect(() => {
     if (location.state?.showCitySheet) { setCitySheetOpen(true); setCityOnboarding(true); }
   }, [location.state?.showCitySheet]);
+  // Shared Link: onboarding SIN CitySheet → disparar el MISMO tutorial (coach).
+  // Si el coach ya se vio, ir directo al partido (no dejar al usuario en /games).
+  useEffect(() => {
+    if (!location.state?.sharedOnboarding) return;
+    if (!localStorage.getItem(COACH_KEY)) setCoachStep(0);
+    else { const ctx = sharedLink.read(); if (ctx?.gameId) navigate(`/game/${ctx.gameId}`); }
+  }, [location.state?.sharedOnboarding]); // eslint-disable-line react-hooks/exhaustive-deps
   const fgTick = useForegroundTick();
   const [games, setGames]     = useState(() => _gamesCache);
   const [loading, setLoading] = useState(_gamesCache.length === 0);

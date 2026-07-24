@@ -4,8 +4,11 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { StaffProvider, useStaff } from './context/StaffContext';
 import StaffInviteModal from './components/StaffInviteModal';
 import Sidebar from './components/Sidebar';
+import SharedLinkBootstrap from './components/SharedLinkBootstrap';
 import IntroScreen from './screens/IntroScreen';
 import { supabase } from './lib/supabase';
+import * as sharedLink from './lib/sharedLink';
+import { getGameById } from './services/gameService';
 import { setNotifBadge } from './utils/notifBadge';
 import { setWaitlistBadge } from './utils/waitlistBadge';
 import { hasAvailableWaitlistSpot } from './services/waitlistService';
@@ -144,6 +147,26 @@ function IntroGate() {
     } catch { return true; }
   });
 
+  // Shared Link: si el usuario nuevo entró por un enlace, resolver la ciudad del
+  // partido DURANTE el intro y escribirla en el perfil (mismo mecanismo que
+  // handleCityChange: pichanga_profile.city), para que ya esté disponible antes de
+  // /games — sin espera visible. Solo lectura de red; no navega.
+  useEffect(() => {
+    if (introDone) return;
+    const ctx = sharedLink.read();
+    if (!ctx || ctx.city) return;
+    let cancelled = false;
+    getGameById(ctx.gameId).then(g => {
+      if (cancelled || !g?.city) return;
+      try {
+        const p = JSON.parse(localStorage.getItem('pichanga_profile')) || {};
+        localStorage.setItem('pichanga_profile', JSON.stringify({ ...p, city: g.city }));
+      } catch {}
+      sharedLink.setCity(g.city);
+    });
+    return () => { cancelled = true; };
+  }, [introDone]);
+
   if (introDone) return null;
   return (
     <IntroScreen
@@ -152,7 +175,10 @@ function IntroGate() {
       }}
       onDone={() => {
         setIntroDone(true);
-        setTimeout(() => navigate('/games', { state: { showCitySheet: true } }), 0);
+        // Shared Link → onboarding sin CitySheet (ciudad ya resuelta). Sin contexto
+        // → comportamiento actual idéntico (showCitySheet).
+        const state = sharedLink.read() ? { sharedOnboarding: true } : { showCitySheet: true };
+        setTimeout(() => navigate('/games', { state }), 0);
       }}
     />
   );
@@ -187,6 +213,7 @@ export default function App() {
           </Suspense>
         </div>
       </div>
+      <SharedLinkBootstrap />
       <NotifBadgeSync />
       <WaitlistBadgeSync />
       <StaffModalBridge />
