@@ -131,7 +131,7 @@ function RouteShell() {
 // IntroGate lives inside BrowserRouter so it can navigate directly.
 // onStart fires at button-click → navigate + Games starts loading during the fade.
 // onDone fires 480ms later → removes IntroScreen after fade completes.
-function IntroGate() {
+function IntroGate({ children }) {
   const navigate = useNavigate();
   const [introDone, setIntroDone] = useState(() => {
     try {
@@ -145,8 +145,10 @@ function IntroGate() {
     } catch { return true; }
   });
 
-  if (introDone) return null;
-  return (
+  // Compuerta: mientras el Intro no termine, se renderiza IntroScreen EN LUGAR de
+  // los children (<Routes>). Así ninguna ruta —incluida /game/:id— se monta durante
+  // el onboarding; no hay GameDetail detrás que el fade pueda revelar.
+  if (!introDone) return (
     <IntroScreen
       onStart={() => {
         try { localStorage.setItem(WELCOME_KEY, '1'); } catch {}
@@ -159,6 +161,7 @@ function IntroGate() {
       }}
     />
   );
+  return children;
 }
 
 export default function App() {
@@ -170,6 +173,7 @@ export default function App() {
         <Sidebar />
         <div className="app-main">
           <Suspense fallback={<RouteShell />}>
+            <IntroGate>
             <Routes>
               <Route path="/" element={<RootRedirect />} />
               <Route path="/welcome" element={<Welcome />} />
@@ -187,6 +191,7 @@ export default function App() {
               <Route path="/organizer" element={<Placeholder title="Organizador" />} />
               <Route path="/admin" element={<Placeholder title="Admin" />} />
             </Routes>
+            </IntroGate>
           </Suspense>
         </div>
       </div>
@@ -195,7 +200,6 @@ export default function App() {
       <WaitlistBadgeSync />
       <StaffModalBridge />
       <AppLifecycle />
-      <IntroGate />
     </BrowserRouter>
     </StaffProvider>
     </AuthProvider>
