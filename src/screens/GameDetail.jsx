@@ -1593,7 +1593,7 @@ export default function GameDetail() {
     const addGuestPrice = sbGame?.price ?? g.paymentBreakdown?.unitPrice ?? g.priceNumber;
     if (isHost) {
       navigate('/checkout', { state: {
-        referral: localStorage.getItem(`pending_game_referral:${id}`) ?? null,
+        referral: sharedLink.getReferral(id),
         game: {
           id:           gameId,
           field:        g.field,
@@ -1617,7 +1617,7 @@ export default function GameDetail() {
       }});
     } else {
       navigate('/checkout', { state: {
-        referral: localStorage.getItem(`pending_game_referral:${id}`) ?? null,
+        referral: sharedLink.getReferral(id),
         game: {
           id:            gameId,
           field:         g.field,
@@ -1922,7 +1922,7 @@ export default function GameDetail() {
                   gameDetailBackPath: backPath,
                   hostUserId:  g.hostUserId,
                 };
-                navigate('/checkout', { state: { game: checkoutGame, referral: localStorage.getItem(`pending_game_referral:${id}`) ?? null } });
+                navigate('/checkout', { state: { game: checkoutGame, referral: sharedLink.getReferral(id) } });
               }}
             />}
           </>
@@ -1948,7 +1948,7 @@ export default function GameDetail() {
                 onClick={() => {
                   setShowWaitlistAuth(false);
                   try { sessionStorage.setItem('pending_waitlist_game', gameId); } catch {}
-                  navigate('/checkout', { state: { waitlistMode: true, backPath: id ? `/game/${id}` : '/games', referral: localStorage.getItem(`pending_game_referral:${id}`) ?? null } });
+                  navigate('/checkout', { state: { waitlistMode: true, backPath: id ? `/game/${id}` : '/games', referral: sharedLink.getReferral(id) } });
                 }}
                 style={{ flex: 1, height: 46, borderRadius: 14, border: 'none', background: BLUE, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                 Ingresar

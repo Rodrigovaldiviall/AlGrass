@@ -3,6 +3,7 @@ import { haptic } from '../utils/haptic';
 import { useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import * as sharedLink from '../lib/sharedLink';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT } from '../constants';
 import I from '../icons';
 import ConfirmReservation from './ConfirmReservation';
@@ -458,6 +459,11 @@ export default function AuthScreen() {
     } catch {}
     if (game) return <Navigate to="/checkout" state={{ game, user }} replace />;
     if (state?.backPath) return <Navigate to={state.backPath} replace />;
+    // Resume tras OAuth: la recarga borra el navigation state, así que si hay un
+    // contexto de Shared Link persistido, retomamos su partido (GameDetail vuelve a
+    // orquestar "Unirte") en vez de caer a /profile.
+    const sctx = sharedLink.read();
+    if (sctx?.gameId) return <Navigate to={`/game/${sctx.gameId}`} replace />;
     return <Navigate to="/profile" replace />;
   }
 

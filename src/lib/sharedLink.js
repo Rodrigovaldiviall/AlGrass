@@ -94,6 +94,13 @@ export function read() {
   return readRaw();
 }
 
+// getReferral(gameId): referral persistido del Shared Link de ese partido (fuente de
+// verdad para el checkout), o null. Encapsula la lectura del espejo pending_game_referral
+// para que nadie fuera del módulo acceda a esa clave directamente.
+export function getReferral(gameId) {
+  try { return localStorage.getItem(REFERRAL_KEY(gameId)); } catch { return null; }
+}
+
 // setCity(city): cachea la ciudad ya resuelta dentro del contexto.
 export function setCity(city) {
   const ctx = readRaw();
