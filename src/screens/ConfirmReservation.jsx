@@ -1028,7 +1028,7 @@ export default function ConfirmReservation() {
         if (gpErr?.message?.startsWith('GAME_FULL')) { setFreeConfirming(false); setCapacityError('GAME_FULL'); return; }
         // Ciclo de vida del referral: creado el PRIMER game_player del actor con éxito,
         // se elimina SOLO la clave de ESTE partido. No borra si hubo error ni afecta otros partidos.
-        if (!gpErr) { try { localStorage.removeItem(`pending_game_referral:${game?.id}`); } catch {} }
+        if (!gpErr) { try { console.log('[REFDBG removeMirror]', { gameId: game?.id, referral }); localStorage.removeItem(`pending_game_referral:${game?.id}`); } catch {} }
         // V6 · Reserva de cupos: titular ya inscrito (precondición de reserve_slots).
         // Persiste el total del stepper. NO refetch, NO se re-lee el snapshot.
         if (reservedSlots > 0 && !gpErr) {

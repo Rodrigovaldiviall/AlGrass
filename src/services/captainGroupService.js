@@ -80,5 +80,7 @@ export function resolveCaptainGroupAssignment(slotReservation, referral = {}) {
     countsReservedSlot = true;
   }
 
+  // TEMP DEBUG (referral) — eliminar tras diagnosticar Caso A vs B.
+  console.log('[REFDBG resolve]', { actorUserId, enrolleeUserId, linkOwnerUserId, out_referredBy: referredByUserId });
   return { gameSlotReservationId, countsReservedSlot, referredByUserId };
 }

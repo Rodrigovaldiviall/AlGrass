@@ -98,7 +98,11 @@ export function read() {
 // verdad para el checkout), o null. Encapsula la lectura del espejo pending_game_referral
 // para que nadie fuera del módulo acceda a esa clave directamente.
 export function getReferral(gameId) {
-  try { return localStorage.getItem(REFERRAL_KEY(gameId)); } catch { return null; }
+  try {
+    const v = localStorage.getItem(REFERRAL_KEY(gameId));
+    console.log('[REFDBG getReferral]', { gameId, value: v }); // TEMP — eliminar tras diagnóstico OAuth
+    return v;
+  } catch { return null; }
 }
 
 // setCity(city): cachea la ciudad ya resuelta dentro del contexto.
