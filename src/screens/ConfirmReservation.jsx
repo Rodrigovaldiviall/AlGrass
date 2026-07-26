@@ -858,7 +858,7 @@ export default function ConfirmReservation() {
             const _slotRes = await loadSlotSnapshot(gameId, referral);
             await Promise.all(
               guests.map(guest => {
-                const _assign = resolveCaptainGroupAssignment(_slotRes, { actorUserId: authUser?.id, enrolleeUserId: guest.id, linkOwnerUserId: referral });
+                const _assign = resolveCaptainGroupAssignment(_slotRes, { actorUserId: authUser?.id, enrolleeUserId: guest.id, linkOwnerUserId: null });
                 return createGamePlayer({ gameId, userId: guest.id, payerId: authUser?.id, reservationId, amount: 0, reservationType: 'invited', invitedByUserId: authUser?.id, hostUserId: game?.hostUserId ?? null, gameSlotReservationId: _assign.gameSlotReservationId, countsReservedSlot: _assign.countsReservedSlot, referredByUserId: _assign.referredByUserId });
               })
             );
@@ -936,7 +936,7 @@ export default function ConfirmReservation() {
           if (game?.type === 'match' || !game?.type) {
             const _slotRes = await loadSlotSnapshot(gameId, referral);
             const gpResults = await Promise.all(guests.map(guest => {
-              const _assign = resolveCaptainGroupAssignment(_slotRes, { actorUserId: authUser?.id, enrolleeUserId: guest.id, linkOwnerUserId: referral });
+              const _assign = resolveCaptainGroupAssignment(_slotRes, { actorUserId: authUser?.id, enrolleeUserId: guest.id, linkOwnerUserId: null });
               return createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice, hostUserId: game?.hostUserId ?? null, gameSlotReservationId: _assign.gameSlotReservationId, countsReservedSlot: _assign.countsReservedSlot, referredByUserId: _assign.referredByUserId });
             }));
             if (gpResults.some(r => r?.error?.message?.startsWith('GAME_FULL'))) { setFreeConfirming(false); setCapacityError('GAME_FULL'); return; }
@@ -1036,7 +1036,7 @@ export default function ConfirmReservation() {
           if (rsErr) { setFreeConfirming(false); if (rsErr.message?.startsWith('GAME_FULL')) setCapacityError('GAME_FULL'); return; }
         }
         await Promise.all(guests.map(guest => {
-          const _assignGuest = resolveCaptainGroupAssignment(_slotRes, { actorUserId: authUser?.id, enrolleeUserId: guest.id, linkOwnerUserId: referral });
+          const _assignGuest = resolveCaptainGroupAssignment(_slotRes, { actorUserId: authUser?.id, enrolleeUserId: guest.id, linkOwnerUserId: null });
           return createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice, hostUserId: _hostId, gameSlotReservationId: _assignGuest.gameSlotReservationId, countsReservedSlot: _assignGuest.countsReservedSlot, referredByUserId: _assignGuest.referredByUserId });
         }));
       }
