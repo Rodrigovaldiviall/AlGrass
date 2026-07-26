@@ -457,7 +457,7 @@ export default function AuthScreen() {
         localStorage.setItem(PROFILE_KEY, JSON.stringify(existing));
       }
     } catch {}
-    if (game) return <Navigate to="/checkout" state={{ game, user }} replace />;
+    if (game) return <Navigate to="/checkout" state={{ game, user, referral: sharedLink.getReferral(game.id) ?? state?.referral ?? null }} replace />;
     if (state?.backPath) return <Navigate to={state.backPath} replace />;
     // Resume tras OAuth: la recarga borra el navigation state, así que si hay un
     // contexto de Shared Link persistido, retomamos su partido (GameDetail vuelve a
