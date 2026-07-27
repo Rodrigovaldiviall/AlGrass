@@ -674,7 +674,7 @@ async function loadSlotSnapshot(gameId, referral) {
     const { data, error } = referral != null
       ? await supabase.rpc('get_slot_reservation_for_user', { p_game_id: gameId, p_user_id: referral })
       : await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
-    console.log('[SLOTDBG] DESPUES RPC', { error, data }); // TEMP
+    console.log('[SLOTDBG ROW]', { referral, error, ...((data?.[0]) ?? {}) }); // TEMP
     return data;
   } catch (e) {
     console.log('[SLOTDBG] RPC ERROR', e); // TEMP
