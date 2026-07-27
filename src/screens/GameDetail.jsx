@@ -1309,8 +1309,8 @@ export default function GameDetail() {
   const guestsInRoster   = useMemo(() =>
     gameState.activeGuests.map(p => ({ ...p, id: p.user_id, name: p.full_name || p.user_code || 'Jugador' })),
     [gameState]);
-  const hasConfirmedTitular = useMemo(() => sbRoster.some(p => p.user_id === p.payer_id && p.status === 'confirmed'), [sbRoster]);
-  const hasCanceledTitular  = useMemo(() => sbRoster.some(p => p.user_id === p.payer_id && p.status === 'canceled'),  [sbRoster]);
+  const hasConfirmedTitular = useMemo(() => sbRoster.some(p => p.user_id === user?.id && p.payer_id === user?.id && p.status === 'confirmed'), [sbRoster, user?.id]);
+  const hasCanceledTitular  = useMemo(() => sbRoster.some(p => p.user_id === user?.id && p.payer_id === user?.id && p.status === 'canceled'),  [sbRoster, user?.id]);
   const titularCanceled     = !hasConfirmedTitular && hasCanceledTitular;
   // ── effectiveAvailability: disponibilidad para el USUARIO actual ──────────────
   // = public_availability (pool) + remanente EFECTIVO de su R1. El backend YA resuelve
