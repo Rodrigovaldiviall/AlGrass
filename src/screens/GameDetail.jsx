@@ -1364,14 +1364,23 @@ export default function GameDetail() {
   // Mensaje "Grupo de @capitán": el usuario PERTENECE a la R1 de OTRO capitán (miembro, no dueño).
   // Detección desde el snapshot ya cargado (userSlot) + nombre del capitán desde el roster
   // (mi fila referred_by_user_id → user_code del capitán). Sin RPC ni consultas nuevas.
-  const _inheritedMember = !!userSlot && !userSlot.has_reservation
+  // Acceso a una R1 AJENA activa, con datos ya cargados. Dos formas:
+  //  · Miembro inscrito: mi snapshot muestra pertenencia activa a una R1 que no es mía
+  //    → capitán = referred_by_user_id de mi fila confirmada.
+  //  · Pre-inscripción vía Shared Link: aún sin fila propia, userSlot es el snapshot del
+  //    SHARER (has_reservation activo) → capitán = referral del link (_referralId).
+  const _myConfirmedRow = sbRoster.find(p => p.user_id === user?.id && p.status === 'confirmed');
+  const _amInscribed = !!_myConfirmedRow;
+  const _memberAccess = !!userSlot && !userSlot.has_reservation
     && userSlot.member_reservation_id != null && userSlot.member_reservation_status === 'active';
-  const _captainId = _inheritedMember
-    ? (sbRoster.find(p => p.user_id === user?.id && p.status === 'confirmed')?.referred_by_user_id ?? null)
-    : null;
+  const _sharerAccess = !_amInscribed && !!_referralId
+    && !!userSlot?.has_reservation && userSlot?.status === 'active';
+  const _captainId = _memberAccess
+    ? (_myConfirmedRow?.referred_by_user_id ?? null)
+    : (_sharerAccess ? _referralId : null);
   const _captainRow = _captainId ? sbRoster.find(p => p.user_id === _captainId) : null;
   const _captainHandle = _captainRow?.user_code || _captainRow?.full_name || null;
-  const showInheritedGroup = _inheritedMember && !!_captainHandle;
+  const showInheritedGroup = (_memberAccess || _sharerAccess) && !!_captainHandle;
   const [inWaitlist,    setInWaitlist]    = useState(false);
   const [waitlistReady, setWaitlistReady] = useState(false);
   const [showWaitlistAuth, setShowWaitlistAuth] = useState(false);
@@ -1748,8 +1757,8 @@ export default function GameDetail() {
 
           {showInheritedGroup && (
             <div style={{ padding: '7px 16px 0', display: 'flex', justifyContent: 'center' }}>
-              <span style={{ padding: '5px 14px', borderRadius: 999, background: '#EEF2FF', fontSize: 13, fontWeight: 500, color: TEXT, textAlign: 'center', lineHeight: 1.35 }}>
-                Grupo de <span style={{ fontWeight: 700, color: BLUE }}>@{_captainHandle}</span> · Accedes a sus cupos reservados
+              <span style={{ padding: '5px 14px', borderRadius: 999, background: '#EEF2FF', fontSize: 11.5, fontWeight: 500, color: TEXT, textAlign: 'center', lineHeight: 1.35 }}>
+                Grupo de <button onClick={() => setSelectedPlayer({ name: _captainRow?.full_name || _captainHandle, user_id: _captainId })} style={{ display: 'inline', padding: 0, margin: 0, background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', fontWeight: 700, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>@{_captainHandle}</button> · Accedes a sus cupos reservados
               </span>
             </div>
           )}
@@ -1779,7 +1788,7 @@ export default function GameDetail() {
               ) : g.paidBy ? (
                 <button onClick={() => setSelectedPlayer({ name: g.paidBy, user_id: payerUserId })} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 14px', borderRadius: 999, background: '#F0FFF4', border: 'none', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: GREEN }}>Invitado por</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: BLUE }}>{g.paidBy}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: BLUE }}>{g.paidByCode ? `@${g.paidByCode}` : g.paidBy}</span>
                   {guestOwnGuests.length > 0 && (
                     <>
                       <span style={{ fontSize: 12, color: TEXT, opacity: 0.35, marginLeft: 2 }}>·</span>
