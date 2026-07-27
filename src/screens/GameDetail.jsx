@@ -1758,7 +1758,7 @@ export default function GameDetail() {
           {showInheritedGroup && (
             <div style={{ padding: '7px 4px 0', display: 'flex', justifyContent: 'center' }}>
               <span style={{ padding: '5px 12px', borderRadius: 999, background: '#EEF2FF', fontSize: 11.5, fontWeight: 500, color: TEXT, whiteSpace: 'nowrap', lineHeight: 1.35 }}>
-                Grupo de <button onClick={() => setSelectedPlayer({ name: _captainRow?.full_name || _captainHandle, user_id: _captainId })} style={{ display: 'inline', padding: 0, margin: 0, background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', fontWeight: 700, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>@{_captainHandle}</button> · Accedes a sus cupos reservados
+                Accedes a los cupos reservados de <button onClick={() => setSelectedPlayer({ name: _captainRow?.full_name || _captainHandle, user_id: _captainId })} style={{ display: 'inline', padding: 0, margin: 0, background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', fontWeight: 700, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>@{_captainHandle}</button>
               </span>
             </div>
           )}
