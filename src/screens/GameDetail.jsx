@@ -1338,6 +1338,20 @@ export default function GameDetail() {
     return () => { cancelled = true; };
   }, [gameId, user?.id, _referralId]);
 
+  // TEMP DEBUG — auditoría del flujo de disponibilidad; eliminar tras diagnosticar.
+  useEffect(() => {
+    console.log('[AVAILDBG]', {
+      public_availability: g.openSpots,
+      effective_reserved_slots_remaining: userSlot?.effective_reserved_slots_remaining,
+      effectiveAvailability: Math.max(0, g.openSpots ?? 0) + (userSlot?.effective_reserved_slots_remaining ?? 0),
+      has_reservation: userSlot?.has_reservation,
+      status: userSlot?.status,
+      member_reservation_status: userSlot?.member_reservation_status,
+      referral: _referralId,
+      availabilityResolved,
+    });
+  }, [userSlot, availabilityResolved]);
+
   const myReservedRemaining = userSlot?.effective_reserved_slots_remaining ?? 0; // lectura DIRECTA, sin decidir casos
   const liveOpenSpots    = g.openSpots ?? 0;   // public_availability (disponibilidad PÚBLICA) — sin tocar
   const effectiveAvailability = Math.max(0, liveOpenSpots) + myReservedRemaining;
