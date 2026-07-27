@@ -1361,6 +1361,17 @@ export default function GameDetail() {
   const openSpots  = effectiveAvailability;                               // badge/Header/WaitlistRow/reservados = efectivo
   const confirmed  = confirmedRoster.length;                             // Jugadores = confirmados (roster game_players)
   const reservados = Math.max(0, g.totalSpots - confirmed - openSpots);  // Reservados = Total − Jugadores − Libres (= held)
+  // Mensaje "Grupo de @capitán": el usuario PERTENECE a la R1 de OTRO capitán (miembro, no dueño).
+  // Detección desde el snapshot ya cargado (userSlot) + nombre del capitán desde el roster
+  // (mi fila referred_by_user_id → user_code del capitán). Sin RPC ni consultas nuevas.
+  const _inheritedMember = !!userSlot && !userSlot.has_reservation
+    && userSlot.member_reservation_id != null && userSlot.member_reservation_status === 'active';
+  const _captainId = _inheritedMember
+    ? (sbRoster.find(p => p.user_id === user?.id && p.status === 'confirmed')?.referred_by_user_id ?? null)
+    : null;
+  const _captainRow = _captainId ? sbRoster.find(p => p.user_id === _captainId) : null;
+  const _captainHandle = _captainRow?.user_code || _captainRow?.full_name || null;
+  const showInheritedGroup = _inheritedMember && !!_captainHandle;
   const [inWaitlist,    setInWaitlist]    = useState(false);
   const [waitlistReady, setWaitlistReady] = useState(false);
   const [showWaitlistAuth, setShowWaitlistAuth] = useState(false);
@@ -1526,7 +1537,7 @@ export default function GameDetail() {
     if (!supabase || !gameId) return;
     supabase
       .from('game_players')
-      .select('user_id, payer_id, status, joined_at, checked_in_at, reservation_type, invited_by_user_id')
+      .select('user_id, payer_id, status, joined_at, checked_in_at, reservation_type, invited_by_user_id, referred_by_user_id')
       .eq('game_id', gameId)
       .then(async ({ data, error }) => {
         if (error) { console.error('[GameDetail] game_players fetch error:', error); return; }
@@ -1734,6 +1745,14 @@ export default function GameDetail() {
           }} />
         <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', background: '#fff' }}>
           <HeroImage coverPath={g?.venueCoverPath} coverVersion={g?.venueCoverVersion} />
+
+          {showInheritedGroup && (
+            <div style={{ padding: '7px 16px 0', display: 'flex', justifyContent: 'center' }}>
+              <span style={{ padding: '5px 14px', borderRadius: 999, background: '#EEF2FF', fontSize: 13, fontWeight: 500, color: TEXT, textAlign: 'center', lineHeight: 1.35 }}>
+                Grupo de <span style={{ fontWeight: 700, color: BLUE }}>@{_captainHandle}</span> · Accedes a sus cupos reservados
+              </span>
+            </div>
+          )}
 
           {/* Status badge below photo */}
           {(isBooked || infoMode || isCanceledWithGuests) && (
