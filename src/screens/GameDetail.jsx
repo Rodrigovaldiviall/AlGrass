@@ -122,7 +122,7 @@ function buildGame(sel) {
 }
 
 // ── Header
-function Header({ field, openSpots, onBack, onShare, infoMode, showShare, live = false }) {
+function Header({ field, openSpots, onBack, onShare, infoMode, showShare, live = false, spotsReady = true }) {
   const cupoLabel = openSpots === 0 ? 'Lleno' : `${openSpots} ${openSpots === 1 ? 'cupo' : 'cupos'}`;
   return (
     <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 16, paddingRight: 16, position: 'relative' }}>
@@ -145,12 +145,17 @@ function Header({ field, openSpots, onBack, onShare, infoMode, showShare, live =
             Ahora
           </div>
         ) : !infoMode ? (
-          <div style={{
-            height: 26, padding: '0 10px', borderRadius: 999,
-            background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.45)',
-            color: '#fff', fontSize: 12, fontWeight: 600,
-            display: 'inline-flex', alignItems: 'center',
-          }}>{cupoLabel}</div>
+          spotsReady ? (
+            <div style={{
+              height: 26, padding: '0 10px', borderRadius: 999,
+              background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.45)',
+              color: '#fff', fontSize: 12, fontWeight: 600,
+              display: 'inline-flex', alignItems: 'center',
+            }}>{cupoLabel}</div>
+          ) : (
+            // Placeholder estable hasta resolver el efectivo: sin flash Lleno→cupos.
+            <div style={{ height: 26, width: 58, borderRadius: 999, background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.30)' }} />
+          )
         ) : null}
         {showShare && (
           <button
@@ -1305,9 +1310,39 @@ export default function GameDetail() {
   const hasConfirmedTitular = useMemo(() => sbRoster.some(p => p.user_id === p.payer_id && p.status === 'confirmed'), [sbRoster]);
   const hasCanceledTitular  = useMemo(() => sbRoster.some(p => p.user_id === p.payer_id && p.status === 'canceled'),  [sbRoster]);
   const titularCanceled     = !hasConfirmedTitular && hasCanceledTitular;
-  const liveOpenSpots    = g.openSpots ?? 0;   // V6: disponibilidad pública (public_availability), no recomputada
-  const isFull = !infoMode && liveOpenSpots === 0;
-  const openSpots  = liveOpenSpots;                                       // Libres = public_availability
+  // ── effectiveAvailability: disponibilidad para el USUARIO actual ──────────────
+  // = public_availability (pool) + remanente EFECTIVO de su R1. El backend YA resuelve
+  // la R1 efectiva (propia o heredada) y devuelve effective_reserved_slots_remaining:
+  // aquí NO se decide propia vs heredada — se lee la columna directamente.
+  const [userSlot, setUserSlot] = useState(null);
+  const [availabilityResolved, setAvailabilityResolved] = useState(() => !(supabase && user?.id));
+  const _referralId = useMemo(() => sharedLink.getReferral(id), [id]);
+  useEffect(() => {
+    if (!supabase || !gameId || !user?.id) { setUserSlot(null); setAvailabilityResolved(true); return; }
+    let cancelled = false;
+    setAvailabilityResolved(false);
+    (async () => {
+      const { data } = await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
+      const snap = Array.isArray(data) ? data[0] : data;
+      if (cancelled) return;
+      // No inscrito + llegó por Shared Link → snapshot del sharer (misma columna, otra identidad).
+      const inscribed = !!snap?.has_reservation || snap?.member_reservation_id != null;
+      if (!inscribed && _referralId) {
+        const { data: d2 } = await supabase.rpc('get_slot_reservation_for_user', { p_game_id: gameId, p_user_id: _referralId });
+        const s2 = Array.isArray(d2) ? d2[0] : d2;
+        if (!cancelled) { setUserSlot(s2 ?? snap ?? null); setAvailabilityResolved(true); }
+        return;
+      }
+      if (!cancelled) { setUserSlot(snap ?? null); setAvailabilityResolved(true); }
+    })().catch(() => { if (!cancelled) { setUserSlot(null); setAvailabilityResolved(true); } });
+    return () => { cancelled = true; };
+  }, [gameId, user?.id, _referralId]);
+
+  const myReservedRemaining = userSlot?.effective_reserved_slots_remaining ?? 0; // lectura DIRECTA, sin decidir casos
+  const liveOpenSpots    = g.openSpots ?? 0;   // public_availability (disponibilidad PÚBLICA) — sin tocar
+  const effectiveAvailability = Math.max(0, liveOpenSpots) + myReservedRemaining;
+  const isFull = !infoMode && effectiveAvailability === 0;
+  const openSpots  = effectiveAvailability;                               // badge/Header/WaitlistRow/reservados = efectivo
   const confirmed  = confirmedRoster.length;                             // Jugadores = confirmados (roster game_players)
   const reservados = Math.max(0, g.totalSpots - confirmed - openSpots);  // Reservados = Total − Jugadores − Libres (= held)
   const [inWaitlist,    setInWaitlist]    = useState(false);
@@ -1610,7 +1645,7 @@ export default function GameDetail() {
           source:       'match',
           type:         g.type,
           invitedMode:  true,
-          maxNewGuests: liveOpenSpots,
+          maxNewGuests: effectiveAvailability,
           hostUserId:   user?.id,
         },
         user: { name: user?.name || 'Usuario', email: user?.email || '' },
@@ -1634,7 +1669,7 @@ export default function GameDetail() {
           source:        'match',
           type:          g.type,
           addGuestsMode: true,
-          maxNewGuests:  liveOpenSpots,
+          maxNewGuests:  effectiveAvailability,
           hostUserId:    g.hostUserId,
         },
         user: { name: user?.name || 'Usuario', email: user?.email || '' },
@@ -1675,7 +1710,7 @@ export default function GameDetail() {
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
-        <Header field={g.field} openSpots={openSpots} infoMode={infoMode} live={isStarted && !isPastGame} onBack={() => navigate(backPath, mapReturn ? { state: { mapReturn } } : undefined)}
+        <Header field={g.field} openSpots={openSpots} spotsReady={availabilityResolved} infoMode={infoMode} live={isStarted && !isPastGame} onBack={() => navigate(backPath, mapReturn ? { state: { mapReturn } } : undefined)}
           showShare={(!isFull || isBooked) && !isPastGame}
           onShare={() => {
             if (!gameId) return;
@@ -1795,10 +1830,10 @@ export default function GameDetail() {
           <Section title="Jugadores">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12 }}>
               <span style={{ color: TEXT, fontSize: 'var(--gd-is, 13.5px)', fontWeight: 600 }}>Jugadores: {confirmed}</span>
-              {reservados > 0 && (
+              {availabilityResolved && reservados > 0 && (
                 <span style={{ color: SUB, fontSize: 'var(--gd-is, 13.5px)' }}>Reservados: {reservados}</span>
               )}
-              <span style={{ color: TEXT, fontSize: 'var(--gd-is, 13.5px)', fontWeight: 600 }}>Cupos libres: {openSpots}</span>
+              <span style={{ color: TEXT, fontSize: 'var(--gd-is, 13.5px)', fontWeight: 600 }}>Cupos libres: {availabilityResolved ? openSpots : '—'}</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {liveRoster.map((p) => {
@@ -1846,7 +1881,7 @@ export default function GameDetail() {
 
           <div style={{ height: 8 }} />
         </div>
-        {rosterReady && waitlistReady && !infoMode && !isStarted && !isHost && (isFull || inWaitlist) && (
+        {rosterReady && waitlistReady && availabilityResolved && !infoMode && !isStarted && !isHost && (isFull || inWaitlist) && (
           <WaitlistRow inList={inWaitlist} openSpots={openSpots} onToggle={handleWaitlistToggle} />
         )}
         {isHost ? (
@@ -1860,7 +1895,7 @@ export default function GameDetail() {
               </button>
             </div>
           )
-        ) : !(spotsVerified && waitlistReady) ? (
+        ) : !(spotsVerified && waitlistReady && availabilityResolved) ? (
           /* ── Carga: mismo skeleton (pulse) del badge de la lista, hasta que el estado
                de acciones sea DEFINITIVO. Evita el flash de espacio vacío / botón gris. ── */
           <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '12px 16px' }}>
@@ -1959,8 +1994,8 @@ export default function GameDetail() {
       )}
       {modifyOpen && (
         <ModifySheet
-          canAddGuests={liveOpenSpots > 0}
-          openSpots={liveOpenSpots}
+          canAddGuests={effectiveAvailability > 0}
+          openSpots={effectiveAvailability}
           onClose={() => setModifyOpen(false)}
           onAddGuests={handleAddGuests}
           onCancel={() => { setModifyOpen(false); isHost ? setHostCancelInvitedOpen(true) : setCancelOpen(true); }}

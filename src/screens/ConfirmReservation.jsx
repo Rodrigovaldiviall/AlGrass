@@ -668,11 +668,18 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
 // el gemelo por usuario (sharedByUserId); sin referral, la RPC estándar. Su única
 // responsabilidad es elegir la RPC y devolver el mismo _slotRes. Nada más.
 async function loadSlotSnapshot(gameId, referral) {
-  const { data } = referral != null
-    ? await supabase.rpc('get_slot_reservation_for_user', { p_game_id: gameId, p_user_id: referral })
-    : await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
-  console.log('[SLOTDBG] get_slot_reservation →', { referral, data }); // TEMP — verificar effective_reserved_slots_remaining; eliminar tras validar
-  return data;
+  console.log('[SLOTDBG] ENTER loadSlotSnapshot', { gameId, referral }); // TEMP
+  try {
+    console.log('[SLOTDBG] ANTES RPC'); // TEMP
+    const { data, error } = referral != null
+      ? await supabase.rpc('get_slot_reservation_for_user', { p_game_id: gameId, p_user_id: referral })
+      : await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
+    console.log('[SLOTDBG] DESPUES RPC', { error, data }); // TEMP
+    return data;
+  } catch (e) {
+    console.log('[SLOTDBG] RPC ERROR', e); // TEMP
+    return null;
+  }
 }
 
 export default function ConfirmReservation() {
@@ -825,6 +832,7 @@ export default function ConfirmReservation() {
   }
 
   function handleConfirm() {
+    console.log('[SLOTDBG] ENTER handleConfirm', { total, invitedMode, addGuestsMode, isRental, type: game?.type }); // TEMP
     if (!invitedMode && game?.hostUserId && authUser?.id && game.hostUserId === authUser.id) return;
     if (invitedMode) {
       if (!guests.length) return;
@@ -845,6 +853,7 @@ export default function ConfirmReservation() {
   }
 
   async function handlePaid(paymentMethod) {
+    console.log('[SLOTDBG] ENTER handlePaid', { invitedMode, addGuestsMode, isRental, guests: guests.length, type: game?.type }); // TEMP
     setFreeConfirming(true);
     setCapacityError(null);
     setPayOpen(false);
@@ -1020,6 +1029,7 @@ export default function ConfirmReservation() {
       if (skipped || error) { if (error) console.warn('[checkout] reservation failed:', error); setFreeConfirming(false); return; }
       const reservationId = resData?.id ?? null;
       const _hostId = game?.hostUserId ?? null;
+      console.log('[SLOTDBG] MAIN branch reached', { type: game?.type, reservationId }); // TEMP
       if (game?.type === 'match' || !game?.type) {
         // V6 · titular: RPC → captainGroupService → createGamePlayer. Toda la
         // decisión vive en el servicio; el checkout solo transporta la metadata.
