@@ -29,7 +29,8 @@ returns table (
   reserved_slots_remaining  integer,
   pool                      integer,
   member_reservation_id     uuid,
-  member_reservation_status text
+  member_reservation_status text,
+  effective_reserved_slots_remaining integer
 )
 language plpgsql
 security definer
@@ -44,6 +45,7 @@ declare
   v_has           boolean := false;
   v_member_id     uuid;
   v_member_status text;
+  v_member_remaining integer;
 begin
   if v_actor is null then
     raise exception 'AUTH_REQUIRED';
@@ -91,8 +93,9 @@ begin
    limit 1;
 
   if v_member_id is not null then
-    select gsr.status
-      into v_member_status
+    -- Misma fila donde hoy se valida el status de la R1 heredada: se lee además su remaining.
+    select gsr.status, gsr.reserved_slots_remaining
+      into v_member_status, v_member_remaining
       from public.game_slot_reservations gsr
      where gsr.id = v_member_id;
   end if;
@@ -106,7 +109,14 @@ begin
     case when v_has then v_res.reserved_slots_remaining   else 0 end,
     greatest(coalesce(v_total, 0) - v_confirmed - v_held, 0),
     v_member_id,
-    v_member_status;
+    v_member_status,
+    -- Remaining EFECTIVO: mismas condiciones que ya determinan la R1 efectiva
+    -- (propia activa → pertenencia activa → ninguna). Solo selecciona qué remaining emitir.
+    case
+      when v_has and v_res.status = 'active'                      then v_res.reserved_slots_remaining
+      when v_member_id is not null and v_member_status = 'active' then v_member_remaining
+      else 0
+    end;
 end;
 $$;
 

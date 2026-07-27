@@ -671,6 +671,7 @@ async function loadSlotSnapshot(gameId, referral) {
   const { data } = referral != null
     ? await supabase.rpc('get_slot_reservation_for_user', { p_game_id: gameId, p_user_id: referral })
     : await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
+  console.log('[SLOTDBG] get_slot_reservation →', { referral, data }); // TEMP — verificar effective_reserved_slots_remaining; eliminar tras validar
   return data;
 }
 
