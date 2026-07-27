@@ -949,6 +949,8 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
     ? checkedGuests.size * guestRefund
     : (effectiveTitularChecked ? titularRefund : 0) + checkedGuests.size * guestRefund;
   const canConfirm = isGuest ? (effectiveSelfChecked || checkedGuests.size > 0) : totalRefund > 0;
+  // TEMP DEBUG — auditoría del sheet de cancelación; eliminar tras diagnosticar.
+  console.log('[CANCELDBG sheet]', { isGuest, titularAlreadyCanceled, guestListLength: guestList.length, isSimple, isGuestSimple, effectiveTitularChecked, effectiveSelfChecked, canConfirm });
   const fmt = n => `S/. ${Number(n).toFixed(2)}`;
 
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
@@ -2077,7 +2079,20 @@ export default function GameDetail() {
           onClose={() => setPaymentDetailOpen(false)}
         />
       )}
-      {cancelOpen && (
+      {cancelOpen && (() => {
+        // TEMP DEBUG — estado del jugador con que se construye el sheet; eliminar tras diagnosticar.
+        const _mp = sbRoster.find(p => p.user_id === user?.id) ?? null;
+        const _gl = isGuest ? guestOwnGuests : (guestCanceledView ? guestOwnGuests : guestsInRoster);
+        console.log('[CANCELDBG parent]', {
+          myPlayer: _mp,
+          myPlayerStatus: _mp?.status,
+          confirmed: sbRoster.filter(p => p.status === 'confirmed'),
+          canceled: sbRoster.filter(p => p.status === 'canceled'),
+          isBooked, mySlotCanceled, isGuest, guestCanceledView, titularCanceled,
+          titularAlreadyCanceled: guestCanceledView || titularCanceled,
+          guestListLength: _gl.length,
+        });
+        return (
         <CancelSheet
           gameId={gameId}
           breakdown={guestCanceledView ? g.guestSubBreakdown : liveBreakdown}
@@ -2094,7 +2109,8 @@ export default function GameDetail() {
           onClose={() => setCancelOpen(false)}
           onDone={handleCancelDone}
         />
-      )}
+        );
+      })()}
       {linkCopied && (
         <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.75)', color: '#fff', padding: '8px 18px', borderRadius: 20, fontSize: 14, fontWeight: 500, zIndex: 9999, pointerEvents: 'none', whiteSpace: 'nowrap' }}>
           Link copiado
