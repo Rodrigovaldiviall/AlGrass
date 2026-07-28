@@ -204,8 +204,6 @@ export async function createGamePlayer({ gameId, userId = null, payerId = null, 
   if (!session?.user?.id) return { skipped: true };
   const resolvedUserId  = userId  || session.user.id;
   const resolvedPayerId = payerId || session.user.id;
-  // TEMP DEBUG (referral) — eliminar tras diagnosticar Caso A vs B.
-  console.log('[REFDBG createGP]', { in_userId: userId, in_payerId: payerId, referredByUserId, reservationType, gameSlotReservationId, session_user: session.user.id, resolvedUserId, resolvedPayerId });
   if (hostUserId && resolvedUserId === hostUserId) {
     console.warn('[createGamePlayer] blocked: organizer cannot be added as player');
     return { blocked: true };

@@ -583,7 +583,6 @@ function PlayerModal({ player, onClose, isHost = false }) {
       .eq('id', player.user_id)
       .maybeSingle()
       .then(({ data, error }) => {
-        console.log('[PlayerModal] profile fetch', { data, error });
         if (data) {
           setProfile(data);
           setIsPrivate(data.profile_private === true);
@@ -949,8 +948,6 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
     ? checkedGuests.size * guestRefund
     : (effectiveTitularChecked ? titularRefund : 0) + checkedGuests.size * guestRefund;
   const canConfirm = isGuest ? (effectiveSelfChecked || checkedGuests.size > 0) : totalRefund > 0;
-  // TEMP DEBUG — auditoría del sheet de cancelación; eliminar tras diagnosticar.
-  console.log('[CANCELDBG sheet]', { isGuest, titularAlreadyCanceled, guestListLength: guestList.length, isSimple, isGuestSimple, effectiveTitularChecked, effectiveSelfChecked, canConfirm });
   const fmt = n => `S/. ${Number(n).toFixed(2)}`;
 
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
@@ -1339,20 +1336,6 @@ export default function GameDetail() {
     })().catch(() => { if (!cancelled) { setUserSlot(null); setAvailabilityResolved(true); } });
     return () => { cancelled = true; };
   }, [gameId, user?.id, _referralId]);
-
-  // TEMP DEBUG — auditoría del flujo de disponibilidad; eliminar tras diagnosticar.
-  useEffect(() => {
-    console.log('[AVAILDBG]', {
-      public_availability: g.openSpots,
-      effective_reserved_slots_remaining: userSlot?.effective_reserved_slots_remaining,
-      effectiveAvailability: Math.max(0, g.openSpots ?? 0) + (userSlot?.effective_reserved_slots_remaining ?? 0),
-      has_reservation: userSlot?.has_reservation,
-      status: userSlot?.status,
-      member_reservation_status: userSlot?.member_reservation_status,
-      referral: _referralId,
-      availabilityResolved,
-    });
-  }, [userSlot, availabilityResolved]);
 
   const myReservedRemaining = userSlot?.effective_reserved_slots_remaining ?? 0; // lectura DIRECTA, sin decidir casos
   const liveOpenSpots    = g.openSpots ?? 0;   // public_availability (disponibilidad PÚBLICA) — sin tocar
@@ -2107,20 +2090,7 @@ export default function GameDetail() {
           onClose={() => setPaymentDetailOpen(false)}
         />
       )}
-      {cancelOpen && (() => {
-        // TEMP DEBUG — estado del jugador con que se construye el sheet; eliminar tras diagnosticar.
-        const _mp = sbRoster.find(p => p.user_id === user?.id) ?? null;
-        const _gl = isGuest ? guestOwnGuests : (guestCanceledView ? guestOwnGuests : guestsInRoster);
-        console.log('[CANCELDBG parent]', {
-          myPlayer: _mp,
-          myPlayerStatus: _mp?.status,
-          confirmed: sbRoster.filter(p => p.status === 'confirmed'),
-          canceled: sbRoster.filter(p => p.status === 'canceled'),
-          isBooked, mySlotCanceled, isGuest, guestCanceledView, titularCanceled,
-          titularAlreadyCanceled: guestCanceledView || titularCanceled,
-          guestListLength: _gl.length,
-        });
-        return (
+      {cancelOpen && (
         <CancelSheet
           gameId={gameId}
           breakdown={guestCanceledView ? g.guestSubBreakdown : liveBreakdown}
@@ -2137,8 +2107,7 @@ export default function GameDetail() {
           onClose={() => setCancelOpen(false)}
           onDone={handleCancelDone}
         />
-        );
-      })()}
+      )}
       {linkCopied && (
         <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.75)', color: '#fff', padding: '8px 18px', borderRadius: 20, fontSize: 14, fontWeight: 500, zIndex: 9999, pointerEvents: 'none', whiteSpace: 'nowrap' }}>
           Link copiado

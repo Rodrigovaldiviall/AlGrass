@@ -668,18 +668,10 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
 // el gemelo por usuario (sharedByUserId); sin referral, la RPC estándar. Su única
 // responsabilidad es elegir la RPC y devolver el mismo _slotRes. Nada más.
 async function loadSlotSnapshot(gameId, referral) {
-  console.log('[SLOTDBG] ENTER loadSlotSnapshot', { gameId, referral }); // TEMP
-  try {
-    console.log('[SLOTDBG] ANTES RPC'); // TEMP
-    const { data, error } = referral != null
-      ? await supabase.rpc('get_slot_reservation_for_user', { p_game_id: gameId, p_user_id: referral })
-      : await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
-    console.log('[SLOTDBG ROW]', { referral, error, ...((data?.[0]) ?? {}) }); // TEMP
-    return data;
-  } catch (e) {
-    console.log('[SLOTDBG] RPC ERROR', e); // TEMP
-    return null;
-  }
+  const { data } = referral != null
+    ? await supabase.rpc('get_slot_reservation_for_user', { p_game_id: gameId, p_user_id: referral })
+    : await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
+  return data;
 }
 
 export default function ConfirmReservation() {
@@ -832,7 +824,6 @@ export default function ConfirmReservation() {
   }
 
   function handleConfirm() {
-    console.log('[SLOTDBG] ENTER handleConfirm', { total, invitedMode, addGuestsMode, isRental, type: game?.type }); // TEMP
     if (!invitedMode && game?.hostUserId && authUser?.id && game.hostUserId === authUser.id) return;
     if (invitedMode) {
       if (!guests.length) return;
@@ -853,7 +844,6 @@ export default function ConfirmReservation() {
   }
 
   async function handlePaid(paymentMethod) {
-    console.log('[SLOTDBG] ENTER handlePaid', { invitedMode, addGuestsMode, isRental, guests: guests.length, type: game?.type }); // TEMP
     setFreeConfirming(true);
     setCapacityError(null);
     setPayOpen(false);
@@ -1029,7 +1019,6 @@ export default function ConfirmReservation() {
       if (skipped || error) { if (error) console.warn('[checkout] reservation failed:', error); setFreeConfirming(false); return; }
       const reservationId = resData?.id ?? null;
       const _hostId = game?.hostUserId ?? null;
-      console.log('[SLOTDBG] MAIN branch reached', { type: game?.type, reservationId }); // TEMP
       if (game?.type === 'match' || !game?.type) {
         // V6 · titular: RPC → captainGroupService → createGamePlayer. Toda la
         // decisión vive en el servicio; el checkout solo transporta la metadata.
@@ -1039,7 +1028,7 @@ export default function ConfirmReservation() {
         if (gpErr?.message?.startsWith('GAME_FULL')) { setFreeConfirming(false); setCapacityError('GAME_FULL'); return; }
         // Ciclo de vida del referral: creado el PRIMER game_player del actor con éxito,
         // se elimina SOLO la clave de ESTE partido. No borra si hubo error ni afecta otros partidos.
-        if (!gpErr) { try { console.log('[REFDBG removeMirror]', { gameId: game?.id, referral }); localStorage.removeItem(`pending_game_referral:${game?.id}`); } catch {} }
+        if (!gpErr) { try { localStorage.removeItem(`pending_game_referral:${game?.id}`); } catch {} }
         // V6 · Reserva de cupos: titular ya inscrito (precondición de reserve_slots).
         // Persiste el total del stepper. NO refetch, NO se re-lee el snapshot.
         if (reservedSlots > 0 && !gpErr) {

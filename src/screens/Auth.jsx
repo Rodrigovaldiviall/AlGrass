@@ -463,7 +463,6 @@ export default function AuthScreen() {
     // contexto de Shared Link persistido, retomamos su partido (GameDetail vuelve a
     // orquestar "Unirte") en vez de caer a /profile.
     const sctx = sharedLink.read();
-    console.log('[REFDBG resume]', { hasGame: !!game, sctxGameId: sctx?.gameId, sctxReferral: sctx?.referral }); // TEMP — eliminar tras diagnóstico OAuth
     if (sctx?.gameId) return <Navigate to={`/game/${sctx.gameId}`} replace />;
     return <Navigate to="/profile" replace />;
   }
