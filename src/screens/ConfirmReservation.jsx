@@ -872,10 +872,8 @@ export default function ConfirmReservation() {
             sent_at: new Date().toISOString(),
           }).then(({ error }) => {
             if (error) console.error('[notif] reservation_confirmed_with_guests (invited) failed:', error);
-            else console.log('[notif] reservation_confirmed_with_guests (invited) inserted for', authUser?.id);
           });
           guests.filter(g => g.id).forEach(guest => {
-            console.log('[notif] invited_by_player (invited) payload:', { recipient_user_id: guest.id, created_by: authUser?.id, game_id: gameId });
             supabase?.from('notifications').insert({
               recipient_user_id: guest.id,
               source_type: 'venue', delivery_type: 'automatic', category: 'invitation',
@@ -886,7 +884,6 @@ export default function ConfirmReservation() {
               sent_at: new Date().toISOString(),
             }).then(({ error }) => {
               if (error) console.error('[notif] invited_by_player (invited) failed for', guest.id, error);
-              else console.log('[notif] invited_by_player (invited) inserted for', guest.id);
             });
           });
         }
@@ -950,10 +947,8 @@ export default function ConfirmReservation() {
             sent_at: new Date().toISOString(),
           }).then(({ error }) => {
             if (error) console.error('[notif] reservation_confirmed_with_guests (addGuests) failed:', error);
-            else console.log('[notif] reservation_confirmed_with_guests (addGuests) inserted for', authUser?.id);
           });
           guests.filter(g => g.id).forEach(guest => {
-            console.log('[notif] invited_by_player (addGuests) payload:', { recipient_user_id: guest.id, created_by: authUser?.id, game_id: gameId });
             supabase?.from('notifications').insert({
               recipient_user_id: guest.id,
               source_type: 'venue', delivery_type: 'automatic', category: 'invitation',
@@ -964,7 +959,6 @@ export default function ConfirmReservation() {
               sent_at: new Date().toISOString(),
             }).then(({ error }) => {
               if (error) console.error('[notif] invited_by_player (addGuests) failed for', guest.id, error);
-              else console.log('[notif] invited_by_player (addGuests) inserted for', guest.id);
             });
           });
           try {
@@ -1064,10 +1058,8 @@ export default function ConfirmReservation() {
         sent_at: new Date().toISOString(),
       }).then(({ error }) => {
         if (error) console.error('[notif]', _tpl, 'failed:', error);
-        else console.log('[notif]', _tpl, 'inserted for', authUser?.id);
       });
       guests.filter(g => g.id).forEach(guest => {
-        console.log('[notif] invited_by_player (main) payload:', { recipient_user_id: guest.id, created_by: authUser?.id, game_id: game?.id });
         supabase?.from('notifications').insert({
           recipient_user_id: guest.id,
           source_type: 'venue', delivery_type: 'automatic', category: 'invitation',
@@ -1078,7 +1070,6 @@ export default function ConfirmReservation() {
           sent_at: new Date().toISOString(),
         }).then(({ error }) => {
           if (error) console.error('[notif] invited_by_player (main) failed for', guest.id, error);
-          else console.log('[notif] invited_by_player (main) inserted for', guest.id);
         });
       });
       markWaitlistReserved(authUser?.id, game?.id);

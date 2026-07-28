@@ -369,7 +369,6 @@ export default function Notifications() {
     const wasUnread = notif && !notif.read;
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
     if (wasUnread) setNotifBadge(Math.max(0, getNotifCount() - 1));
-    console.log('[notif] handlePress updating read_at for id:', id, 'user:', user?.id);
     supabase.from('notifications')
       .update({ read_at: new Date().toISOString() })
       .eq('id', id)
@@ -377,7 +376,6 @@ export default function Notifications() {
       .is('read_at', null)
       .then(({ error, data, count, status, statusText }) => {
         if (error) console.error('[notif] handlePress update failed:', error, { status, statusText });
-        else console.log('[notif] handlePress update ok:', { status, count });
       });
     if (notif?.templateKey === 'waitlist_spot_available' && notif?.gameId) {
       navigate(`/game/${notif.gameId}`);
@@ -451,14 +449,12 @@ export default function Notifications() {
     if (!unreadCount) return;
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
     setNotifBadge(0);
-    console.log('[notif] markAll updating all unread for user:', user?.id);
     supabase.from('notifications')
       .update({ read_at: new Date().toISOString() })
       .eq('recipient_user_id', user.id)
       .is('read_at', null)
       .then(({ error, count, status, statusText }) => {
         if (error) console.error('[notif] markAll update failed:', error, { status, statusText });
-        else console.log('[notif] markAll update ok:', { status, count });
       });
   }
 

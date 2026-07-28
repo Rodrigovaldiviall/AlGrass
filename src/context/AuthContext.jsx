@@ -91,7 +91,7 @@ export function AuthProvider({ children }) {
             .eq('template_key', 'welcome_message')
             .then(({ count, error: checkErr }) => {
               if (checkErr) { console.error('[notif] welcome_message dedup check failed:', checkErr); return; }
-              if ((count ?? 0) > 0) { console.log('[notif] welcome_message already exists, skipping'); return; }
+              if ((count ?? 0) > 0) { return; }
               supabase.from('notifications').insert({
                 recipient_user_id: session.user.id,
                 source_type:       'algrass',
@@ -101,7 +101,6 @@ export function AuthProvider({ children }) {
                 sent_at:           new Date().toISOString(),
               }).then(({ error }) => {
                 if (error) console.error('[notif] welcome_message failed:', error);
-                else console.log('[notif] welcome_message inserted for', session.user.id);
               });
             });
         }

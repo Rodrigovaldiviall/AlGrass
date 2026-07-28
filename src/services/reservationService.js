@@ -340,7 +340,6 @@ export async function cancelGamePlayer(gameId, { skipNotification = false } = {}
           sent_at:           new Date().toISOString(),
         }).then(({ error }) => {
           if (error) console.error('[notif] reservation_cancelled_credit_self (game) failed:', error);
-          else console.log('[notif] reservation_cancelled_credit_self (game) inserted for', session.user.id);
         });
       }
     } else {
@@ -364,7 +363,6 @@ export async function cancelGamePlayer(gameId, { skipNotification = false } = {}
             sent_at:           new Date().toISOString(),
           }).then(({ error }) => {
             if (error) console.error('[notif] reservation_cancelled_credit_owner failed for guest', session.user.id, error);
-            else console.log('[notif] reservation_cancelled_credit_owner inserted for guest', session.user.id);
           });
           // 2 — notify the payer
           supabase.from('notifications').insert({
@@ -380,7 +378,6 @@ export async function cancelGamePlayer(gameId, { skipNotification = false } = {}
             sent_at:           new Date().toISOString(),
           }).then(({ error }) => {
             if (error) console.error('[notif] guest_invitation_cancelled_credit failed for payer', refundTo, error);
-            else console.log('[notif] guest_invitation_cancelled_credit inserted for payer', refundTo);
           });
         });
     }
@@ -484,7 +481,6 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
             sent_at:           new Date().toISOString(),
           }).then(({ error }) => {
             if (error) console.error('[notif]', titularTemplate, 'failed for titular:', session.user.id, error);
-            else console.log('[notif]', titularTemplate, 'inserted for titular:', session.user.id);
           });
         });
       }
@@ -504,7 +500,6 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
           sent_at:           new Date().toISOString(),
         }).then(({ error }) => {
           if (error) console.error('[notif] guest_invitation_cancelled_by_owner failed for', r.user_id, error);
-          else console.log('[notif] guest_invitation_cancelled_by_owner inserted for', r.user_id);
         });
       });
     });
@@ -597,7 +592,6 @@ export async function cancelRental(gameId) {
       sent_at:           new Date().toISOString(),
     }).then(({ error }) => {
       if (error) console.error('[notif] reservation_cancelled_credit_self (rental) failed:', error);
-      else console.log('[notif] reservation_cancelled_credit_self (rental) inserted for', userId);
     });
   }
 
@@ -689,7 +683,6 @@ export async function notifyVenueChanged(gameId, { customText = null } = {}) {
       sent_at:           now,
     }).then(({ error: e }) => {
       if (e) console.error('[notif] venue_changed failed for', userId, e);
-      else console.log('[notif] venue_changed inserted for', userId);
     });
   });
 }
@@ -779,7 +772,6 @@ export async function sendNextDayReminders() {
       sent_at:           now,
     }).then(({ error: e }) => {
       if (e) console.error('[notif] next_day_reminder failed for', userId, gameId, e);
-      else   console.log('[notif] next_day_reminder inserted for', userId, gameId);
     });
 
     sent++;
