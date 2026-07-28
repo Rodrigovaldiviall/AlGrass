@@ -63,10 +63,11 @@ function Field({ value, onChange, placeholder, type = 'text', autoComplete }) {
   );
 }
 
-function OrangeButton({ onPress, disabled, children }) {
+function OrangeButton({ onPress, disabled, children, type = 'button' }) {
   const [pressed, setPressed] = useState(false);
   return (
     <button
+      type={type}
       onClick={disabled ? undefined : onPress}
       disabled={!!disabled}
       onPointerDown={() => !disabled && setPressed(true)}
@@ -596,6 +597,7 @@ export default function AuthScreen() {
             </div>
           </div>
 
+          <form onSubmit={e => { e.preventDefault(); submit(); }} style={{ display: 'contents' }}>
           <div style={{ padding: '6px 20px 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {step === 'signup' && (
               <Field value={name} onChange={setName} placeholder="Nombre completo" autoComplete="name" />
@@ -616,7 +618,7 @@ export default function AuthScreen() {
               </label>
             )}
             {step === 'login' && (
-              <button onClick={() => setForgotStep('options')} style={{ alignSelf: 'flex-end', marginTop: -2, padding: '4px 2px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+              <button type="button" onClick={() => setForgotStep('options')} style={{ alignSelf: 'flex-end', marginTop: -2, padding: '4px 2px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                 ¿Olvidaste tu contraseña?
               </button>
             )}
@@ -626,11 +628,12 @@ export default function AuthScreen() {
             {authError && (
               <div style={{ fontSize: 13, color: '#C0392B', marginBottom: 10, paddingLeft: 4, lineHeight: 1.4 }}>{authError}</div>
             )}
-            <OrangeButton onPress={submit} disabled={(step === 'login' ? !loginReady : !signupReady) || authLoading}>
+            <OrangeButton type="submit" disabled={(step === 'login' ? !loginReady : !signupReady) || authLoading}>
               {authLoading ? 'Cargando…' : step === 'login' ? 'Ingresar' : 'Crear cuenta'}
             </OrangeButton>
             <div style={{ marginTop: 16, textAlign: 'center', fontSize: 16 }}>
               <button
+                type="button"
                 onClick={() => { setStep(step === 'signup' ? 'login' : 'signup'); setAuthError(''); setPass(''); }}
                 style={{ padding: 0, background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', color: SUB, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                 {step === 'signup' ? '¿Ya tienes cuenta? ' : '¿No tienes cuenta? '}
@@ -640,6 +643,7 @@ export default function AuthScreen() {
               </button>
             </div>
           </div>
+          </form>
         </>)}
 
         {/* ── Forgot password flow ── */}
