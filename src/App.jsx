@@ -133,31 +133,38 @@ function RouteShell() {
 // onDone fires 480ms later → removes IntroScreen after fade completes.
 function IntroGate({ children }) {
   const navigate = useNavigate();
-  const [introDone, setIntroDone] = useState(() => {
+  const location = useLocation();
+  // wantIntro = ¿este arranque necesita Intro? (snapshot al montar). entryPath = URL de
+  // entrada (snapshot). El Intro se muestra mientras la URL siga en entryPath; al navegar
+  // en onDone la URL pasa a /games y las Routes montan ahí (RootRedirect, ruta '/', no
+  // llega a renderizar). Preserva el side-effect de theme-color/app-ready para recurrentes.
+  const [wantIntro] = useState(() => {
     try {
-      const done = !!localStorage.getItem(INTRO_KEY);
-      if (done) {
+      const seen = !!localStorage.getItem(INTRO_KEY);
+      if (seen) {
         const m = document.querySelector('meta[name="theme-color"]');
         if (m) m.content = '#3F5FE0';
         document.documentElement.classList.add('app-ready');
       }
-      return done;
-    } catch { return true; }
+      return !seen;
+    } catch { return false; }
   });
+  const [entryPath] = useState(() => location.pathname);
 
-  // Compuerta: mientras el Intro no termine, se renderiza IntroScreen EN LUGAR de
-  // los children (<Routes>). Así ninguna ruta —incluida /game/:id— se monta durante
-  // el onboarding; no hay GameDetail detrás que el fade pueda revelar.
-  if (!introDone) return (
+  // Compuerta: mientras el Intro no termine (misma URL de entrada), se renderiza
+  // IntroScreen EN LUGAR de los children (<Routes>). Así ninguna ruta —incluida
+  // /game/:id— se monta durante el onboarding; no hay GameDetail detrás que el fade
+  // pueda revelar.
+  if (wantIntro && location.pathname === entryPath) return (
     <IntroScreen
       onStart={() => {
         try { localStorage.setItem(WELCOME_KEY, '1'); } catch {}
       }}
       onDone={() => {
-        setIntroDone(true);
-        // MISMO onboarding para todos (orgánico y Shared Link). El destino final
-        // (GameDetail vs Games) se decide al terminar el tutorial en PickupGames.
-        setTimeout(() => navigate('/games', { state: { showCitySheet: true } }), 0);
+        // Única navegación: al cambiar la URL a /games, el gate deja de mostrar el Intro
+        // (pathname !== entryPath) y las Routes montan ya en /games. RootRedirect (ruta '/')
+        // no llega a renderizar → no hay segunda navegación que pise showCitySheet.
+        navigate('/games', { state: { showCitySheet: true } });
       }}
     />
   );

@@ -223,7 +223,7 @@ export default function IntroScreen({ onStart, onDone }) {
           {phase !== 'error' && (
             <video
               src="/videos/intro.mp4"
-              autoPlay muted defaultMuted playsInline preload="metadata"
+              autoPlay muted playsInline preload="metadata"
               onCanPlay={() => { if (phase === 'loading') setPhase('playing'); }}
               onEnded={() => setPhase('ended')}
               onError={() => setPhase('error')}
