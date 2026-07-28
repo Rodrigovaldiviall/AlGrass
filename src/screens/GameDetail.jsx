@@ -1314,13 +1314,22 @@ export default function GameDetail() {
   // la R1 efectiva (propia o heredada) y devuelve effective_reserved_slots_remaining:
   // aquí NO se decide propia vs heredada — se lee la columna directamente.
   const [userSlot, setUserSlot] = useState(null);
-  const [availabilityResolved, setAvailabilityResolved] = useState(() => !(supabase && user?.id));
+  const [availabilityResolved, setAvailabilityResolved] = useState(() => !(supabase && (user?.id || sharedLink.getReferral(id))));
   const _referralId = useMemo(() => sharedLink.getReferral(id), [id]);
   useEffect(() => {
-    if (!supabase || !gameId || !user?.id) { setUserSlot(null); setAvailabilityResolved(true); return; }
+    // Sin sesión y sin referral no hay disponibilidad efectiva que resolver.
+    if (!supabase || !gameId || (!user?.id && !_referralId)) { setUserSlot(null); setAvailabilityResolved(true); return; }
     let cancelled = false;
     setAvailabilityResolved(false);
     (async () => {
+      // Anónimo (sin sesión): get_slot_reservation exige auth.uid() → se lee directamente el
+      // snapshot del sharer por referral (p_user_id, SECURITY DEFINER, sin auth.uid()).
+      if (!user?.id) {
+        const { data: d2 } = await supabase.rpc('get_slot_reservation_for_user', { p_game_id: gameId, p_user_id: _referralId });
+        const s2 = Array.isArray(d2) ? d2[0] : d2;
+        if (!cancelled) { setUserSlot(s2 ?? null); setAvailabilityResolved(true); }
+        return;
+      }
       const { data } = await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
       const snap = Array.isArray(data) ? data[0] : data;
       if (cancelled) return;
