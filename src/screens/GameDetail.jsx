@@ -26,6 +26,7 @@ import ReserveSlotsSheet from '../components/ReserveSlotsSheet';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import SkeletonPill from '../components/SkeletonPill';
 import { useGlobalRoles } from '../hooks/useGlobalRoles';
+import CaptainSlotsBadge from '../components/CaptainSlotsBadge';
 const ROSTER_KEY_GD = 'pichanga_game_rosters';
 
 
@@ -122,7 +123,7 @@ function buildGame(sel) {
 }
 
 // ── Header
-function Header({ field, openSpots, onBack, onShare, infoMode, showShare, live = false, spotsReady = true }) {
+function Header({ field, openSpots, onBack, onShare, infoMode, showShare, live = false, spotsReady = true, slotsBadge = null, slotsGold = false }) {
   const cupoLabel = openSpots === 0 ? 'Lleno' : `${openSpots} ${openSpots === 1 ? 'cupo' : 'cupos'}`;
   return (
     <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 16, paddingRight: 16, position: 'relative' }}>
@@ -157,6 +158,7 @@ function Header({ field, openSpots, onBack, onShare, infoMode, showShare, live =
             <div style={{ height: 26, width: 58, borderRadius: 999, background: 'rgba(255,255,255,0.18)', border: '1px solid rgba(255,255,255,0.30)' }} />
           )
         ) : null}
+        {slotsBadge && <CaptainSlotsBadge used={slotsBadge.used} total={slotsBadge.total} gold={slotsGold} size={36} />}
         {showShare && (
           <button
             className="pressable"
@@ -1373,6 +1375,15 @@ export default function GameDetail() {
   const _captainRow = _captainId ? sbRoster.find(p => p.user_id === _captainId) : null;
   const _captainHandle = _captainRow?.user_code || _captainRow?.full_name || null;
   const showInheritedGroup = (_memberAccess || _sharerAccess) && !!_captainHandle;
+  // Badge del header + aviso bajo la imagen: EXCLUSIVOS del capitán PROPIETARIO de la reserva.
+  // Owner = autenticado con reserva PROPIA activa (userSlot del get_slot_reservation propio,
+  // has_reservation activo) que NO es acceso heredado (ni sharer ni miembro). Excluye anónimos,
+  // visitantes de Shared Link e integrantes del grupo. Sin lógica ni RPC nueva.
+  const _isOwnerCaptain = !isHost && !!user?.id && !!userSlot?.has_reservation
+    && userSlot?.status === 'active' && !_sharerAccess && !_memberAccess;
+  const _slotsBadge = _isOwnerCaptain
+    ? { used: userSlot.reserved_slots_used ?? 0, total: userSlot.reserved_slots_total ?? 0 }
+    : null;
   const [inWaitlist,    setInWaitlist]    = useState(false);
   const [waitlistReady, setWaitlistReady] = useState(false);
   const [showWaitlistAuth, setShowWaitlistAuth] = useState(false);
@@ -1738,7 +1749,7 @@ export default function GameDetail() {
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
-        <Header field={g.field} openSpots={openSpots} spotsReady={availabilityResolved} infoMode={infoMode} live={isStarted && !isPastGame} onBack={() => navigate(backPath, mapReturn ? { state: { mapReturn } } : undefined)}
+        <Header field={g.field} openSpots={openSpots} spotsReady={availabilityResolved} slotsBadge={_slotsBadge} slotsGold={isCaptainGold} infoMode={infoMode} live={isStarted && !isPastGame} onBack={() => navigate(backPath, mapReturn ? { state: { mapReturn } } : undefined)}
           showShare={(!isFull || isBooked) && !isPastGame}
           onShare={() => {
             if (!gameId) return;
@@ -1751,6 +1762,14 @@ export default function GameDetail() {
             <div style={{ padding: '7px 4px 0', display: 'flex', justifyContent: 'center' }}>
               <span style={{ padding: '5px 12px', borderRadius: 999, background: '#EEF2FF', fontSize: 11.5, fontWeight: 500, color: TEXT, whiteSpace: 'nowrap', lineHeight: 1.35 }}>
                 Accedes a los cupos reservados de <button onClick={() => setSelectedPlayer({ name: _captainRow?.full_name || _captainHandle, user_id: _captainId })} style={{ display: 'inline', padding: 0, margin: 0, background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', fontWeight: 700, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>@{_captainHandle}</button>
+              </span>
+            </div>
+          )}
+
+          {_slotsBadge && (
+            <div style={{ padding: '7px 16px 0', display: 'flex', justifyContent: 'center' }}>
+              <span style={{ padding: '6px 14px', borderRadius: 12, background: '#EEF2FF', fontSize: 12, fontWeight: 500, color: TEXT, lineHeight: 1.4, textAlign: 'center' }}>
+                Tienes una <button onClick={openReserveSlots} style={{ display: 'inline', padding: 0, margin: 0, background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', fontWeight: 700, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Reserva de Cupos</button> activa.
               </span>
             </div>
           )}
@@ -1987,7 +2006,7 @@ export default function GameDetail() {
                   currency:    g.currency,
                   source:      'match',
                   type:        g.type,
-                  openSpots:   liveOpenSpots,
+                  openSpots:   effectiveAvailability,
                   wasInWaitlist: inWaitlist,
                   backPath:    id ? `/game/${id}` : '/games',
                   gameDetailBackPath: backPath,
