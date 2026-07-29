@@ -133,6 +133,7 @@ function RouteShell() {
 // onDone fires 480ms later → removes IntroScreen after fade completes.
 function IntroGate({ children }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [introDone, setIntroDone] = useState(() => {
     try {
       const done = !!localStorage.getItem(INTRO_KEY);
@@ -144,6 +145,10 @@ function IntroGate({ children }) {
       return done;
     } catch { return true; }
   });
+
+  useEffect(() => {
+    if (!introDone && location.pathname === '/') navigate('/welcome', { replace: true });
+  }, [introDone, location.pathname, navigate]);
 
   // Compuerta: mientras el Intro no termine, se renderiza IntroScreen EN LUGAR de
   // los children (<Routes>). Así ninguna ruta —incluida /game/:id— se monta durante
