@@ -614,7 +614,9 @@ export default function AuthScreen() {
         {!forgotStep && (<>
           <div style={{ padding: '0 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <SocialButton label="Continuar con Google" icon={GOOGLE_ICON} variant="light" loading={socialLoading === 'google'} onClick={() => socialLogin('google')} />
-            <SocialButton label="Continuar con Facebook" icon={FACEBOOK_ICON} variant="facebook" loading={socialLoading === 'facebook'} onClick={() => socialLogin('facebook')} />
+            {/* Facebook oculto temporalmente hasta terminar la integración con Meta.
+                Para re-habilitarlo, restaurar esta única línea (lógica, imports, FACEBOOK_ICON y socialLogin('facebook') siguen intactos):
+            <SocialButton label="Continuar con Facebook" icon={FACEBOOK_ICON} variant="facebook" loading={socialLoading === 'facebook'} onClick={() => socialLogin('facebook')} /> */}
             {socialError && <div style={{ fontSize: 12.5, color: '#C0392B', paddingLeft: 2, lineHeight: 1.4 }}>{socialError}</div>}
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 4px 0' }}>
               <div style={{ flex: 1, height: 1, background: HAIR }} />
