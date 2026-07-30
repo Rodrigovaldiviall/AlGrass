@@ -424,6 +424,10 @@ export default function AuthScreen() {
         sessionStorage.removeItem('auth_prefer_login');
         return 'login';
       }
+      // Dispositivo que ya completó un login/registro alguna vez (aunque esté deslogueado):
+      // arrancar en "Iniciar sesión". Primera vez en el dispositivo → 'signup'. El usuario
+      // siempre puede alternar manualmente.
+      if (localStorage.getItem('hasLoggedBefore') === 'true') return 'login';
     } catch {}
     return 'signup';
   });
@@ -459,6 +463,9 @@ export default function AuthScreen() {
 
   // Redirect guard
   if (user) {
+    // Marca persistente: este dispositivo ya completó un login/registro (cualquier método:
+    // email, signup, Google…). Próxima vez que se vea Auth → arranca en "Iniciar sesión".
+    try { localStorage.setItem('hasLoggedBefore', 'true'); } catch {}
     try {
       const existing = JSON.parse(localStorage.getItem(PROFILE_KEY) || 'null');
       if (!existing) {
