@@ -402,7 +402,18 @@ const FACEBOOK_ICON = (
 
 export default function AuthScreen() {
   const navigate = useNavigate();
-  const { state } = useLocation();
+  const { state: _locState } = useLocation();
+  // Google recarga la página y pierde location.state. Snapshot único al montar: si hay
+  // location.state (email/navegación normal) se usa; si no, se rehidrata el state que
+  // socialLogin persistió antes del redirect (callback de Google). El guard trabaja sobre
+  // `state` sin distinguir email vs Google — cree que location.state nunca se perdió.
+  const [_resume] = useState(() => {
+    if (_locState) return { state: _locState, oauthCallback: false };
+    try { const raw = sessionStorage.getItem('oauth_resume'); return raw ? { state: JSON.parse(raw), oauthCallback: true } : { state: null, oauthCallback: false }; }
+    catch { return { state: null, oauthCallback: false }; }
+  });
+  useEffect(() => { try { sessionStorage.removeItem('oauth_resume'); } catch {} }, []);
+  const state = _locState ?? _resume.state;
   const { user, login } = useAuth();
   const game = state?.game;
 
@@ -460,13 +471,23 @@ export default function AuthScreen() {
     } catch {}
     if (game) return <Navigate to="/checkout" state={{ game, user, referral: sharedLink.getReferral(game.id) ?? state?.referral ?? null }} replace />;
     if (state?.backPath) return <Navigate to={state.backPath} replace />;
-    // Resume tras OAuth: la recarga borra el navigation state, así que si hay un
-    // contexto de Shared Link persistido, retomamos su partido (GameDetail vuelve a
-    // orquestar "Unirte") en vez de caer a /profile.
+    // Fallback Shared Link: si el state (rehidratado o no) no trae contexto de reanudación,
+    // pero hay un CTX de enlace persistido, retomamos su partido (GameDetail re-orquesta
+    // "Unirte"). Menor prioridad que el state.game, que reanuda directo en /checkout.
     const sctx = sharedLink.read();
     if (sctx?.gameId) return <Navigate to={`/game/${sctx.gameId}`} replace />;
     return <Navigate to="/profile" replace />;
   }
+
+  // Callback OAuth en curso (al montar no había location.state pero sí un state persistido)
+  // y la sesión aún no se hidrató (user == null aquí, tras el guard). No pintar el formulario
+  // azul; solo un loader neutro hasta que el guard navegue. El login por correo tiene
+  // location.state → _resume.oauthCallback es false → no lo activa.
+  if (_resume.oauthCallback) return (
+    <div className="screen-shell" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fff' }}>
+      <div style={{ width: 32, height: 32, border: `3px solid ${SOFT}`, borderTopColor: BLUE, borderRadius: '50%', animation: 'spin .8s linear infinite' }} />
+    </div>
+  );
 
   async function socialLogin(provider) {
     haptic();
@@ -476,11 +497,16 @@ export default function AuthScreen() {
     }
     setSocialLoading(provider);
     setSocialError('');
+    // Persistir el location.state COMPLETO antes del redirect: Google recarga la página y lo
+    // borra. Rehidratado tras el callback, el guard reanuda EXACTAMENTE como el login por
+    // correo (game → /checkout, backPath, waitlistMode…). Se guarda {} si no había state,
+    // para marcar que hubo un callback OAuth (activa el loader neutro).
+    try { sessionStorage.setItem('oauth_resume', JSON.stringify(state ?? {})); } catch {}
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
       options: { redirectTo: window.location.origin + '/auth' },
     });
-    if (error) { setSocialError(error.message); setSocialLoading(null); }
+    if (error) { try { sessionStorage.removeItem('oauth_resume'); } catch {} setSocialError(error.message); setSocialLoading(null); }
   }
 
 
