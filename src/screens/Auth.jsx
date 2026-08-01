@@ -7,7 +7,8 @@ import * as sharedLink from '../lib/sharedLink';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT } from '../constants';
 import I from '../icons';
 import ConfirmReservation from './ConfirmReservation';
-import { deriveGameState } from '../utils/deriveGameState';
+import { deriveGameState, isGamePast } from '../utils/deriveGameState';
+import { getGameById } from '../services/gameService';
 
 // ── Shared primitives ──────────────────────────────────────────────────────
 
@@ -417,6 +418,24 @@ export default function AuthScreen() {
   const { user, login } = useAuth();
   const game = state?.game;
 
+  // Auto-redirect por Shared Link (solo si el guard lo usaría: sin game ni backPath). Antes de
+  // redirigir se valida vigencia del partido con una consulta (getGameById): si no existe o
+  // isGamePast → clearSharedLinkContext() y seguir el flujo normal. undefined = validando.
+  const [_sctxTarget, setSctxTarget] = useState(undefined); // undefined=validando | gameId | null
+  useEffect(() => {
+    if (!user || game || state?.backPath) { setSctxTarget(null); return; }
+    const ctx = sharedLink.read();
+    if (!ctx?.gameId || ctx.autoRedirectConsumed) { setSctxTarget(null); return; }
+    let cancelled = false;
+    setSctxTarget(undefined);
+    getGameById(ctx.gameId).then(g => {
+      if (cancelled) return;
+      if (!g || isGamePast(g.dateKey, g.time24, g.durationMin)) { sharedLink.clearSharedLinkContext(); setSctxTarget(null); }
+      else setSctxTarget(ctx.gameId);
+    }).catch(() => { if (!cancelled) setSctxTarget(null); });
+    return () => { cancelled = true; };
+  }, [user, game, state?.backPath]);
+
   // 'signup' | 'login'
   const [step, setStep]             = useState(() => {
     try {
@@ -478,11 +497,16 @@ export default function AuthScreen() {
     } catch {}
     if (game) return <Navigate to="/checkout" state={{ game, user, referral: sharedLink.getReferral(game.id) ?? state?.referral ?? null }} replace />;
     if (state?.backPath) return <Navigate to={state.backPath} replace />;
-    // Fallback Shared Link: si el state (rehidratado o no) no trae contexto de reanudación,
-    // pero hay un CTX de enlace persistido, retomamos su partido (GameDetail re-orquesta
-    // "Unirte"). Menor prioridad que el state.game, que reanuda directo en /checkout.
-    const sctx = sharedLink.read();
-    if (sctx?.gameId) return <Navigate to={`/game/${sctx.gameId}`} replace />;
+    // Fallback Shared Link: sin contexto de reanudación en state, redirigir al partido del enlace
+    // SOLO si el auto-redirect no se consumió y el partido sigue vigente. La validación (fetch)
+    // corre en el efecto de arriba → _sctxTarget: undefined (validando) | gameId (vigente) | null.
+    const _ctx = sharedLink.read();
+    if (_sctxTarget === undefined && _ctx?.gameId && !_ctx.autoRedirectConsumed) return (
+      <div className="screen-shell" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fff' }}>
+        <div style={{ width: 32, height: 32, border: `3px solid ${SOFT}`, borderTopColor: BLUE, borderRadius: '50%', animation: 'spin .8s linear infinite' }} />
+      </div>
+    );
+    if (_sctxTarget) return <Navigate to={`/game/${_sctxTarget}`} replace />;
     return <Navigate to="/profile" replace />;
   }
 

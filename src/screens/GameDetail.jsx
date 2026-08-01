@@ -1493,6 +1493,12 @@ export default function GameDetail() {
     });
   }, [gameId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Shared Link: primera llegada al partido del enlace → consume el auto-redirect. El CTX
+  // permanece (referral/ciudad/analytics); solo deja de redirigir automáticamente en adelante.
+  useEffect(() => {
+    if (sharedLink.read()?.gameId === gameId) sharedLink.markAutoRedirectConsumed();
+  }, [gameId]);
+
   // Shared Link: al abrir el partido del enlace, si su ciudad difiere de la del
   // perfil, actualizar el contexto de ciudad de la app (mismo write que
   // handleCityChange) para que "volver atrás" muestre los partidos de esa ciudad.

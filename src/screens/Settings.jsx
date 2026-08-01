@@ -207,6 +207,7 @@ function Row({ label, sublabel, value, onPress, right, disabled, danger, accent,
 // ── LegalModal ─────────────────────────────────────────────────────────────
 
 function LegalModal({ type, onClose }) {
+  const navigate = useNavigate();
   if (!type) return null;
   const isTerms = type === 'terms';
   const title = isTerms ? 'Términos de Servicio' : 'Política de Privacidad';
@@ -241,6 +242,12 @@ function LegalModal({ type, onClose }) {
         </div>
         <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '16px 20px 28px' }}>
           <p style={{ fontSize: 14.5, color: TEXT, lineHeight: 1.65, margin: 0 }}>{body}</p>
+          <button
+            onClick={() => { onClose(); navigate(isTerms ? '/terms' : '/privacy'); }}
+            style={{ display: 'block', marginTop: 20, padding: 0, background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 2 }}>{isTerms ? 'Términos del Servicio completos:' : 'Política de Privacidad completa:'}</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: BLUE, textDecoration: 'underline' }}>{isTerms ? 'https://algrass.com/terms' : 'https://algrass.com/privacy'}</div>
+          </button>
         </div>
       </div>
     </div>

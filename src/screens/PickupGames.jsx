@@ -982,11 +982,15 @@ export default function PickupGames() {
     else {
       try { localStorage.setItem(COACH_KEY, '1'); } catch {}
       setCoachStep(null);
-      // Shared Link pendiente: terminado el tutorial (mismo onboarding que el orgánico),
-      // el destino final es el partido del enlace. NO se consume ni borra el contexto
-      // (se reutiliza luego para referral / R1 / analytics). Sin ctx → se queda en /games.
+      // Shared Link pendiente: terminado el tutorial, el destino final es el partido del enlace.
+      // Solo si el auto-redirect NO se consumió aún y el partido sigue vigente (existe en la
+      // lista y !isGamePast). Si no existe o ya pasó → clearSharedLinkContext y quedarse en /games.
       const ctx = sharedLink.read();
-      if (ctx?.gameId) navigate(`/game/${ctx.gameId}`);
+      if (ctx?.gameId && !ctx.autoRedirectConsumed) {
+        const g = games.find(x => x.id === ctx.gameId);
+        if (!g || isGamePast(g.dateKey, g.time24, g.durationMin)) sharedLink.clearSharedLinkContext();
+        else navigate(`/game/${ctx.gameId}`);
+      }
     }
   }
 

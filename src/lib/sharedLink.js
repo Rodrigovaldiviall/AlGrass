@@ -75,6 +75,7 @@ export function capture({ gameId, referral = null, params = {}, source = 'deep_l
     params:     params ?? {},
     city:       null,                       // la resuelve/cachea el Orchestrator
     capturedAt: new Date().toISOString(),   // solo dato; sin expiración aún
+    autoRedirectConsumed: false,            // ¿ya se consumió el auto-redirect al partido?
   };
   writeRaw(ctx);
   // Espejo de compatibilidad: idéntico a lo que hoy escribe GameDetail. Solo si
@@ -120,4 +121,24 @@ export function clearIfGame(gameId) {
     return true;
   }
   return false;
+}
+
+// markAutoRedirectConsumed(): marca que el auto-redirect al partido del enlace YA se consumió
+// (primera llegada a GameDetail). El CTX permanece (referral/ciudad/analytics siguen vivos);
+// ningún consumidor debe volver a redirigir automáticamente. Idempotente.
+export function markAutoRedirectConsumed() {
+  const ctx = readRaw();
+  if (!ctx || ctx.autoRedirectConsumed) return ctx;
+  ctx.autoRedirectConsumed = true;
+  writeRaw(ctx);
+  return ctx;
+}
+
+// clearSharedLinkContext(): elimina TODO el contexto del Shared Link — el CTX y el espejo
+// pending_game_referral del partido. Se usa cuando el partido ya no es vigente (no existe o
+// isGamePast) para no arrastrar un contexto inválido.
+export function clearSharedLinkContext() {
+  const ctx = readRaw();
+  try { if (ctx?.gameId) localStorage.removeItem(REFERRAL_KEY(ctx.gameId)); } catch {}
+  try { localStorage.removeItem(CTX_KEY); } catch {}
 }

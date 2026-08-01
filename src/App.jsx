@@ -102,6 +102,7 @@ const FieldDetail   = lazy(() => import('./screens/FieldDetail'));
 const RentalDetail  = lazy(() => import('./screens/RentalDetail'));
 const VenueDetail   = lazy(() => import('./screens/VenueDetail'));
 const Notifications = lazy(() => import('./screens/Notifications'));
+const LegalPage     = lazy(() => import('./screens/LegalPage'));
 
 const WELCOME_KEY = 'pichanga_welcome_seen';
 
@@ -150,6 +151,10 @@ function IntroGate({ children }) {
     if (!introDone && location.pathname === '/') navigate('/welcome', { replace: true });
   }, [introDone, location.pathname, navigate]);
 
+  // Rutas legales públicas: nunca pasan por el gate del Intro (accesibles directo desde la
+  // web pública). No afectan al onboarding del resto de la app.
+  if (location.pathname === '/privacy' || location.pathname === '/terms') return children;
+
   // Compuerta: mientras el Intro no termine, se renderiza IntroScreen EN LUGAR de
   // los children (<Routes>). Así ninguna ruta —incluida /game/:id— se monta durante
   // el onboarding; no hay GameDetail detrás que el fade pueda revelar.
@@ -193,6 +198,8 @@ export default function App() {
               <Route path="/rental/:id" element={<RentalDetail />} />
               <Route path="/venue" element={<VenueDetail />} />
               <Route path="/notifications" element={<Notifications />} />
+              <Route path="/privacy" element={<LegalPage type="privacy" />} />
+              <Route path="/terms" element={<LegalPage type="terms" />} />
               <Route path="/organizer" element={<Placeholder title="Organizador" />} />
               <Route path="/admin" element={<Placeholder title="Admin" />} />
             </Routes>
