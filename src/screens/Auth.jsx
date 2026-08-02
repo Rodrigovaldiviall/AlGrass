@@ -191,7 +191,6 @@ function generateUserCode(fullName) {
   return first + second + String(Math.floor(Math.random() * 900) + 100);
 }
 
-const MOCK_CODE = '112233';
 
 function maskEmail(e) {
   const at = e.indexOf('@');
@@ -460,14 +459,20 @@ export default function AuthScreen() {
   const [authError,   setAuthError]       = useState('');
   const [authLoading, setAuthLoading]     = useState(false);
 
-  // forgot-password flow: null | 'options' | 'code' | 'newpass'
-  const [forgotStep,   setForgotStep]   = useState(null);
-  const [forgotMethod, setForgotMethod] = useState(null); // 'email' | 'phone'
-  const [verifyCode,   setVerifyCode]   = useState('');
-  const [verifyError,  setVerifyError]  = useState('');
-  const [timeLeft,     setTimeLeft]     = useState(300);
-  const [timerOn,      setTimerOn]      = useState(false);
-  const [newPass,      setNewPass]      = useState('');
+  // Recuperación de contraseña por OTP oficial de Supabase. UNA pantalla, dos estados:
+  // 'email' (pide correo) → 'verify' (código + nueva contraseña + confirmar).
+  const [forgotStep,  setForgotStep]  = useState(null); // null | 'email' | 'verify'
+  const [verifyCode,  setVerifyCode]  = useState('');
+  const [verifyError, setVerifyError] = useState('');
+  const [timeLeft,    setTimeLeft]    = useState(600);  // 10 min = Email OTP Expiration
+  const [timerOn,     setTimerOn]     = useState(false);
+  const [newPass,     setNewPass]     = useState('');
+  const [confirmPass, setConfirmPass] = useState('');
+  const [resetBusy,   setResetBusy]   = useState(false);
+  const [resetDone,   setResetDone]   = useState(false);
+  // Mientras está activo, el guard NO redirige: sostiene la pantalla desde verifyOtp
+  // (que ya crea sesión) hasta cambiar la contraseña y mostrar el mensaje de éxito.
+  const [recoveryActive, setRecoveryActive] = useState(false);
 
   useEffect(() => {
     if (!timerOn) return;
@@ -480,8 +485,9 @@ export default function AuthScreen() {
   const loginReady  = emailValid && pass.length >= 6;
   const signupReady = name.trim() && emailValid && pass.length >= 6 && accept;
 
-  // Redirect guard
-  if (user) {
+  // Redirect guard — suspendido durante la recuperación (recoveryActive) para no
+  // sacar al usuario de la pantalla entre verifyOtp (crea sesión) y el mensaje de éxito.
+  if (user && !recoveryActive) {
     // Marca persistente: este dispositivo ya completó un login/registro (cualquier método:
     // email, signup, Google…). Próxima vez que se vea Auth → arranca en "Iniciar sesión".
     try { localStorage.setItem('hasLoggedBefore', 'true'); } catch {}
@@ -590,30 +596,66 @@ export default function AuthScreen() {
     }
   }
 
-  function sendCode(method) {
-    setForgotMethod(method);
-    setVerifyCode('');
+  // Envía el código OTP (plantilla "Reset Password" con {{ .Token }}). No revela si el
+  // correo existe (protección anti-enumeración de Supabase): avanza al estado 'verify' igual.
+  async function startReset() {
+    haptic();
+    if (!emailValid) return;
+    if (!supabase) { setVerifyError('Supabase no configurado.'); return; }
+    setResetBusy(true); setVerifyError(''); setResetDone(false);
+    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    setResetBusy(false);
+    if (error && /rate|too many/i.test(error.message || '')) {
+      setVerifyError('Demasiados intentos. Espera unos minutos e inténtalo de nuevo.');
+      return;
+    }
+    setVerifyCode(''); setNewPass(''); setConfirmPass('');
+    setTimeLeft(600); setTimerOn(true); setForgotStep('verify');
+  }
+
+  async function resendCode() {
+    if (resetBusy || !supabase) return;
+    setResetBusy(true); setVerifyError('');
+    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    setResetBusy(false);
+    if (error && /rate|too many/i.test(error.message || '')) {
+      setVerifyError('Demasiados intentos. Espera unos minutos e inténtalo de nuevo.');
+      return;
+    }
+    setVerifyCode(''); setTimeLeft(600); setTimerOn(true);
+  }
+
+  // Verifica el código (crea sesión de recuperación) y cambia la contraseña. Todo con
+  // APIs oficiales de Supabase; sin generar ni almacenar códigos propios.
+  async function submitReset() {
+    haptic();
     setVerifyError('');
-    setTimeLeft(300);
-    setTimerOn(true);
-    setForgotStep('code');
-  }
-  function checkCode() {
-    if (verifyCode === MOCK_CODE) { setTimerOn(false); setForgotStep('newpass'); }
-    else setVerifyError('Código incorrecto. Inténtalo de nuevo.');
-  }
-  function saveNewPass() {
-    if (newPass.length < 6) return;
-    login({ name: getUserName(email) || email.split('@')[0], email, provider: 'email' });
+    if (verifyCode.length < 6 || newPass.length < 6 || newPass !== confirmPass || timeLeft === 0) return;
+    setResetBusy(true);
+    setRecoveryActive(true); // evita que el guard redirija a mitad del proceso
+    const { error: vErr } = await supabase.auth.verifyOtp({ email, token: verifyCode, type: 'recovery' });
+    if (vErr) {
+      setResetBusy(false); setRecoveryActive(false);
+      setVerifyError('Código incorrecto o expirado. Revísalo e inténtalo de nuevo.');
+      return;
+    }
+    const { error: uErr } = await supabase.auth.updateUser({ password: newPass });
+    setResetBusy(false);
+    if (uErr) {
+      setRecoveryActive(false);
+      setVerifyError(uErr.message || 'No se pudo cambiar la contraseña. Inténtalo de nuevo.');
+      return;
+    }
+    // Éxito: ya autenticado por la sesión de recuperación. Mostrar mensaje y liberar el
+    // guard → el redirect existente lleva al usuario dentro de AlGrass.
+    setTimerOn(false); setResetDone(true);
+    setTimeout(() => setRecoveryActive(false), 1200);
   }
 
-  const phone = getUserPhone();
-
-  const subtitle = forgotStep === 'options' ? 'Selecciona cómo recibir tu código'
-                 : forgotStep === 'code'    ? 'Ingresa el código de verificación'
-                 : forgotStep === 'newpass' ? 'Crea tu nueva contraseña'
-                 : step === 'login'         ? 'Ingresa a tu cuenta'
-                 :                           'Crea tu cuenta para reservar';
+  const subtitle = forgotStep === 'email'  ? 'Recupera tu contraseña'
+                 : forgotStep === 'verify' ? 'Ingresa el código y tu nueva contraseña'
+                 : step === 'login'        ? 'Ingresa a tu cuenta'
+                 :                          'Crea tu cuenta para reservar';
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
@@ -621,13 +663,13 @@ export default function AuthScreen() {
         <div style={{ height: 36, display: 'flex', alignItems: 'center' }}>
           <button
             onClick={() => {
-              if (forgotStep === 'options')  { setForgotStep(null); }
-              else if (forgotStep === 'code')    { setTimerOn(false); setForgotStep('options'); }
-              else if (forgotStep === 'newpass') { /* no back after verification */ }
+              if (recoveryActive) return; // no interrumpir el cambio de contraseña en curso
+              if (forgotStep === 'email')  { setForgotStep(null); }
+              else if (forgotStep === 'verify') { setTimerOn(false); setForgotStep('email'); }
               else { navigate(-1); }
             }}
             style={{ padding: '6px 4px 6px 0', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 600, color: TEXT, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-            {(forgotStep && forgotStep !== 'newpass') ? '← Atrás' : 'Cancelar'}
+            {forgotStep ? '← Atrás' : 'Cancelar'}
           </button>
         </div>
       </div>
@@ -677,7 +719,7 @@ export default function AuthScreen() {
               </label>
             )}
             {step === 'login' && (
-              <button type="button" onClick={() => setForgotStep('options')} style={{ alignSelf: 'flex-end', marginTop: -2, padding: '4px 2px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+              <button type="button" onClick={() => { setForgotStep('email'); setVerifyError(''); setResetDone(false); }} style={{ alignSelf: 'flex-end', marginTop: -2, padding: '4px 2px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                 ¿Olvidaste tu contraseña?
               </button>
             )}
@@ -705,84 +747,65 @@ export default function AuthScreen() {
           </form>
         </>)}
 
-        {/* ── Forgot password flow ── */}
-        {forgotStep === 'options' && (
-          <div style={{ padding: '8px 20px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {/* opción email — siempre */}
-            <button onClick={() => sendCode('email')} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderRadius: 16, border: `1px solid ${HAIR}`, background: '#fff', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-              <div style={{ width: 40, height: 40, borderRadius: 12, background: SOFT, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="2" y="4" width="20" height="16" rx="3" stroke={TEXT} strokeWidth="1.7"/><path d="M2 8l10 7 10-7" stroke={TEXT} strokeWidth="1.7" strokeLinecap="round"/></svg>
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>Correo electrónico</div>
-                <div style={{ fontSize: 12.5, color: SUB, marginTop: 2 }}>{maskEmail(email)}</div>
-              </div>
-              <svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke={SUB} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </button>
-
-            {/* opción celular — solo si tiene teléfono */}
-            {phone && (
-              <button onClick={() => sendCode('phone')} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderRadius: 16, border: `1px solid ${HAIR}`, background: '#fff', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-                <div style={{ width: 40, height: 40, borderRadius: 12, background: SOFT, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <svg width="18" height="22" viewBox="0 0 18 22" fill="none"><rect x="2" y="1" width="14" height="20" rx="3" stroke={TEXT} strokeWidth="1.7"/><circle cx="9" cy="18" r="1" fill={TEXT}/></svg>
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>Número de celular</div>
-                  <div style={{ fontSize: 12.5, color: SUB, marginTop: 2 }}>{maskPhone(phone)}</div>
-                </div>
-                <svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke={SUB} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              </button>
+        {/* ── Recuperación por OTP — Estado 1: correo ── */}
+        {forgotStep === 'email' && (
+          <div style={{ padding: '8px 20px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: 13.5, color: SUB, lineHeight: 1.5 }}>
+              Ingresa tu correo y te enviaremos un código de 6 dígitos para restablecer tu contraseña.
+            </div>
+            <Field value={email} onChange={v => { setEmail(v); setVerifyError(''); }} placeholder="Correo electrónico" type="email" autoComplete="email" />
+            {verifyError && (
+              <div style={{ fontSize: 12.5, color: '#C0392B', paddingLeft: 2 }}>{verifyError}</div>
             )}
+            <OrangeButton onPress={startReset} disabled={!emailValid || resetBusy}>
+              {resetBusy ? 'Enviando…' : 'Continuar'}
+            </OrangeButton>
           </div>
         )}
 
-        {forgotStep === 'code' && (
+        {/* ── Recuperación por OTP — Estado 2: código + nueva contraseña (misma pantalla) ── */}
+        {forgotStep === 'verify' && (
           <div style={{ padding: '8px 20px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ fontSize: 13.5, color: SUB, lineHeight: 1.5 }}>
-              Código enviado a{' '}
-              <span style={{ color: TEXT, fontWeight: 600 }}>
-                {forgotMethod === 'phone' ? maskPhone(phone) : maskEmail(email)}
-              </span>
+              Hemos enviado un código a{' '}
+              <span style={{ color: TEXT, fontWeight: 600 }}>{maskEmail(email)}</span>
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Field value={verifyCode} onChange={v => { setVerifyCode(v); setVerifyError(''); }} placeholder="Código de 6 dígitos" autoComplete="one-time-code" />
+              <Field value={verifyCode} onChange={v => { setVerifyCode(v.replace(/\D/g, '').slice(0, 6)); setVerifyError(''); }} placeholder="Código de 6 dígitos" type="tel" autoComplete="one-time-code" />
               <div style={{ flexShrink: 0, minWidth: 52, textAlign: 'right', fontSize: 15, fontWeight: 700, color: timeLeft > 0 ? BLUE : '#C0392B' }}>
                 {timeLeft > 0 ? fmtTime(timeLeft) : 'Expirado'}
               </div>
             </div>
 
-            {verifyError && (
-              <div style={{ fontSize: 12.5, color: '#C0392B', paddingLeft: 2 }}>{verifyError}</div>
-            )}
-
             {timeLeft === 0 && (
-              <button onClick={() => sendCode(forgotMethod)} style={{ alignSelf: 'flex-start', padding: '4px 2px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+              <button onClick={resendCode} disabled={resetBusy} style={{ alignSelf: 'flex-start', padding: '4px 2px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                 Reenviar código
               </button>
             )}
 
-            <OrangeButton onPress={checkCode} disabled={verifyCode.length < 6 || timeLeft === 0}>
-              Verificar
-            </OrangeButton>
-          </div>
-        )}
-
-        {forgotStep === 'newpass' && (
-          <div style={{ padding: '8px 20px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderRadius: 14, background: '#F0FFF4', border: '1px solid #A8E6BF' }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#2E7D32" strokeWidth="1.7"/><path d="M7 12l4 4 6-7" stroke="#2E7D32" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              <span style={{ fontSize: 13.5, color: '#2E7D32', fontWeight: 500 }}>Identidad verificada correctamente</span>
-            </div>
-
-            <Field value={newPass} onChange={setNewPass} placeholder="Nueva contraseña" type="password" autoComplete="new-password" />
+            <Field value={newPass} onChange={v => { setNewPass(v); setVerifyError(''); }} placeholder="Nueva contraseña" type="password" autoComplete="new-password" />
+            <Field value={confirmPass} onChange={v => { setConfirmPass(v); setVerifyError(''); }} placeholder="Confirmar contraseña" type="password" autoComplete="new-password" />
             {newPass.length > 0 && newPass.length < 6 && (
               <div style={{ fontSize: 12, color: SUB, marginTop: -8, paddingLeft: 4 }}>Mínimo 6 caracteres</div>
             )}
+            {confirmPass.length > 0 && newPass !== confirmPass && (
+              <div style={{ fontSize: 12, color: '#C0392B', marginTop: -8, paddingLeft: 4 }}>Las contraseñas no coinciden</div>
+            )}
+            {verifyError && (
+              <div style={{ fontSize: 12.5, color: '#C0392B', paddingLeft: 2 }}>{verifyError}</div>
+            )}
 
-            <OrangeButton onPress={saveNewPass} disabled={newPass.length < 6}>
-              Guardar contraseña
-            </OrangeButton>
+            {resetDone ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderRadius: 14, background: '#F0FFF4', border: '1px solid #A8E6BF' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#2E7D32" strokeWidth="1.7"/><path d="M7 12l4 4 6-7" stroke="#2E7D32" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                <span style={{ fontSize: 13.5, color: '#2E7D32', fontWeight: 500 }}>Contraseña cambiada. Entrando…</span>
+              </div>
+            ) : (
+              <OrangeButton onPress={submitReset} disabled={verifyCode.length < 6 || newPass.length < 6 || newPass !== confirmPass || timeLeft === 0 || resetBusy}>
+                {resetBusy ? 'Verificando…' : 'Cambiar contraseña'}
+              </OrangeButton>
+            )}
           </div>
         )}
       </div>

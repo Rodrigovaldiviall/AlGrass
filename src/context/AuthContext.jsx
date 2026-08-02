@@ -109,7 +109,10 @@ export function AuthProvider({ children }) {
       // INITIAL_SESSION fires on every page load with the persisted Supabase session —
       // handling it here ensures the React user state is always derived from the live
       // Supabase session, not from a potentially stale pichanga_user localStorage entry.
-      if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION') && session) {
+      // PASSWORD_RECOVERY: verifyOtp({type:'recovery'}) crea una sesión válida. Lo tratamos
+      // como SIGNED_IN para que, tras cambiar la contraseña, el usuario quede autenticado en
+      // la app sin volver al login (red de seguridad por si el SDK no emite SIGNED_IN aquí).
+      if ((event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'PASSWORD_RECOVERY') && session) {
         const su = session.user;
         const metaName = su.user_metadata?.full_name || su.user_metadata?.name || null;
         const name = metaName || 'Usuario';
