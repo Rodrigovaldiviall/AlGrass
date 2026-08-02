@@ -560,9 +560,15 @@ function StatItem({ value, label }) {
 
 // ── ProfileCard ────────────────────────────────────────────────────────────
 
-function ProfileCard({ user, gamesPlayedCount, onEdit, isProfileComplete = false, isHostOrStaff = false, hasActivity = false }) {
+function ProfileCard({ user, gamesPlayedCount, onEdit, onEditEmail, isProfileComplete = false, isHostOrStaff = false, hasActivity = false }) {
   // Estado de capitán desde la fuente de verdad V6 (roles ya existentes), no de lógica antigua.
   const { isCaptain, isCaptainGold } = useGlobalRoles();
+  // Revisión VISUAL del correo de acceso (sin verificación real ni cambio de auth). Estado local
+  // por-correo: 'algr_email_reviewed' = último correo confirmado. Si el correo cambia, reaparece.
+  const [_emailReviewed] = useState(() => { try { return localStorage.getItem('algr_email_reviewed') === user.email; } catch { return false; } });
+  const [_emailChecked, setEmailChecked] = useState(false); // check tras Confirmar (esta sesión)
+  const [_emailDialog, setEmailDialog] = useState(false);
+  const confirmEmail = () => { try { localStorage.setItem('algr_email_reviewed', user.email); } catch {} setEmailChecked(true); setEmailDialog(false); };
   const displayName = user.name || '';
   const posDisplay  = Array.isArray(user.positions) && user.positions.length > 0
     ? user.positions.join(' · ')
@@ -642,6 +648,27 @@ function ProfileCard({ user, gamesPlayedCount, onEdit, isProfileComplete = false
           <StatItem value={posDisplay} label="Posición de juego" />
         </div>
       </div>
+      {/* Correo de acceso (revisión visual del titular): debajo de ciudad/posición, encima de Capitán.
+          Una sola línea, azul 12px/600 (jerarquía del @código), con icono de alerta claramente pulsable.
+          Desaparece al confirmar; reaparece si el correo cambia. No aparece en la tarjeta pública. */}
+      {!_emailReviewed && user.email && (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${HAIR}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          <span style={{ fontSize: 12, color: BLUE, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{user.email}</span>
+          {_emailChecked ? (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }} aria-label="Correo revisado">
+              <circle cx="12" cy="12" r="10" fill={GREEN}/>
+              <path d="M8 12.5l2.5 2.5L16 9.5" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          ) : (
+            <button onClick={() => setEmailDialog(true)} aria-label="Revisar correo" className="pressable" style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', padding: 0, background: ORANGE, border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.28)', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                <path d="M12 7v6" stroke="#fff" strokeWidth="2.6" strokeLinecap="round"/>
+                <circle cx="12" cy="17" r="1.35" fill="#fff"/>
+              </svg>
+            </button>
+          )}
+        </div>
+      )}
       {(isCaptain || isCaptainGold) && (
         <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${HAIR}`, display: 'flex', alignItems: 'center', gap: 5 }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.3))' }}>
@@ -649,6 +676,21 @@ function ProfileCard({ user, gamesPlayedCount, onEdit, isProfileComplete = false
             <path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
           <span style={{ fontSize: 12.5, color: RED, lineHeight: 1.4, whiteSpace: 'nowrap' }}>Capitán. Reserva cupos hasta 24h antes del partido.</span>
+        </div>
+      )}
+
+      {/* El diálogo de revisión del correo se dispara desde el elemento del bloque de identidad
+          (junto al @código). Aquí solo el overlay; la lógica de Confirmar/Modificar no cambia. */}
+      {_emailDialog && (
+        <div onClick={() => setEmailDialog(false)} style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 16px' }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 18, width: '100%', maxWidth: 320, padding: '20px 20px 16px', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+            <div style={{ fontSize: 16.5, fontWeight: 700, color: TEXT, textAlign: 'center', letterSpacing: -0.2 }}>¿Es tu correo electrónico?</div>
+            <div style={{ fontSize: 13.5, color: SUB, textAlign: 'center', marginTop: 6, wordBreak: 'break-all' }}>{user.email}</div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+              <button onClick={() => { setEmailDialog(false); onEditEmail?.(); }} style={{ flex: 1, height: 44, borderRadius: 12, border: `1px solid ${HAIR}`, background: '#fff', color: TEXT, fontSize: 14.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Modificar</button>
+              <button onClick={confirmEmail} style={{ flex: 1, height: 44, borderRadius: 12, border: 'none', background: BLUE, color: '#fff', fontSize: 14.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Confirmar</button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -1031,13 +1073,13 @@ function translateAuthError(msg) {
 
 // ── EditProfileModal ───────────────────────────────────────────────────────
 
-function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, userProvider = 'email', userId = null }) {
+function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, userProvider = 'email', userId = null, startEmailUnlocked = false }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
 
   const [fullName,  setFullName]  = useState(profileData.fullName || userName || '');
   const [emailVal,  setEmailVal]  = useState(profileData.email || userEmail || '');
-  const [emailLocked, setEmailLocked] = useState(true);
+  const [emailLocked, setEmailLocked] = useState(!startEmailUnlocked); // "Modificar" abre el campo ya desbloqueado; reutiliza el flujo de edición existente
   const [password,  setPassword]  = useState(profileData.password || '');
   const [pwCurrent, setPwCurrent] = useState('');
   const [pwConfirm, setPwConfirm] = useState('');
@@ -2026,6 +2068,7 @@ export default function Profile() {
   }
   const [supportOpen,    setSupportOpen]    = useState(false);
   const [editOpen,       setEditOpen]       = useState(() => state?.openEdit === true);
+  const [editEmailUnlock, setEditEmailUnlock] = useState(false); // abrir Editar Perfil con el campo correo ya desbloqueado (desde "Modificar")
   useEffect(() => {
     if (state?.openEdit === true) {
       navigate('/profile', { replace: true, state: { ...state, openEdit: false } });
@@ -2924,7 +2967,7 @@ export default function Profile() {
             </>
           ) : (
           <>
-          <ProfileCard user={cardUser} gamesPlayedCount={pastGameCount} onEdit={() => setEditOpen(true)} isProfileComplete={isProfileComplete} isHostOrStaff={isVenueStaff || isVenueManager || isGameHost} hasActivity={hasActivity} />
+          <ProfileCard user={cardUser} gamesPlayedCount={pastGameCount} onEdit={() => setEditOpen(true)} onEditEmail={() => { setEditEmailUnlock(true); setEditOpen(true); }} isProfileComplete={isProfileComplete} isHostOrStaff={isVenueStaff || isVenueManager || isGameHost} hasActivity={hasActivity} />
 
           {showContentSkeleton ? (
             <SkeletonProfileContent creditEl={creditEl} />
@@ -3128,7 +3171,8 @@ export default function Profile() {
           userProvider={user?.provider || 'email'}
           userId={user?.id ?? null}
           onSave={handleSave}
-          onClose={() => setEditOpen(false)}
+          startEmailUnlocked={editEmailUnlock}
+          onClose={() => { setEditOpen(false); setEditEmailUnlock(false); }}
         />
       )}
     </div>

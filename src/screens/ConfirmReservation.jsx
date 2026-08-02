@@ -769,6 +769,11 @@ export default function ConfirmReservation() {
   const guestSlots    = maxSelectable(reservedSlots);   // máx invitados (descuenta cupos)
   const reservedMax   = maxSelectable(guests.length);   // máx reserva de cupos (descuenta invitados)
   const displaySpots  = guestSlots;
+  // Caso de negocio "solo queda el cupo del propio titular": el partido no tiene sitio para
+  // NADIE más allá del titular (spotBudget = rawSpots − 1 = 0). Es INDEPENDIENTE de los invitados
+  // seleccionados. NO usar reservedMax aquí: reservedMax también llega a 0 cuando los invitados
+  // consumen el presupuesto (aunque sí queden cupos), y ese NO es este caso.
+  const onlyTitularSpot = spotBudget != null && spotBudget <= 0;
   const spotsLabel    = (() => {
     if (addGuestsMode || invitedMode) {
       if (displaySpots === undefined) return null;
@@ -1193,20 +1198,20 @@ export default function ConfirmReservation() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0' }}>
               <div style={{ width: 46, height: 46, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <svg width="46" height="46" viewBox="0 0 24 24" fill="none">
-                  <path d="M12 3l7 3v5c0 4.2-2.9 7.6-7 8.8-4.1-1.2-7-4.6-7-8.8V6l7-3z" fill={slotReservationClosed ? '#C7C7CC' : captainColor} stroke={slotReservationClosed ? '#C7C7CC' : captainColor} strokeWidth="1.2" strokeLinejoin="round"/>
+                  <path d="M12 3l7 3v5c0 4.2-2.9 7.6-7 8.8-4.1-1.2-7-4.6-7-8.8V6l7-3z" fill={(slotReservationClosed || onlyTitularSpot) ? '#C7C7CC' : captainColor} stroke={(slotReservationClosed || onlyTitularSpot) ? '#C7C7CC' : captainColor} strokeWidth="1.2" strokeLinejoin="round"/>
                 </svg>
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-                  <span style={{ fontSize: 15.5, fontWeight: 700, color: slotReservationClosed ? '#9A9AA0' : TEXT, letterSpacing: -0.2, whiteSpace: 'nowrap' }}>Reserva cupos</span>
-                  <span style={{ fontSize: 12, color: slotReservationClosed ? '#C7C7CC' : SUB, whiteSpace: 'nowrap', flexShrink: 0 }}>Pagan ellos</span>
+                  <span style={{ fontSize: 15.5, fontWeight: 700, color: (slotReservationClosed || onlyTitularSpot) ? '#9A9AA0' : TEXT, letterSpacing: -0.2, whiteSpace: 'nowrap' }}>Reserva cupos</span>
+                  <span style={{ fontSize: 12, color: (slotReservationClosed || onlyTitularSpot) ? '#C7C7CC' : SUB, whiteSpace: 'nowrap', flexShrink: 0 }}>Pagan ellos</span>
                 </div>
-                <div style={{ fontSize: 12.5, color: slotReservationClosed ? '#C7C7CC' : SUB, marginTop: 1 }}>Hasta {releaseHours}h antes del partido</div>
+                <div style={{ fontSize: 12.5, color: (slotReservationClosed || onlyTitularSpot) ? '#C7C7CC' : SUB, marginTop: 1 }}>Hasta {releaseHours}h antes del partido</div>
               </div>
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                {stepBtn(() => setReservedSlots(n => (n > 0 ? n - 1 : n)), slotReservationClosed || reservedSlots <= 0, false)}
-                <span style={{ minWidth: 22, textAlign: 'center', fontSize: 16, fontWeight: 700, color: slotReservationClosed ? '#9A9AA0' : TEXT }}>{reservedSlots}</span>
-                {stepBtn(() => setReservedSlots(n => n + 1), slotReservationClosed || (reservedMax != null && reservedSlots >= reservedMax), true)}
+                {stepBtn(() => setReservedSlots(n => (n > 0 ? n - 1 : n)), slotReservationClosed || onlyTitularSpot || reservedSlots <= 0, false)}
+                <span style={{ minWidth: 22, textAlign: 'center', fontSize: 16, fontWeight: 700, color: (slotReservationClosed || onlyTitularSpot) ? '#9A9AA0' : TEXT }}>{reservedSlots}</span>
+                {stepBtn(() => setReservedSlots(n => n + 1), slotReservationClosed || onlyTitularSpot || (reservedMax != null && reservedSlots >= reservedMax), true)}
               </div>
             </div>
           </div>
