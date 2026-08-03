@@ -127,7 +127,7 @@ export function AuthProvider({ children }) {
         // Fetch canonical full_name + user_code from public.users — overrides auth metadata
         supabase
           .from('users')
-          .select('full_name, user_code, city')
+          .select('full_name, user_code, city, email')
           .eq('id', su.id)
           .maybeSingle()
           .then(async ({ data: initialData }) => {
@@ -138,11 +138,22 @@ export function AuthProvider({ children }) {
               await new Promise(r => setTimeout(r, 1500));
               const { data: retried } = await supabase
                 .from('users')
-                .select('full_name, user_code, city')
+                .select('full_name, user_code, city, email')
                 .eq('id', su.id)
                 .maybeSingle();
               data = retried;
               if (!data?.full_name) return;
+            }
+
+            // Reconciliación multi-dispositivo del correo (fuente de verdad: auth.users.email).
+            // Si el cambio se confirmó en otro dispositivo sin sesión, public.users quedó desfasado.
+            // Al hidratar una sesión válida, lo corregimos UNA vez y solo si hay inconsistencia real;
+            // cuando ya coinciden no hace nada (autolimitada, sin polling ni proceso en background).
+            if (su.email && data.email && data.email !== su.email) {
+              supabase.from('users')
+                .update({ email: su.email, confirmed_email: su.email })
+                .eq('id', su.id)
+                .then(({ error }) => { if (error) console.warn('[auth] email reconcile:', error.message); });
             }
 
             let userCode = data.user_code || null;

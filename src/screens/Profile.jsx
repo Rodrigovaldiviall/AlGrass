@@ -560,15 +560,15 @@ function StatItem({ value, label }) {
 
 // ── ProfileCard ────────────────────────────────────────────────────────────
 
-function ProfileCard({ user, gamesPlayedCount, onEdit, onEditEmail, isProfileComplete = false, isHostOrStaff = false, hasActivity = false }) {
+function ProfileCard({ user, gamesPlayedCount, onEdit, onEditEmail, onConfirmEmail, isProfileComplete = false, isHostOrStaff = false, hasActivity = false }) {
   // Estado de capitán desde la fuente de verdad V6 (roles ya existentes), no de lógica antigua.
   const { isCaptain, isCaptainGold } = useGlobalRoles();
-  // Revisión VISUAL del correo de acceso (sin verificación real ni cambio de auth). Estado local
-  // por-correo: 'algr_email_reviewed' = último correo confirmado. Si el correo cambia, reaparece.
-  const [_emailReviewed] = useState(() => { try { return localStorage.getItem('algr_email_reviewed') === user.email; } catch { return false; } });
+  // Revisión VISUAL del correo de acceso (sin verificación real ni cambio de auth). Fuente de verdad:
+  // users.confirmed_email (ligada a la cuenta, no al dispositivo). Confirmado ⇔ confirmed_email == email.
+  const _emailReviewed = !!user.email && user.confirmedEmail === user.email;
   const [_emailChecked, setEmailChecked] = useState(false); // check tras Confirmar (esta sesión)
   const [_emailDialog, setEmailDialog] = useState(false);
-  const confirmEmail = () => { try { localStorage.setItem('algr_email_reviewed', user.email); } catch {} setEmailChecked(true); setEmailDialog(false); };
+  const confirmEmail = () => { onConfirmEmail?.(); setEmailChecked(true); setEmailDialog(false); };
   const displayName = user.name || '';
   const posDisplay  = Array.isArray(user.positions) && user.positions.length > 0
     ? user.positions.join(' · ')
@@ -651,7 +651,7 @@ function ProfileCard({ user, gamesPlayedCount, onEdit, onEditEmail, isProfileCom
       {/* Correo de acceso (revisión visual del titular): debajo de ciudad/posición, encima de Capitán.
           Una sola línea, azul 12px/600 (jerarquía del @código), con icono de alerta claramente pulsable.
           Desaparece al confirmar; reaparece si el correo cambia. No aparece en la tarjeta pública. */}
-      {!_emailReviewed && user.email && (
+      {user.emailReady && (!_emailReviewed || _emailChecked) && user.email && (
         <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${HAIR}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
           <span style={{ fontSize: 12, color: BLUE, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{user.email}</span>
           {_emailChecked ? (
@@ -1184,7 +1184,7 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
       doLockField('email');
       setEmailVal(emailSnapshot.current); // revert synchronously — before any await
       if (supabase) {
-        const { error } = await supabase.auth.updateUser({ email: newEmail });
+        const { error } = await supabase.auth.updateUser({ email: newEmail }, { emailRedirectTo: window.location.origin + '/email-changed' });
         if (!error) { setPendingEmailChange(newEmail); setEmailChangeError(null); }
         else setEmailChangeError(error.message);
       }
@@ -2222,7 +2222,7 @@ export default function Profile() {
 
       supabase
         .from('users')
-        .select('full_name, email, role, organizer_status, birth_date, sex, preferred_position, phone, nationality, occupation, user_code, avatar_path, avatar_updated_at')
+        .select('full_name, email, confirmed_email, role, organizer_status, birth_date, sex, preferred_position, phone, nationality, occupation, user_code, avatar_path, avatar_updated_at')
         .eq('id', uid)
         .single()
         .then(async ({ data, error }) => {
@@ -2883,6 +2883,8 @@ export default function Profile() {
     ...USER,
     name:        displayName,
     email:       sbProfile?.email || user?.email || USER.email,
+    confirmedEmail: sbProfile?.confirmed_email ?? null, // fuente de verdad de la confirmación (users.confirmed_email)
+    emailReady:  !!sbProfile,                           // solo decidir el aviso cuando la fila users ya cargó
     userCode:    profileData.userCode    ?? null,
     gender:      profileData.gender      ?? 'Hombre',
     position:    profileData.position    ?? '',
@@ -2897,6 +2899,18 @@ export default function Profile() {
     photoDataUrl:  profileData.photoDataUrl  ?? null,
     avatarPath:    profileData.avatarPath    ?? null,
     avatarVersion: profileData.avatarVersion ?? null,
+  };
+
+  // Confirmar correo → persistir en users.confirmed_email (ligada a la cuenta, no al dispositivo).
+  // Mismo patrón de UPDATE self que el guardado de perfil; reutiliza la RLS existente.
+  const handleConfirmEmail = async () => {
+    if (!supabase) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user?.id) return;
+    const confirmed = cardUser.email;
+    const { error } = await supabase.from('users').update({ confirmed_email: confirmed }).eq('id', session.user.id);
+    if (error) { console.warn('[Profile] confirmed_email:', error.message); return; }
+    setSbProfile(prev => (prev ? { ...prev, confirmed_email: confirmed } : prev));
   };
 
   const hasPosition  = (cardUser.positions?.length > 0) || !!cardUser.position;
@@ -2967,7 +2981,7 @@ export default function Profile() {
             </>
           ) : (
           <>
-          <ProfileCard user={cardUser} gamesPlayedCount={pastGameCount} onEdit={() => setEditOpen(true)} onEditEmail={() => { setEditEmailUnlock(true); setEditOpen(true); }} isProfileComplete={isProfileComplete} isHostOrStaff={isVenueStaff || isVenueManager || isGameHost} hasActivity={hasActivity} />
+          <ProfileCard user={cardUser} gamesPlayedCount={pastGameCount} onEdit={() => setEditOpen(true)} onEditEmail={() => { setEditEmailUnlock(true); setEditOpen(true); }} onConfirmEmail={handleConfirmEmail} isProfileComplete={isProfileComplete} isHostOrStaff={isVenueStaff || isVenueManager || isGameHost} hasActivity={hasActivity} />
 
           {showContentSkeleton ? (
             <SkeletonProfileContent creditEl={creditEl} />
