@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useLocation, useParams } from 'react-router-dom';
+import { useNavigate, useLocation, useParams, Navigate } from 'react-router-dom';
 import { useSheetPull } from '../hooks/useSheetPull';
 import MapsLinkButton from '../components/MapsLinkButton';
 import Pressable from '../components/Pressable';
@@ -513,6 +513,25 @@ export default function RentalDetail() {
     game.parking && { label: 'Estacionamiento', icon: null        },
     game.showers && { label: 'Duchas',          icon: null        },
   ].filter(Boolean);
+
+  // ── Guarda de acceso: impedir abrir una reserva de cancha que ya no tiene sentido ──
+  // Mismo comportamiento que en partidos: redirige a Canchas (/fields) con un aviso en
+  // location.state → Fields lo muestra en un modal. Sin consultas nuevas: reutiliza game.status
+  // (fresco tras statusReady), isPastRental (fin real, cubre la ventana antes del cron) y la
+  // relación (isHost || userBooked). canceled/expired: siempre; completed/pasada: solo si NO participó.
+  let _notice = null;
+  if (statusReady) {
+    const _cs = game.status;
+    const _participated = isHost || userBooked;
+    if      (_cs === 'canceled') _notice = { title: 'Reserva no disponible', message: 'Esta reserva fue cancelada.' };
+    else if (_cs === 'expired')  _notice = { title: 'Reserva no disponible', message: 'Esta reserva ya no está disponible.' };
+    else if (_cs === 'completed' && !_participated) _notice = { title: 'Reserva finalizada', message: 'Esta reserva ya finalizó.' };
+    else if (isPastRental && !_participated)        _notice = { title: 'Reserva finalizada', message: 'Esta reserva ya finalizó.' };
+  }
+  if (_notice) {
+    const _welcomeSeen = (() => { try { return !!localStorage.getItem('pichanga_welcome_seen'); } catch { return false; } })();
+    return <Navigate to={_welcomeSeen ? '/fields' : '/welcome'} replace state={_welcomeSeen ? { gameNotice: _notice } : undefined} />;
+  }
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>

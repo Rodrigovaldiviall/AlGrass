@@ -13,6 +13,7 @@ import { getVenueCoverUrl } from '../utils/venue';
 import { getRentalGames } from '../services/gameService';
 import { getVenues } from '../services/venueService';
 import DistrictSheet from '../components/DistrictSheet';
+import RouteNoticeModal from '../components/RouteNoticeModal';
 import VenueBottomSheet from '../components/VenueBottomSheet';
 
 // Mapa lazy: vive en su propio chunk; solo se descarga al pulsar "Mapa".
@@ -1040,6 +1041,7 @@ export default function Fields() {
           onClose={() => setCitySheetOpen(false)}
         />
       )}
+      <RouteNoticeModal />
     </div>
   );
 }

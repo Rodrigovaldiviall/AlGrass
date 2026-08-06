@@ -12,6 +12,7 @@ import { getVenues } from '../services/venueService';
 import DistrictSheet from '../components/DistrictSheet';
 import VenueBottomSheet from '../components/VenueBottomSheet';
 import TabBar from '../components/TabBar';
+import RouteNoticeModal from '../components/RouteNoticeModal';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import * as sharedLink from '../lib/sharedLink';
@@ -999,16 +1000,6 @@ export default function PickupGames() {
   useEffect(() => {
     if (location.state?.showCitySheet) { setCitySheetOpen(true); setCityOnboarding(true); }
   }, [location.state?.showCitySheet]);
-
-  // Aviso "partido no disponible/finalizado" traído desde GameDetail vía location.state.
-  // Se consume UNA vez y se limpia el state de la ruta → no reaparece al navegar ni al refrescar.
-  const [gameNotice, setGameNotice] = useState(null);
-  useEffect(() => {
-    if (location.state?.gameNotice) {
-      setGameNotice(location.state.gameNotice);
-      navigate(location.pathname, { replace: true, state: {} });
-    }
-  }, [location.state?.gameNotice]); // eslint-disable-line react-hooks/exhaustive-deps
   const fgTick = useForegroundTick();
   const [games, setGames]     = useState(() => _gamesCache);
   const [loading, setLoading] = useState(_gamesCache.length === 0);
@@ -1633,15 +1624,7 @@ export default function PickupGames() {
         />
       )}
       {coachStep !== null && createPortal(<CoachOverlay step={coachStep} onAdvance={advanceCoach} />, document.body)}
-      {gameNotice && (
-        <div onClick={() => setGameNotice(null)} style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 16px' }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 18, width: '100%', maxWidth: 320, padding: '20px 20px 16px', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
-            <div style={{ fontSize: 16.5, fontWeight: 700, color: TEXT, textAlign: 'center', letterSpacing: -0.2 }}>{gameNotice.title}</div>
-            <div style={{ fontSize: 13.5, color: SUB, textAlign: 'center', marginTop: 6, lineHeight: 1.45 }}>{gameNotice.message}</div>
-            <button onClick={() => setGameNotice(null)} style={{ marginTop: 18, width: '100%', height: 44, borderRadius: 12, border: 'none', background: BLUE, color: '#fff', fontSize: 14.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Cerrar</button>
-          </div>
-        </div>
-      )}
+      <RouteNoticeModal />
     </div>
   );
 }
