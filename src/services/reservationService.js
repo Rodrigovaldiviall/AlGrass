@@ -9,17 +9,19 @@ async function getSession() {
   return session;
 }
 
-async function ensureWalletSummary(userId) {
-  const { data } = await supabase.from('wallet_summary').select('user_id').eq('user_id', userId).maybeSingle();
+async function ensureWalletSummary(userId, ctx) {
+  const db = ctx?.db ?? supabase;
+  const { data } = await db.from('wallet_summary').select('user_id').eq('user_id', userId).maybeSingle();
   if (!data) {
-    await supabase.from('wallet_summary').insert({ user_id: userId, total_amount: 0, reserved_balance: 0, credit_balance: 0 });
+    await db.from('wallet_summary').insert({ user_id: userId, total_amount: 0, reserved_balance: 0, credit_balance: 0 });
   }
 }
 
 // Read-modify-write on wallet_summary. Race condition acceptable for this app.
-async function applySpend(userId, { totalAmount, subtotalAmount, creditApplied = 0 }) {
-  await ensureWalletSummary(userId);
-  const { data } = await supabase.from('wallet_summary')
+async function applySpend(userId, { totalAmount, subtotalAmount, creditApplied = 0 }, ctx) {
+  const db = ctx?.db ?? supabase;
+  await ensureWalletSummary(userId, ctx);
+  const { data } = await db.from('wallet_summary')
     .select('total_amount, reserved_balance, credit_balance')
     .eq('user_id', userId).single();
   const cur = data ?? { total_amount: 0, reserved_balance: 0, credit_balance: 0 };
@@ -29,7 +31,7 @@ async function applySpend(userId, { totalAmount, subtotalAmount, creditApplied =
     reserved_balance: cur.reserved_balance + subtotalAmount,
     credit_balance:   Math.max(0, cur.credit_balance - creditApplied),
   };
-  await supabase.from('wallet_summary').upsert(next, { onConflict: 'user_id' });
+  await db.from('wallet_summary').upsert(next, { onConflict: 'user_id' });
 }
 
 async function applyRefund(userId, refundAmount) {
@@ -128,8 +130,9 @@ export async function searchUsers(query, { limit = 20, excludeIds = [] } = {}) {
 
 // ── match status helpers ──────────────────────────────────────────────────────
 
-async function setMatchReserved(gameId) {
-  await supabase.from('games')
+async function setMatchReserved(gameId, ctx) {
+  const db = ctx?.db ?? supabase;
+  await db.from('games')
     .update({ status: 'reserved' })
     .eq('id', gameId)
     .eq('status', 'published');
@@ -151,18 +154,19 @@ async function setMatchPublishedIfEmpty(gameId) {
 // ── reserve ───────────────────────────────────────────────────────────────────
 
 // Appends a spend record to reservations (append-only ledger).
-export async function createReservation({ gameId, unitPrice, promoCode, promoDiscount, totalAmount, subtotalAmount, playersCount, guestTotal, paymentMethod, creditApplied, source }) {
-  if (!supabase) return { skipped: true };
-  const session = await getSession();
-  if (!session?.user?.id) return { skipped: true };
+export async function createReservation({ gameId, unitPrice, promoCode, promoDiscount, totalAmount, subtotalAmount, playersCount, guestTotal, paymentMethod, creditApplied, source }, ctx) {
+  const db = ctx?.db ?? supabase;
+  if (!db) return { skipped: true };
+  const actor = ctx?.actor ?? (await getSession())?.user?.id;
+  if (!actor) return { skipped: true };
 
-  await applySpend(session.user.id, { totalAmount, subtotalAmount: subtotalAmount || totalAmount, creditApplied: creditApplied || 0 });
+  await applySpend(actor, { totalAmount, subtotalAmount: subtotalAmount || totalAmount, creditApplied: creditApplied || 0 }, ctx);
 
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('reservations')
     .insert({
       game_id:             gameId,
-      user_id:             session.user.id,
+      user_id:             actor,
       status:              'spend',
       unit_price:          unitPrice,
       promo_code:          promoCode || null,
@@ -184,9 +188,9 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoDis
 
   if (source === 'rental' && gameId) {
     // Claim if published (normal) OR reserved-but-unclaimed (stuck state from pre-migration booking).
-    const { data: claimed, error: gameErr } = await supabase
+    const { data: claimed, error: gameErr } = await db
       .from('games')
-      .update({ status: 'reserved', booked_by_user_id: session.user.id })
+      .update({ status: 'reserved', booked_by_user_id: actor })
       .eq('id', gameId)
       .or('status.eq.published,and(status.eq.reserved,booked_by_user_id.is.null)')
       .select('id');
@@ -198,17 +202,18 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoDis
 }
 
 // Activates (or reactivates) a game_players slot via upsert on (game_id, user_id, payer_id).
-export async function createGamePlayer({ gameId, userId = null, payerId = null, reservationId = null, amount = 0, reservationType = 'normal', invitedByUserId = null, hostUserId = null, gameSlotReservationId = null, countsReservedSlot = undefined, referredByUserId = null }) {
-  if (!supabase) return { skipped: true };
-  const session = await getSession();
-  if (!session?.user?.id) return { skipped: true };
-  const resolvedUserId  = userId  || session.user.id;
-  const resolvedPayerId = payerId || session.user.id;
+export async function createGamePlayer({ gameId, userId = null, payerId = null, reservationId = null, amount = 0, reservationType = 'normal', invitedByUserId = null, hostUserId = null, gameSlotReservationId = null, countsReservedSlot = undefined, referredByUserId = null }, ctx) {
+  const db = ctx?.db ?? supabase;
+  if (!db) return { skipped: true };
+  const actor = ctx?.actor ?? (await getSession())?.user?.id;
+  if (!actor) return { skipped: true };
+  const resolvedUserId  = userId  || actor;
+  const resolvedPayerId = payerId || actor;
   if (hostUserId && resolvedUserId === hostUserId) {
     console.warn('[createGamePlayer] blocked: organizer cannot be added as player');
     return { blocked: true };
   }
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('game_players')
     .upsert({
       game_id:            gameId,
@@ -232,23 +237,24 @@ export async function createGamePlayer({ gameId, userId = null, payerId = null, 
     .select('id')
     .single();
   if (error) { console.error('[createGamePlayer]', error); return { data, error }; }
-  await setMatchReserved(gameId);
+  await setMatchReserved(gameId, ctx);
   return { data, error };
 }
 
 // Organizer invites players for free — no wallet spend, reservation_type = 'invited'.
 // user_id = host (same ownership pattern as addGuestsMode reservations).
 // Individual invited players are linked via game_players.user_id, not via reservations.user_id.
-export async function createInvitedReservation({ gameId, playersCount = 1, unitPrice }) {
-  if (!supabase) return { skipped: true };
-  const session = await getSession();
-  if (!session?.user?.id) return { skipped: true };
+export async function createInvitedReservation({ gameId, playersCount = 1, unitPrice }, ctx) {
+  const db = ctx?.db ?? supabase;
+  if (!db) return { skipped: true };
+  const actor = ctx?.actor ?? (await getSession())?.user?.id;
+  if (!actor) return { skipped: true };
   const inviteTotal = unitPrice * playersCount;
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('reservations')
     .insert({
       game_id:            gameId,
-      user_id:            session.user.id,  // host — satisfies RLS auth.uid() check
+      user_id:            actor,  // host — satisfies RLS auth.uid() check
       status:             'spend',
       unit_price:         unitPrice,
       promo_code:         null,
@@ -262,7 +268,7 @@ export async function createInvitedReservation({ gameId, playersCount = 1, unitP
       source:             'organizer_invite',
       reserved_at:        new Date().toISOString(),
       reservation_type:   'invited',
-      invited_by_user_id: session.user.id,
+      invited_by_user_id: actor,
     })
     .select('id')
     .single();
