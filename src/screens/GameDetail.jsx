@@ -1216,6 +1216,26 @@ function writeRosterCache(gameId, userId, rows) {
   try { sessionStorage.setItem(_rosterCacheKey(gameId), JSON.stringify({ rows, userId, ts: Date.now() })); } catch {}
 }
 
+// Pantalla de bloqueo cuando el partido ya no tiene sentido abrir (cancelado / expirado /
+// finalizado sin relación). Simple: icono + mensaje + "Continuar" al flujo principal.
+function GameBlockedScreen({ message, onContinue }) {
+  return (
+    <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#fff', padding: '24px 24px calc(24px + env(safe-area-inset-bottom))' }}>
+      <div style={{ width: 72, height: 72, borderRadius: '50%', background: SOFT, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="9.5" stroke={SUB} strokeWidth="1.8" />
+          <path d="M12 7.5v5" stroke={SUB} strokeWidth="1.9" strokeLinecap="round" />
+          <circle cx="12" cy="16.3" r="1.15" fill={SUB} />
+        </svg>
+      </div>
+      <div style={{ marginTop: 22, fontSize: 18, fontWeight: 700, color: TEXT, textAlign: 'center', letterSpacing: -0.2, lineHeight: 1.35 }}>{message}</div>
+      <button onClick={onContinue} style={{ marginTop: 26, width: '100%', maxWidth: 320, padding: '14px 16px', fontSize: 16, fontWeight: 700, fontFamily: 'inherit', color: '#fff', background: BLUE, border: 'none', borderRadius: 14, cursor: 'pointer', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+        Continuar
+      </button>
+    </div>
+  );
+}
+
 // ── Screen
 export default function GameDetail() {
   const navigate = useNavigate();
@@ -1752,6 +1772,20 @@ export default function GameDetail() {
     try { sessionStorage.removeItem(`pg_waitlist_${user?.id}`); } catch {}
     try { sessionStorage.setItem('profile_dirty', '1'); } catch {}
   }
+
+  // ── Guarda de acceso: impedir abrir partidos que ya no tienen sentido ───────────
+  // Reutiliza señales YA calculadas (sin nuevas consultas): sbGame.status (canónico),
+  // isPastGame (fin real, cubre la ventana antes del cron), isHost + sbRoster (relación).
+  // canceled/expired: siempre bloquea. completed/ventana-pasada: solo si NO participó
+  // (la decisión de participación espera a rosterReady para no bloquear a un participante).
+  const _canonicalStatus = sbGame?.status;
+  const _participated = isHost || (!!user?.id && sbRoster.some(p => p.user_id === user.id || p.payer_id === user.id));
+  let _blockMsg = null;
+  if      (_canonicalStatus === 'canceled')  _blockMsg = 'Este partido fue cancelado.';
+  else if (_canonicalStatus === 'expired')   _blockMsg = 'Este partido ya no está disponible.';
+  else if (_canonicalStatus === 'completed') { if (rosterReady && !_participated) _blockMsg = 'Este partido ya finalizó.'; }
+  else if (isPastGame && rosterReady && !_participated) _blockMsg = 'Este partido ya finalizó.';
+  if (_blockMsg) return <GameBlockedScreen message={_blockMsg} onContinue={() => navigate('/', { replace: true })} />;
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
