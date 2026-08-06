@@ -14,6 +14,7 @@ import { isGamePast } from '../utils/deriveGameState';
 import RatingBlock from '../components/RatingBlock';
 import { getGameById } from '../services/gameService';
 import { cancelRental } from '../services/reservationService';
+import { shareOrCopy } from '../utils/share';
 import { useAuth } from '../context/AuthContext';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faWhatsapp } from '@fortawesome/free-brands-svg-icons';
@@ -40,7 +41,7 @@ function formatDuration(min) {
 }
 
 // ── Header
-function Header({ title, onBack }) {
+function Header({ title, onBack, onShare }) {
   return (
     <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 16, paddingRight: 16 }}>
       <div style={{ height: 44, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -52,6 +53,14 @@ function Header({ title, onBack }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
         </div>
+        {onShare && (
+          <button
+            className="pressable"
+            onClick={onShare}
+            style={{ width: 36, height: 36, marginRight: -6, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, WebkitTapHighlightColor: 'transparent' }}>
+            {I.share('#fff')}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -507,7 +516,9 @@ export default function RentalDetail() {
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
-      <Header title={title} onBack={goBack} />
+      <Header title={title} onBack={goBack}
+        onShare={() => shareOrCopy({ url: `${window.location.origin}/rental/${game.id}`, title, text: [date, timeRow].filter(Boolean).join(' · ') })} />
+
 
       <div className="no-sb" style={{ flex: 1, overflowY: 'auto', background: '#fff' }}>
         <HeroImage coverPath={game.venueCoverPath} coverVersion={game.venueCoverVersion} />
