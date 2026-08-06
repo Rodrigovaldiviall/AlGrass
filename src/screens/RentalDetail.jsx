@@ -523,10 +523,10 @@ export default function RentalDetail() {
   if (statusReady) {
     const _cs = game.status;
     const _participated = isHost || userBooked;
-    if      (_cs === 'canceled') _notice = { title: 'Reserva no disponible', message: 'Esta reserva fue cancelada.' };
-    else if (_cs === 'expired')  _notice = { title: 'Reserva no disponible', message: 'Esta reserva ya no está disponible.' };
-    else if (_cs === 'completed' && !_participated) _notice = { title: 'Reserva finalizada', message: 'Esta reserva ya finalizó.' };
-    else if (isPastRental && !_participated)        _notice = { title: 'Reserva finalizada', message: 'Esta reserva ya finalizó.' };
+    if      (_cs === 'canceled') _notice = { title: 'Cancha no disponible', message: 'Esta cancha ya no está disponible.' };
+    else if (_cs === 'expired')  _notice = { title: 'Cancha no disponible', message: 'Esta cancha ya no está disponible.' };
+    else if (_cs === 'completed' && !_participated) _notice = { title: 'Cancha no disponible', message: 'Esta cancha ya no está disponible.' };
+    else if (isPastRental && !_participated)        _notice = { title: 'Cancha no disponible', message: 'Esta cancha ya no está disponible.' };
   }
   if (_notice) {
     const _welcomeSeen = (() => { try { return !!localStorage.getItem('pichanga_welcome_seen'); } catch { return false; } })();
