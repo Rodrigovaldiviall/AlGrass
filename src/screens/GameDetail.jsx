@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { useNavigate, useLocation, useParams } from 'react-router-dom';
+import { useNavigate, useLocation, useParams, Navigate } from 'react-router-dom';
 import { useSheetPull } from '../hooks/useSheetPull';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, DANGER, RED, WHATSAPP_NUMBER } from '../constants';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -1216,26 +1216,6 @@ function writeRosterCache(gameId, userId, rows) {
   try { sessionStorage.setItem(_rosterCacheKey(gameId), JSON.stringify({ rows, userId, ts: Date.now() })); } catch {}
 }
 
-// Pantalla de bloqueo cuando el partido ya no tiene sentido abrir (cancelado / expirado /
-// finalizado sin relación). Simple: icono + mensaje + "Continuar" al flujo principal.
-function GameBlockedScreen({ message, onContinue }) {
-  return (
-    <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#fff', padding: '24px 24px calc(24px + env(safe-area-inset-bottom))' }}>
-      <div style={{ width: 72, height: 72, borderRadius: '50%', background: SOFT, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <circle cx="12" cy="12" r="9.5" stroke={SUB} strokeWidth="1.8" />
-          <path d="M12 7.5v5" stroke={SUB} strokeWidth="1.9" strokeLinecap="round" />
-          <circle cx="12" cy="16.3" r="1.15" fill={SUB} />
-        </svg>
-      </div>
-      <div style={{ marginTop: 22, fontSize: 18, fontWeight: 700, color: TEXT, textAlign: 'center', letterSpacing: -0.2, lineHeight: 1.35 }}>{message}</div>
-      <button onClick={onContinue} style={{ marginTop: 26, width: '100%', maxWidth: 320, padding: '14px 16px', fontSize: 16, fontWeight: 700, fontFamily: 'inherit', color: '#fff', background: BLUE, border: 'none', borderRadius: 14, cursor: 'pointer', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-        Continuar
-      </button>
-    </div>
-  );
-}
-
 // ── Screen
 export default function GameDetail() {
   const navigate = useNavigate();
@@ -1776,16 +1756,21 @@ export default function GameDetail() {
   // ── Guarda de acceso: impedir abrir partidos que ya no tienen sentido ───────────
   // Reutiliza señales YA calculadas (sin nuevas consultas): sbGame.status (canónico),
   // isPastGame (fin real, cubre la ventana antes del cron), isHost + sbRoster (relación).
-  // canceled/expired: siempre bloquea. completed/ventana-pasada: solo si NO participó
-  // (la decisión de participación espera a rosterReady para no bloquear a un participante).
+  // No hay pantalla dedicada: se redirige al Home (según el estado del usuario) y el aviso
+  // viaja en location.state → PickupGames lo muestra en un modal y limpia el state.
+  // canceled/expired: siempre. completed/ventana-pasada: solo si NO participó (espera a rosterReady).
   const _canonicalStatus = sbGame?.status;
   const _participated = isHost || (!!user?.id && sbRoster.some(p => p.user_id === user.id || p.payer_id === user.id));
-  let _blockMsg = null;
-  if      (_canonicalStatus === 'canceled')  _blockMsg = 'Este partido fue cancelado.';
-  else if (_canonicalStatus === 'expired')   _blockMsg = 'Este partido ya no está disponible.';
-  else if (_canonicalStatus === 'completed') { if (rosterReady && !_participated) _blockMsg = 'Este partido ya finalizó.'; }
-  else if (isPastGame && rosterReady && !_participated) _blockMsg = 'Este partido ya finalizó.';
-  if (_blockMsg) return <GameBlockedScreen message={_blockMsg} onContinue={() => navigate('/', { replace: true })} />;
+  let _notice = null;
+  if      (_canonicalStatus === 'canceled')  _notice = { title: 'Partido no disponible', message: 'Este partido fue cancelado.' };
+  else if (_canonicalStatus === 'expired')   _notice = { title: 'Partido finalizado', message: 'Este partido ya finalizó.' };
+  else if (_canonicalStatus === 'completed') { if (rosterReady && !_participated) _notice = { title: 'Partido finalizado', message: 'Este partido ya finalizó.' }; }
+  else if (isPastGame && rosterReady && !_participated) _notice = { title: 'Partido finalizado', message: 'Este partido ya finalizó.' };
+  if (_notice) {
+    const _welcomeSeen = (() => { try { return !!localStorage.getItem('pichanga_welcome_seen'); } catch { return false; } })();
+    // Usuario ya onboardeado → Home (/games) con el aviso. Aún sin onboarding → /welcome (sin aviso).
+    return <Navigate to={_welcomeSeen ? '/games' : '/welcome'} replace state={_welcomeSeen ? { gameNotice: _notice } : undefined} />;
+  }
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
