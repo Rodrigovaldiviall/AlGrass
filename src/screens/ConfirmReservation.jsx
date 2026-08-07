@@ -437,8 +437,6 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPreCharge, o
   async function pay() {
     if (!canPay || paying !== 'idle') return;
     setPaying('loading');
-    // PRUEBA TEMPORAL — revertir. Evidencia visual de APIs disponibles en el dispositivo.
-    alert(`crypto: ${typeof crypto}\ngetRandomValues: ${typeof crypto?.getRandomValues}\nrandomUUID: ${typeof crypto?.randomUUID}\nisSecureContext: ${window.isSecureContext}`);
     // HOLD justo antes del cobro (main externo). addGuests/invited → {skip:true} (sin Order).
     const pre = await onPreCharge?.(activeTab);
     if (pre?.error) {
