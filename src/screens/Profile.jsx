@@ -675,7 +675,7 @@ function ProfileCard({ user, gamesPlayedCount, onEdit, onEditEmail, onConfirmEma
             <path d="M12 3l7 3v5c0 4.2-2.9 7.6-7 8.8-4.1-1.2-7-4.6-7-8.8V6l7-3z" fill={isCaptainGold ? '#F5B301' : '#E5383B'} stroke={isCaptainGold ? '#F5B301' : '#E5383B'} strokeWidth="1.2" strokeLinejoin="round"/>
             <path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
-          <span style={{ fontSize: 12.5, color: RED, lineHeight: 1.4, whiteSpace: 'nowrap' }}>Capitán. Reserva cupos hasta 24h antes del partido.</span>
+          <span style={{ fontSize: 12.5, color: RED, lineHeight: 1.4, whiteSpace: 'nowrap' }}>{`Capitán. Reserva cupos hasta ${isCaptainGold ? 24 : 48}h antes del partido.`}</span>
         </div>
       )}
 
