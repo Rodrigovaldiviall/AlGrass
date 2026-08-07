@@ -1,7 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
 
-const url = import.meta.env.VITE_SUPABASE_URL ?? '';
-const key = import.meta.env.VITE_SUPABASE_ANON_KEY ?? '';
+// Tolerante a import.meta.env ausente: en Deno (Edge Functions) import.meta.env es
+// undefined. Con optional chaining supabase queda null y NO truena al importar; el
+// camino de confirm_order no lo usa (va todo por ctx.db inyectado). En Vite el
+// comportamiento es idéntico (import.meta.env existe).
+const url = import.meta.env?.VITE_SUPABASE_URL ?? '';
+const key = import.meta.env?.VITE_SUPABASE_ANON_KEY ?? '';
 
 // ── ACCOUNT LINKING — Configuración en Supabase Dashboard ─────────────────
 // Ruta: Dashboard → Authentication → Sign In / Sign Up → "Identities"

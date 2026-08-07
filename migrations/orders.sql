@@ -36,6 +36,7 @@ create table if not exists public.orders (
 
   -- ── Reclamación / HOLD (interno) ──────────────────────────────────────────
   claim_composition  jsonb not null,        -- sobre polimórfico congelado (quién/rol/relación)
+  claimed_units      integer not null check (claimed_units >= 1),  -- capacidad que el HOLD consume
   pending_expires_at timestamptz not null,  -- TTL del HOLD (ventana de pago)
 
   -- ── Snapshot económico congelado (intención al pulsar Pagar) ──────────────
@@ -86,6 +87,7 @@ alter table public.orders enable row level security;
 
 grant select on public.orders to authenticated;
 
+drop policy if exists orders_select_own on public.orders;
 create policy orders_select_own
   on public.orders for select
   to authenticated

@@ -2153,7 +2153,7 @@ export default function Profile() {
     try { const c = JSON.parse(localStorage.getItem(CREDIT_KEY)); return (c?.balance || 0) > 0 ? c.balance : 0; } catch { return 0; }
   });
   const [waitlistEntries, setWaitlistEntries] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(WAITLIST_KEY_P)) || []; } catch { return []; }
+    try { const w = JSON.parse(localStorage.getItem(WAITLIST_KEY_P)); return Array.isArray(w) ? w : []; } catch { return []; }
   });
   const [ratings,      setRatings]      = useState(() => getLocalRatings());
   const [ratingsReady, setRatingsReady] = useState(false);

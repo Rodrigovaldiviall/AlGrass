@@ -1,6 +1,6 @@
-import { supabase } from '../lib/supabase';
-import { isExpiredPeru, parsePeruDateTime } from '../lib/peruTime';
-import { notifyWaitlistUsers } from './waitlistService';
+import { supabase } from '../lib/supabase.js';
+import { isExpiredPeru, parsePeruDateTime } from '../lib/peruTime.js';
+import { notifyWaitlistUsers } from './waitlistService.js';
 
 // ── internal helpers ──────────────────────────────────────────────────────────
 
@@ -181,6 +181,10 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoDis
       reserved_at:         new Date().toISOString(),
       reservation_type:    'normal',
       invited_by_user_id:  null,
+      // Proveniencia (Etapa 4): solo cuando se materializa desde una Order (camino externo).
+      // El camino interno NO pasa ctx.orderId → la columna ni se referencia (queda NULL por
+      // default), así que esta línea no depende de reservations.order_id hasta usarse en externo.
+      ...(ctx?.orderId != null ? { order_id: ctx.orderId } : {}),
     })
     .select('id')
     .single();

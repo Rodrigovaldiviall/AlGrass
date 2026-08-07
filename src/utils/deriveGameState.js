@@ -1,4 +1,4 @@
-import { parsePeruDateTime } from '../lib/peruTime';
+import { parsePeruDateTime } from '../lib/peruTime.js';
 
 /**
  * Parse a game's start time as a UTC Date anchored to Lima time (UTC-5).

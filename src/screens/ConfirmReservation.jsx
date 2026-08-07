@@ -12,6 +12,9 @@ import codigoYape from '../assets/Código yape.webp';
 import { createReservation, createGamePlayer, createInvitedReservation, validatePromoCode, searchUsers, getWalletBalance } from '../services/reservationService';
 import { resolveCaptainGroupAssignment } from '../services/captainGroupService';
 import { markWaitlistReserved } from '../services/waitlistService';
+import { materializeReservation } from '../services/materializeReservation';
+import { createOrder, failOrder, confirmOrder } from '../services/orderService';
+import { charge } from '../services/paymentAdapter';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import { getAvatarUrl } from '../utils/avatar';
 import { gameStartDate } from '../utils/deriveGameState';
@@ -383,7 +386,7 @@ function MethodRow({ active, onSelect, accentColor, icon, label, children, rever
   );
 }
 
-function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
+function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPreCharge, onPaid, onRejected }) {
   const [activeTab, setActiveTab] = useState('yape');
   const [open, setOpen] = useState(false);
   const [cardNum, setCardNum] = useState('');
@@ -431,17 +434,31 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPaid }) {
   const { rootRef, scrollRef, dragY, dragging } = useSheetPull({ onClose: handleClose });
   const dragOn = paying === 'idle';
 
-  function pay() {
+  async function pay() {
     if (!canPay || paying !== 'idle') return;
     setPaying('loading');
+    // PRUEBA TEMPORAL — revertir. Evidencia visual de APIs disponibles en el dispositivo.
+    alert(`crypto: ${typeof crypto}\ngetRandomValues: ${typeof crypto?.getRandomValues}\nrandomUUID: ${typeof crypto?.randomUUID}\nisSecureContext: ${window.isSecureContext}`);
+    // HOLD justo antes del cobro (main externo). addGuests/invited → {skip:true} (sin Order).
+    const pre = await onPreCharge?.(activeTab);
+    if (pre?.error) {
+      // create_order abortó (NO_CAPACITY, etc.): el padre ya mostró el overlay; cerrar sheet.
+      setPaying('idle');
+      setOpen(false);
+      setTimeout(() => onClose?.(), 240);
+      return;
+    }
+    const orderId = pre?.orderId ?? null;
     setTimeout(() => {
       setPaying('confirming');
-      setTimeout(() => {
-        const approved = Math.random() < 0.8;
+      setTimeout(async () => {
+        // Seam de pago: paymentAdapter (hoy Math.random). Mañana Culqi sin tocar este flujo.
+        const { approved, paymentProof } = await charge({ amount, currency, paymentMethod: activeTab });
         if (approved) {
           setOpen(false);
-          setTimeout(() => { setPaying('idle'); onPaid?.(activeTab); }, 260);
+          setTimeout(() => { setPaying('idle'); onPaid?.(activeTab, paymentProof, orderId); }, 260);
         } else {
+          onRejected?.(orderId);
           setPaying('rejected');
         }
       }, 2200);
@@ -848,6 +865,126 @@ export default function ConfirmReservation() {
     setPayOpen(true);
   }
 
+  // ── REGLA CONGELADA — FUENTE ÚNICA del snapshot del main flow ─────────────────
+  // buildMainSnapshot() es la ÚNICA función que construye el objeto snapshot del main
+  // flow. Ningún otro archivo/función/rama puede reensamblarlo a mano.
+  //   · Interno: se pasa directo a materializeReservation.
+  //   · Externo: congela financial_snapshot en create_order.
+  //   · confirm_order consume ese snapshot serializado TAL CUAL (no recomputa nada).
+  // Todo campo nuevo del snapshot se añade SOLO aquí.
+  function buildMainSnapshot(paymentMethod) {
+    return {
+      gameId: game?.id, gameType: game?.type,
+      unitPrice, promoCode: promoApplied?.code ?? null, promoDiscount: promoApplied?.discount ?? 0,
+      totalAmount: total, subtotalAmount: subtotal,
+      playersCount: isRental ? 1 : 1 + guests.length, guestTotal: isRental ? 0 : guestsTotal,
+      paymentMethod, creditApplied, source: game?.source ?? 'match',
+      guests, reservedSlots, referral, titularNet, hostUserId: game?.hostUserId ?? null,
+      venueId: game?.venueId ?? null, releaseHours, payerName: authUser?.name,
+    };
+  }
+
+  // Cierre COMPARTIDO de una reserva confirmada del main flow (interno y externo):
+  // waitlist + limpieza de caches + navegación. Mismo confirmedGame para ambos caminos.
+  function finishConfirmedNavigation() {
+    markWaitlistReserved(authUser?.id, game?.id);
+    try { sessionStorage.removeItem(`gd_roster_${game?.id}`); } catch {}
+    try { sessionStorage.removeItem(`pg_player_rows_${authUser?.id}`); } catch {}
+    if (game?.id) {
+      try {
+        const shown = JSON.parse(localStorage.getItem('pichanga_shown_confirmations')) || {};
+        delete shown[game.id];
+        localStorage.setItem('pichanga_shown_confirmations', JSON.stringify(shown));
+      } catch {}
+    }
+    try { sessionStorage.setItem('profile_dirty', '1'); } catch {}
+    navigate('/profile', { state: { confirmedGame: {
+      id:           game?.id,
+      field:        game?.field,
+      date:         game?.date,
+      dateKey:      game?.dateKey   ?? null,
+      time:         game?.time,
+      ampm:         game?.ampm      ?? null,
+      time24:       game?.time24    ?? null,
+      durationMin:  game?.durationMin ?? null,
+      format:       game?.format || '7v7',
+      amount:       total,
+      price:        game?.price,
+      source:       game?.source,
+      gameType:     game?.type ?? null,
+      unitPrice:    unitPrice,
+      promoDiscount: promoApplied?.discount ?? 0,
+      creditApplied: creditApplied,
+      discount:     (promoApplied?.discount ?? 0) + creditApplied,
+      guestsCount:  guests.length,
+      guestsTotal:  guestsTotal,
+      reservedSlots: reservedSlots,
+      releaseHours: releaseHours,
+    }}});
+  }
+
+  // ── Camino EXTERNO (total>0, main flow) ───────────────────────────────────────
+  // createOrder(HOLD) → paymentAdapter.charge → confirmOrder → finishConfirmedNavigation.
+  // addGuests/invited NO usan Order en esta fase (su materialización no fue extraída).
+  //
+  // onPreCharge: adquiere el HOLD JUSTO antes del cobro, con el método ya elegido.
+  // create_order es el ÚNICO responsable del HOLD.
+  async function handlePreCharge(method) {
+    if (addGuestsMode || invitedMode) return { skip: true };
+    const idempotencyKey = crypto.randomUUID();          // nueva key por intento (dedup en create_order)
+    const claimComposition = isRental
+      ? { titular: true }
+      : { titular: true, guests, reserved_slots: reservedSlots };
+    const { data, error } = await createOrder({
+      idempotencyKey,
+      resourceType:      game?.type,
+      resourceId:        game?.id,
+      claimComposition,
+      amountTotal:       total,
+      currency:          'PEN',
+      financialSnapshot: buildMainSnapshot(method),       // ÚNICA fuente del snapshot
+      pendingExpiresAt:  new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      paymentProvider:   null,
+    });
+    if (error || !data) {
+      // NO_CAPACITY (u otra guarda de create_order) → overlay de capacidad, sin cobrar.
+      if ((error?.message ?? '').includes('NO_CAPACITY')) {
+        setCapacityError(game?.type === 'rental' ? 'RENTAL_TAKEN' : 'GAME_FULL');
+      } else {
+        console.warn('[checkout] create_order failed:', error);
+      }
+      return { error: error?.message ?? 'CREATE_ORDER_FAILED' };
+    }
+    return { orderId: data.id };
+  }
+
+  // onPaid del PaymentSheet. Externo main (orderId) → confirm_order materializa
+  // server-side (ÚNICA orquestación). addGuests (sin orderId) → camino cliente actual.
+  async function handleExternalPaid(method, paymentProof, orderId) {
+    if (!orderId) { handlePaid(method); return; }
+    setFreeConfirming(true);
+    const { data, error } = await confirmOrder({ orderId, paymentProof });
+    if (!error && data?.ok) {
+      // Éxito: el titular se materializó server-side → consumir el referral y cerrar.
+      try { localStorage.removeItem(`pending_game_referral:${game?.id}`); } catch {}
+      finishConfirmedNavigation();
+      return;
+    }
+    // No-2xx: leer el código de dominio del cuerpo (confirm_order devuelve { error }).
+    let code = null;
+    try { code = (await error?.context?.json())?.error ?? null; } catch {}
+    setFreeConfirming(false);
+    if (code === 'GAME_FULL')    { setCapacityError('GAME_FULL'); return; }
+    if (code === 'RENTAL_TAKEN') { setCapacityError('RENTAL_TAKEN'); return; }
+    console.warn('[checkout] confirm_order failed:', code ?? error);   // Order queda PENDING (reintentable)
+  }
+
+  // onRejected del PaymentSheet. Externo main → fail_order libera el HOLD (Regla 2:
+  // rechazo = sin materialización). addGuests (sin orderId) → comportamiento actual.
+  async function handleRejected(orderId) {
+    if (orderId) { await failOrder({ orderId, reason: 'payment_rejected' }); }
+  }
+
   async function handlePaid(paymentMethod) {
     setFreeConfirming(true);
     setCapacityError(null);
@@ -1001,117 +1138,17 @@ export default function ConfirmReservation() {
         });
       }
     }
-    createReservation({
-      gameId:          game?.id,
-      unitPrice,
-      promoCode:       promoApplied?.code    ?? null,
-      promoDiscount:   promoApplied?.discount ?? 0,
-      totalAmount:     total,
-      subtotalAmount:  subtotal,
-      playersCount:    isRental ? 1 : 1 + guests.length,
-      guestTotal:      isRental ? 0 : guestsTotal,
-      paymentMethod,
-      creditApplied,
-      source:          game?.source ?? 'match',
-    }).then(async ({ data: resData, error, skipped, rentalTaken }) => {
-      if (rentalTaken) { setFreeConfirming(false); setCapacityError('RENTAL_TAKEN'); return; }
-      if (skipped || error) { if (error) console.warn('[checkout] reservation failed:', error); setFreeConfirming(false); return; }
-      const reservationId = resData?.id ?? null;
-      const _hostId = game?.hostUserId ?? null;
-      if (game?.type === 'match' || !game?.type) {
-        // V6 · titular: RPC → captainGroupService → createGamePlayer. Toda la
-        // decisión vive en el servicio; el checkout solo transporta la metadata.
-        const _slotRes = await loadSlotSnapshot(game?.id, referral);
-        const _assign = resolveCaptainGroupAssignment(_slotRes, { actorUserId: authUser?.id, enrolleeUserId: authUser?.id, linkOwnerUserId: referral });
-        const { error: gpErr } = await createGamePlayer({ gameId: game?.id, reservationId, amount: titularNet, hostUserId: _hostId, gameSlotReservationId: _assign.gameSlotReservationId, countsReservedSlot: _assign.countsReservedSlot, referredByUserId: _assign.referredByUserId });
-        if (gpErr?.message?.startsWith('GAME_FULL')) { setFreeConfirming(false); setCapacityError('GAME_FULL'); return; }
-        // Ciclo de vida del referral: creado el PRIMER game_player del actor con éxito,
-        // se elimina SOLO la clave de ESTE partido. No borra si hubo error ni afecta otros partidos.
-        if (!gpErr) { try { localStorage.removeItem(`pending_game_referral:${game?.id}`); } catch {} }
-        // V6 · Reserva de cupos: titular ya inscrito (precondición de reserve_slots).
-        // Persiste el total del stepper. NO refetch, NO se re-lee el snapshot.
-        if (reservedSlots > 0 && !gpErr) {
-          const { error: rsErr } = await supabase.rpc('reserve_slots', { p_game_id: game?.id, p_reserved_slots_total: reservedSlots });
-          if (rsErr) { setFreeConfirming(false); if (rsErr.message?.startsWith('GAME_FULL')) setCapacityError('GAME_FULL'); return; }
-        }
-        await Promise.all(guests.map(guest => {
-          const _assignGuest = resolveCaptainGroupAssignment(_slotRes, { actorUserId: authUser?.id, enrolleeUserId: guest.id, linkOwnerUserId: null });
-          return createGamePlayer({ gameId: game?.id, userId: guest.id, reservationId, amount: unitPrice, hostUserId: _hostId, gameSlotReservationId: _assignGuest.gameSlotReservationId, countsReservedSlot: _assignGuest.countsReservedSlot, referredByUserId: _assignGuest.referredByUserId });
-        }));
-      }
-      const _tpl = guests.length > 0 ? 'reservation_confirmed_with_guests' : 'reservation_confirmed';
-      let _tplText;
-      if (reservedSlots > 0) {
-        // Checkout + Reserva de Cupos: UNA sola notificación, enriquecida (Casos 2/3).
-        const _cupos   = `${reservedSlots} ${reservedSlots === 1 ? 'cupo' : 'cupos'}`;
-        const _incluye = guests.length > 0
-          ? `${guests.length} ${guests.length === 1 ? 'invitado' : 'invitados'} y ${_cupos}`
-          : _cupos;
-        const _plural  = (reservedSlots + guests.length) > 1;
-        _tplText = `Tu reserva incluye ${_incluye}. Compártelo${_plural ? 's' : ''} con tus amigos antes de ${releaseHours} h del partido.`;
-      } else {
-        _tplText = guests.length > 0
-          ? 'Tu reserva incluye invitados. Recuérdales la hora y lugar.'
-          : 'Tu reserva ha sido confirmada. ¡Hasta la cancha!';
-      }
-      supabase?.from('notifications').insert({
-        recipient_user_id: authUser?.id,
-        source_type: 'venue', delivery_type: 'automatic', category: 'reservation',
-        template_key: _tpl,
-        custom_text:  _tplText,
-        game_id: game?.id, venue_id: game?.venueId ?? null, reservation_id: reservationId,
-        sent_at: new Date().toISOString(),
-      }).then(({ error }) => {
-        if (error) console.error('[notif]', _tpl, 'failed:', error);
-      });
-      guests.filter(g => g.id).forEach(guest => {
-        supabase?.from('notifications').insert({
-          recipient_user_id: guest.id,
-          source_type: 'venue', delivery_type: 'automatic', category: 'invitation',
-          template_key: 'invited_by_player',
-          custom_text: `${firstName(authUser?.name)} te invitó a jugar. Revisa los detalles.`,
-          game_id: game?.id, venue_id: game?.venueId ?? null,
-          created_by: authUser?.id,
-          sent_at: new Date().toISOString(),
-        }).then(({ error }) => {
-          if (error) console.error('[notif] invited_by_player (main) failed for', guest.id, error);
-        });
-      });
-      markWaitlistReserved(authUser?.id, game?.id);
-      try { sessionStorage.removeItem(`gd_roster_${game?.id}`); } catch {}
-      try { sessionStorage.removeItem(`pg_player_rows_${authUser?.id}`); } catch {}
-      if (game?.id) {
-        try {
-          const shown = JSON.parse(localStorage.getItem('pichanga_shown_confirmations')) || {};
-          delete shown[game.id];
-          localStorage.setItem('pichanga_shown_confirmations', JSON.stringify(shown));
-        } catch {}
-      }
-      try { sessionStorage.setItem('profile_dirty', '1'); } catch {}
-      navigate('/profile', { state: { confirmedGame: {
-        id:           game?.id,
-        field:        game?.field,
-        date:         game?.date,
-        dateKey:      game?.dateKey   ?? null,
-        time:         game?.time,
-        ampm:         game?.ampm      ?? null,
-        time24:       game?.time24    ?? null,
-        durationMin:  game?.durationMin ?? null,
-        format:       game?.format || '7v7',
-        amount:       total,
-        price:        game?.price,
-        source:       game?.source,
-        gameType:     game?.type ?? null,
-        unitPrice:    unitPrice,
-        promoDiscount: promoApplied?.discount ?? 0,
-        creditApplied: creditApplied,
-        discount:     (promoApplied?.discount ?? 0) + creditApplied,
-        guestsCount:  guests.length,
-        guestsTotal:  guestsTotal,
-        reservedSlots: reservedSlots,
-        releaseHours: releaseHours,
-      }}});
-    });
+    // Camino interno (100% crédito/gratis): materializa con el ctx del navegador. La MISMA
+    // orquestación (materializeReservation) la usa confirm_order con ctx service-role.
+    const _snapshot = buildMainSnapshot(paymentMethod);
+    const _res = await materializeReservation({ db: supabase, actor: authUser?.id }, _snapshot);
+    // Ciclo de vida del referral (idéntico al original): consumido en cuanto el titular
+    // se inscribe, aunque reserve_slots falle después. Solo esta clave, solo si se creó.
+    if (_res.referralConsumed) { try { localStorage.removeItem(`pending_game_referral:${game?.id}`); } catch {} }
+    if (_res.code === 'RENTAL_TAKEN') { setFreeConfirming(false); setCapacityError('RENTAL_TAKEN'); return; }
+    if (_res.code === 'GAME_FULL')    { setFreeConfirming(false); setCapacityError('GAME_FULL'); return; }
+    if (_res.error || _res.skipped)   { if (_res.error) console.warn('[checkout] reservation failed:', _res.error); setFreeConfirming(false); return; }
+    finishConfirmedNavigation();
   }
 
   if (subView === 'addplayers') {
@@ -1389,7 +1426,9 @@ export default function ConfirmReservation() {
           currency={currency}
           label={totalStr}
           onClose={() => setPayOpen(false)}
-          onPaid={handlePaid}
+          onPreCharge={handlePreCharge}
+          onPaid={handleExternalPaid}
+          onRejected={handleRejected}
         />
       )}
 

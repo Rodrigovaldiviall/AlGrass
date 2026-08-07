@@ -1,5 +1,5 @@
-import { supabase } from '../lib/supabase';
-import { isGamePast } from '../utils/deriveGameState';
+import { supabase } from '../lib/supabase.js';
+import { isGamePast } from '../utils/deriveGameState.js';
 
 export async function joinWaitlist(userId, gameId) {
   if (!supabase || !userId || !gameId) return;

@@ -91,25 +91,13 @@ begin
     raise exception 'GAME_NOT_FOUND';
   end if;
 
-  -- 4) Tipo y estado (partido publicado / reservable).
-  if v_type is distinct from 'match' then
-    raise exception 'GAME_NOT_RESERVABLE';
-  end if;
-  if v_status = 'canceled' then
-    raise exception 'GAME_CANCELED';
-  end if;
-  if v_status not in ('published', 'reserved') then
-    raise exception 'GAME_NOT_RESERVABLE';
-  end if;
-
-  -- 5) No iniciado (game_start anclado a America/Lima).
+  -- 4-5) Precondiciones del recurso (tipo / estado publicado-reservable / no
+  --      iniciado): FUENTE ÚNICA. Extraídas SIN CAMBIOS a assert_game_reservable
+  --      (mismas condiciones, mismos errores, mismo orden). v_game_start se
+  --      recalcula localmente SOLO para expires_at (uso distinto); la REGLA de
+  --      "no iniciado" vive ahora en la guarda canónica.
+  perform public.assert_game_reservable(p_game_id, 'match');
   v_game_start := (v_date_key + v_time) at time zone 'America/Lima';
-  if v_game_start is null then
-    raise exception 'GAME_NOT_RESERVABLE';
-  end if;
-  if now() >= v_game_start then
-    raise exception 'GAME_ALREADY_STARTED';
-  end if;
 
   -- 6) Autorización + reserved_by_role por precedencia.
   v_is_captain_gold := exists (select 1 from public.user_roles where user_id = v_actor and role = 'captain_gold');
