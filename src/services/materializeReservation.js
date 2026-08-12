@@ -53,7 +53,7 @@ export async function materializeReservation(ctx, snapshot) {
     if (gpErr?.message?.startsWith('GAME_FULL')) return { code: 'GAME_FULL' };
     if (!gpErr) referralConsumed = true;
     if (reservedSlots > 0 && !gpErr) {
-      const { error: rsErr } = await db.rpc('reserve_slots', { p_game_id: gameId, p_reserved_slots_total: reservedSlots });
+      const { error: rsErr } = await db.rpc('reserve_slots', { p_game_id: gameId, p_reserved_slots_total: reservedSlots, p_actor: actor });
       if (rsErr) return rsErr.message?.startsWith('GAME_FULL') ? { code: 'GAME_FULL', referralConsumed } : { error: rsErr, referralConsumed };
     }
     await Promise.all(guests.map(guest => {

@@ -769,6 +769,18 @@ export default function ConfirmReservation() {
   }, [game?.id]);
   const rosterPlayerIds = confirmedPlayerIds;
 
+  // Shared Link de OTRO capitán: snapshot del capitán del link (para desglosar en el
+  // mensaje de disponibilidad "públicos vs reservados del capitán") + su @código.
+  const [refSlot, setRefSlot] = useState(null);
+  const [refCode, setRefCode] = useState('');
+  useEffect(() => {
+    const gid = game?.id;
+    if (!supabase || !gid || game?.type === 'rental' || referral == null || referral === authUser?.id) return;
+    loadSlotSnapshot(gid, referral).then((d) => setRefSlot(Array.isArray(d) ? d[0] : d));
+    supabase.from('users_public').select('user_code').eq('id', referral).maybeSingle()
+      .then(({ data }) => setRefCode(data?.user_code ? `@${data.user_code}` : ''));
+  }, [game?.id, referral, authUser?.id]); // eslint-disable-line
+
   const isCampo       = game?.source === 'campo';
   const isRental      = game?.type === 'rental';
   const addGuestsMode = game?.addGuestsMode ?? false;
@@ -782,7 +794,15 @@ export default function ConfirmReservation() {
   // FUENTE ÚNICA del máximo: presupuesto − lo que consume el OTRO selector.
   const maxSelectable = (otherCount) => spotBudget == null ? undefined : Math.max(0, spotBudget - otherCount);
   const guestSlots    = maxSelectable(reservedSlots);   // máx invitados (descuenta cupos)
-  const reservedMax   = maxSelectable(guests.length);   // máx reserva de cupos (descuenta invitados)
+  // Reserva de cupos (nueva R1): SOLO consume cupos PÚBLICOS libres. Al llegar por Shared
+  // Link de otro usuario, rawSpots incluye el remaining del capitán (válido para titular +
+  // invitados); el stepper de cupos se acota ADEMÁS al pool público (refSlot.pool = la X del
+  // texto). Mientras refSlot carga (_refPending) el stepper queda deshabilitado; no se asume 0.
+  const _inLink       = referral != null && referral !== authUser?.id;
+  const _refPending   = _inLink && refSlot == null;
+  const reservedMax   = _inLink
+    ? (_refPending ? undefined : Math.min(maxSelectable(guests.length) ?? (refSlot.pool ?? 0), refSlot.pool ?? 0))
+    : maxSelectable(guests.length);   // máx reserva de cupos (descuenta invitados)
   const displaySpots  = guestSlots;
   // Caso de negocio "solo queda el cupo del propio titular": el partido no tiene sitio para
   // NADIE más allá del titular (spotBudget = rawSpots − 1 = 0). Es INDEPENDIENTE de los invitados
@@ -796,6 +816,18 @@ export default function ConfirmReservation() {
       return `Solo ${displaySpots === 1 ? 'queda 1 cupo disponible' : `quedan ${displaySpots} cupos disponibles`}`;
     }
     if (rawSpots == null) return null;
+    // Escenario: capitán que llega por Shared Link de OTRO usuario. SOLO en ese
+    // escenario, y si hay cupos del capitán del link (Z>0), se desglosa el total en
+    // (públicos + del capitán del link @código); si Z=0 cae al mensaje normal.
+    if (referral != null && referral !== authUser?.id && (isCaptain || isCaptainGold)) {
+      const _refRemaining = refSlot?.effective_reserved_slots_remaining ?? 0;
+      if (_refRemaining > 0) {
+        const _pub  = refSlot?.pool ?? 0;
+        const _tot  = _pub + _refRemaining;
+        const _head = _tot === 1 ? 'queda 1 cupo disponible' : `quedan ${_tot} cupos disponibles`;
+        return `Solo ${_head} (${_pub} públicos y ${_refRemaining} de ${refCode})`;
+      }
+    }
     if (rawSpots === 0) return 'No quedan más cupos disponibles';
     return `Solo ${rawSpots === 1 ? 'queda 1 cupo disponible' : `quedan ${rawSpots} cupos disponibles`}`;
   })();
@@ -946,7 +978,9 @@ export default function ConfirmReservation() {
     });
     if (error || !data) {
       // NO_CAPACITY (u otra guarda de create_order) → overlay de capacidad, sin cobrar.
-      if ((error?.message ?? '').includes('NO_CAPACITY')) {
+      if ((error?.message ?? '').includes('INSUFFICIENT_PUBLIC_SLOTS')) {
+        setCapacityError('RESERVED_SLOTS_UNAVAILABLE');
+      } else if ((error?.message ?? '').includes('NO_CAPACITY')) {
         setCapacityError(game?.type === 'rental' ? 'RENTAL_TAKEN' : 'GAME_FULL');
       } else {
         console.warn('[checkout] create_order failed:', error);
@@ -968,9 +1002,10 @@ export default function ConfirmReservation() {
       finishConfirmedNavigation();
       return;
     }
-    // No-2xx: leer el código de dominio del cuerpo (confirm_order devuelve { error }).
-    let code = null;
-    try { code = (await error?.context?.json())?.error ?? null; } catch {}
+    // El body de la respuesta de error solo puede leerse una vez; de él se deriva `code`.
+    let body = null;
+    try { body = await error?.context?.json(); } catch {}
+    const code = body?.error ?? null;
     setFreeConfirming(false);
     if (code === 'GAME_FULL')    { setCapacityError('GAME_FULL'); return; }
     if (code === 'RENTAL_TAKEN') { setCapacityError('RENTAL_TAKEN'); return; }
@@ -1246,7 +1281,7 @@ export default function ConfirmReservation() {
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                 {stepBtn(() => setReservedSlots(n => (n > 0 ? n - 1 : n)), slotReservationClosed || onlyTitularSpot || reservedSlots <= 0, false)}
                 <span style={{ minWidth: 22, textAlign: 'center', fontSize: 16, fontWeight: 700, color: (slotReservationClosed || onlyTitularSpot) ? '#9A9AA0' : TEXT }}>{reservedSlots}</span>
-                {stepBtn(() => setReservedSlots(n => n + 1), slotReservationClosed || onlyTitularSpot || (reservedMax != null && reservedSlots >= reservedMax), true)}
+                {stepBtn(() => setReservedSlots(n => n + 1), slotReservationClosed || onlyTitularSpot || _refPending || (reservedMax != null && reservedSlots >= reservedMax), true)}
               </div>
             </div>
           </div>
@@ -1448,7 +1483,15 @@ export default function ConfirmReservation() {
       )}
 
       {capacityError && (() => {
-        const isMatch = capacityError === 'GAME_FULL';
+        const isReserved = capacityError === 'RESERVED_SLOTS_UNAVAILABLE';
+        const isMatch    = capacityError === 'GAME_FULL';
+        const capTitle = isReserved ? 'Sin cupos suficientes' : isMatch ? 'Partido completo' : 'Cancha no disponible';
+        const capBody  = isReserved
+          ? 'Durante el proceso de pago otros jugadores reservaron algunos de esos cupos. Vuelve a revisar la disponibilidad e inténtalo nuevamente.'
+          : isMatch
+            ? 'Mientras procesábamos tu solicitud, los cupos disponibles fueron ocupados por otros jugadores.'
+            : 'Mientras procesábamos tu solicitud, otro usuario completó la reserva de esta cancha.';
+        const capCta = (isMatch || isReserved) ? 'Volver al partido' : 'Volver a la cancha';
         return (
           <div className="sheet-overlay" style={{
             position: 'fixed', inset: 0, zIndex: 200,
@@ -1462,19 +1505,17 @@ export default function ConfirmReservation() {
               </svg>
             </div>
             <div style={{ fontSize: 20, fontWeight: 800, color: TEXT, letterSpacing: -0.4, textAlign: 'center' }}>
-              {isMatch ? 'Partido completo' : 'Cancha no disponible'}
+              {capTitle}
             </div>
             <div style={{ marginTop: 8, fontSize: 14, color: SUB, textAlign: 'center', lineHeight: 1.5, maxWidth: 300 }}>
-              {isMatch
-                ? 'Mientras procesábamos tu solicitud, los cupos disponibles fueron ocupados por otros jugadores.'
-                : 'Mientras procesábamos tu solicitud, otro usuario completó la reserva de esta cancha.'}
+              {capBody}
             </div>
             <div style={{ marginTop: 14, fontSize: 13, fontWeight: 700, color: DANGER, textAlign: 'center', letterSpacing: 0.2 }}>
               NO SE REALIZÓ NINGÚN COBRO
             </div>
             <div style={{ marginTop: 28, width: '100%', maxWidth: 320 }}>
               <CtaButton onPress={() => navigate(-1)}>
-                {isMatch ? 'Volver al partido' : 'Volver a la cancha'}
+                {capCta}
               </CtaButton>
             </div>
           </div>

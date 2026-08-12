@@ -1,5 +1,5 @@
 -- ============================================================================
--- V6 — reserve_slots(p_game_id uuid, p_reserved_slots_total integer)
+-- V6 — reserve_slots(p_game_id uuid, p_reserved_slots_total integer, p_actor uuid default null)
 -- ============================================================================
 -- Gestiona la ÚNICA R1 del capitán (el GRUPO). Una sola fila por
 -- (game_id, reserved_by_user_id). Se busca esa R1: si no existe y se reservan
@@ -31,15 +31,16 @@
 -- ============================================================================
 
 drop function if exists public.reserve_slots(uuid, integer);
+drop function if exists public.reserve_slots(uuid, integer, uuid);
 
-create or replace function public.reserve_slots(p_game_id uuid, p_reserved_slots_total integer)
+create or replace function public.reserve_slots(p_game_id uuid, p_reserved_slots_total integer, p_actor uuid default null)
 returns public.game_slot_reservations
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-  v_actor            uuid := auth.uid();
+  v_actor            uuid := coalesce(auth.uid(), p_actor);
   v_type             text;
   v_status           text;
   v_date_key         date;
@@ -249,4 +250,4 @@ end;
 $$;
 
 -- Ejecutable desde el cliente: la autorización se valida DENTRO de la función.
-grant execute on function public.reserve_slots(uuid, integer) to authenticated;
+grant execute on function public.reserve_slots(uuid, integer, uuid) to authenticated;

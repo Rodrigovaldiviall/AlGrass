@@ -46,6 +46,8 @@ declare
   v_booked_by  uuid;
   v_avail      integer;   -- public_availability: total − confirmados − R1_held
   v_holds      integer;   -- Σ claimed_units de holds vivos del recurso
+  v_referral          uuid;         -- dueño del Shared Link (referral) del snapshot; null si no hay link
+  v_referral_reserved integer := 0; -- effective_reserved_slots_remaining del grupo del capitán del link
   v_titular    boolean;
   v_order      public.orders%rowtype;
 begin
@@ -93,13 +95,31 @@ begin
   -- 7) Capacidad OFICIAL = confirmados + R1 activos + HOLDs vivos
   if p_resource_type = 'match' then
     v_avail := public.public_availability(p_resource_id);
+    -- RESTAURACIÓN pre-Orders (Shared Link): si el claim llega por referral, el usuario
+    -- puede consumir los cupos RESERVADOS del capitán del link. Se reutiliza la MISMA
+    -- fuente que usaba el checkout pre-Orders — get_slot_reservation_for_user →
+    -- effective_reserved_slots_remaining — y se suma a la capacidad, exactamente como
+    -- effectiveAvailability = public_availability + effective_reserved_slots_remaining.
+    v_referral := nullif(p_financial_snapshot->>'referral', '')::uuid;
+    if v_referral is not null then
+      select coalesce(gsr.effective_reserved_slots_remaining, 0)
+        into v_referral_reserved
+        from public.get_slot_reservation_for_user(p_resource_id, v_referral) gsr;
+    end if;
     select coalesce(sum(o.claimed_units), 0)::integer
       into v_holds
       from public.orders o
      where o.resource_id = p_resource_id
        and o.status = 'pending'
        and o.pending_expires_at > now();
-    if (v_avail - v_holds) < v_units then raise exception 'NO_CAPACITY'; end if;
+    -- Reserva de Cupos: los cupos reservados (nueva R1) SOLO pueden salir del pool
+    -- público; el remaining del capitán del Shared Link es EXCLUSIVO de la inscripción
+    -- (titular + invitados) y nunca puede fundar una reserva de cupos. Se rechaza ANTES
+    -- de crear la Order para no dejar al usuario inscrito con la reserva fallida.
+    if coalesce((p_claim_composition->>'reserved_slots')::integer, 0) > greatest(v_avail - v_holds, 0) then
+      raise exception 'INSUFFICIENT_PUBLIC_SLOTS';
+    end if;
+    if (v_avail + v_referral_reserved - v_holds) < v_units then raise exception 'NO_CAPACITY'; end if;
   else
     -- rental: 1 unidad. Ocupado si ya está reservado o hay un hold vivo.
     if v_booked_by is not null then raise exception 'NO_CAPACITY'; end if;

@@ -94,8 +94,9 @@ Deno.serve(async (req) => {
     if (result?.code === 'RENTAL_TAKEN') return json({ error: 'RENTAL_TAKEN' }, 409);
     // ───────────────────────────────────────────────────────────────────────────
     // Error inesperado / skipped → Order PENDING, se propaga (Regla 2). Sin fail_order.
-    if (result?.error || result?.skipped || !result?.ok)
+    if (result?.error || result?.skipped || !result?.ok) {
       return json({ error: 'MATERIALIZATION_FAILED' }, 500);
+    }
 
     // 9) Marcar CONFIRMED (CAS pending → confirmed). Único escritor de 'confirmed'.
     //    Si el CAS pierde ante una confirmación concurrente, mark_order_confirmed es
