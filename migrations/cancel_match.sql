@@ -40,6 +40,8 @@ declare
   v_waitlist_user_ids uuid[];     -- user_id en waitlist 'waiting' (bloque 4) → audiencia del bloque 10
   v_r1_id             uuid;       -- iterador de v_r1_ids (bloque 5)
   v_pay               record;     -- iterador (payer_id, total) del bloque 8
+  v_canceled_waitlist integer := 0;  -- nº de filas waitlist 'waiting'→'canceled' (bloque 6b) → resumen
+  v_reason_text       text;          -- primera frase del custom_text según p_cancel_reason (bloque 10)
 begin
   -- ── BLOQUE 1 · Validaciones iniciales ──────────────────────────────────────
   -- Objetivo: autenticar y autorizar al ejecutor y validar parámetros ANTES de
@@ -174,6 +176,24 @@ begin
   select id, user_id, payer_id, amount, reservation_type, invited_by_user_id
     from upd;
 
+  -- ── BLOQUE 6b · Cancelación de game_waitlist (misma filosofía que game_players) ──
+  -- Objetivo: llevar las filas 'waiting' del partido a 'canceled' con left_at=now(),
+  -- exactamente como confirmed→canceled en game_players: NO se borran filas (histórico
+  -- preservado), idempotente (solo toca 'waiting'; nunca reserved/canceled/expired), sin
+  -- tablas ni RPC nuevos. Tras esto, las lecturas de Profile (status='waiting') dejan de
+  -- ver el partido y el usuario deja de contar como en espera. La audiencia del bloque 10
+  -- NO se ve afectada: usa v_waitlist_user_ids, ya capturado en el bloque 4B. El RETURNING
+  -- solo alimenta el contador de observabilidad canceled_waitlist del bloque 11.
+  with wl as (
+    update public.game_waitlist
+       set status  = 'canceled',
+           left_at = now()
+     where game_id = p_game_id
+       and status  = 'waiting'
+    returning 1
+  )
+  select count(*)::integer into v_canceled_waitlist from wl;
+
   -- ── BLOQUE 7 · Construcción del ledger refund (append-only) ─────────────────
   -- Objetivo: emitir las filas refund en reservations SOLO desde _cancelled_players
   -- (bloque 6) + v_game (precio). NO re-lee game_players. Solo INSERT (append-only):
@@ -263,27 +283,54 @@ begin
 
   -- ── BLOQUE 10 · Notificaciones "Partido cancelado" ─────────────────────────
   -- Objetivo: UNA notificación por usuario para toda la audiencia congelada
-  -- (jugadores ∪ payers ∪ waitlist), sin duplicados. Template nuevo PARTIDO_CANCELADO;
-  -- NO se reutiliza notifyWaitlistUsers (semántica inversa) ni plantillas de
-  -- cancelación individual. Texto audience-safe: NO afirma reembolso (válido también
-  -- para usuarios de waitlist que nunca pagaron). Solo INSERT en notifications.
-  -- La dedup la hace UNION (no UNION ALL): cada user_id aparece una sola vez.
+  -- (jugadores ∪ payers ∪ waitlist), sin duplicados. Reutiliza template_key
+  -- PARTIDO_CANCELADO (sin nuevos template_key ni columnas). TODA la lógica del texto
+  -- vive AQUÍ: el frontend solo pinta título fijo + custom_text.
+  --
+  -- El custom_text tiene dos dimensiones, ambas resueltas en backend:
+  --   1) MOTIVO (igual para todos): v_reason_text, mapeado desde p_cancel_reason.
+  --   2) CRÉDITO (por destinatario): solo quien REALMENTE recibió refund en wallet
+  --      (bloque 8 = payer_id de slots 'normal' con amount>0) ve la línea del crédito.
+  --      Waitlist e invitados (que nunca pagaron) NO la ven → texto veraz por usuario.
+  -- Primera frase según el motivo (weather / low_attendance / resto → operativo).
+  v_reason_text := 'Lamentamos informarte que el partido fue cancelado '
+    || case p_cancel_reason
+         when 'weather'        then 'por condiciones climáticas'
+         when 'low_attendance' then 'por falta de jugadores'
+         else                       'por un problema operativo'
+       end
+    || '.';
+
+  -- Dedup + flag `paid` por usuario: bool_or sobre una UNION ALL etiquetada. La rama
+  -- credited=true replica EXACTAMENTE el WHERE del bloque 8 (crédito de wallet), así el
+  -- mensaje coincide con el refund real. group by colapsa duplicados (una fila por user).
   insert into public.notifications
     (recipient_user_id, source_type, delivery_type, category, template_key,
      custom_text, game_id, created_by, sent_at)
   select
     aud.user_id,
     'venue', 'automatic', 'reservation', 'PARTIDO_CANCELADO',
-    'El partido fue cancelado.',
+    case when aud.paid
+           then v_reason_text || E'\n\nEl crédito fue añadido a tu billetera.'
+           else v_reason_text
+         end,
     p_game_id, v_actor, now()
   from (
-    select user_id  from _cancelled_players
-    union
-    select payer_id from _cancelled_players
-    union
-    select unnest(v_waitlist_user_ids)
-  ) as aud(user_id)
-  where aud.user_id is not null;
+    select a.user_id, bool_or(a.credited) as paid
+    from (
+      select user_id,  false as credited from _cancelled_players
+      union all
+      select payer_id, false              from _cancelled_players
+      union all
+      select unnest(v_waitlist_user_ids), false
+      union all
+      select payer_id, true
+        from _cancelled_players
+       where reservation_type = 'normal' and amount > 0
+    ) a
+    where a.user_id is not null
+    group by a.user_id
+  ) aud;
 
   -- ── BLOQUE 11 · Return (resumen de observabilidad) ─────────────────────────
   -- Objetivo: cerrar el RPC devolviendo un resumen. Sin escrituras nuevas: los
@@ -301,6 +348,7 @@ begin
                             from _cancelled_players cp
                            where cp.reservation_type = 'normal' and cp.amount > 0),
     'released_r1',       cardinality(v_r1_ids),
+    'canceled_waitlist', v_canceled_waitlist,
     'notified',          (select count(*) from (
                             select user_id  from _cancelled_players
                             union

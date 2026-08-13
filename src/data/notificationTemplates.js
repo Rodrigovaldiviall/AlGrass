@@ -167,6 +167,16 @@ export const notificationTemplates = {
     imageType:   'algrass_logo',
   },
 
+  // Cancelación administrativa (cancel_match). El backend construye el custom_text
+  // completo (motivo + crédito según destinatario); aquí solo título fijo + body de
+  // respaldo. Sin lógica de negocio: no interpreta motivo, refund ni rol.
+  PARTIDO_CANCELADO: {
+    title:       'Partido cancelado',
+    body:        'El partido fue cancelado.',
+    sourceLabel: 'Algrass',
+    imageType:   'algrass_logo',
+  },
+
   // ── Broadcasts ─────────────────────────────────────────────────────────────
 
   new_venue_opened: {

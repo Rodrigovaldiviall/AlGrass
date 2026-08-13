@@ -5,6 +5,7 @@ import TabBar from '../components/TabBar';
 import { useForegroundTick } from '../hooks/useForegroundTick';
 import I from '../icons';
 import fieldImg from '../assets/cancha.jpg';
+import algrassLogo from '../assets/logo.webp';
 import { useAuth } from '../context/AuthContext';
 import { useStaff } from '../context/StaffContext';
 import { supabase } from '../lib/supabase';
@@ -100,16 +101,11 @@ function ReservationIcon({ gameDate, read }) {
 function AppIcon({ read }) {
   return (
     <div style={{
-      width: 44, height: 44, borderRadius: 11, background: BLUE, flexShrink: 0,
+      width: 44, height: 44, borderRadius: 11, background: '#fff', flexShrink: 0,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      opacity: read ? 0.45 : 1,
+      opacity: read ? 0.45 : 1, overflow: 'hidden',
     }}>
-      {/* Algrass logo placeholder — reemplazar con logo real cuando esté disponible */}
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-        <circle cx="12" cy="12" r="10" stroke="#fff" strokeWidth="1.6"/>
-        <path d="M12 7l2.8 2v3.2L12 14.2l-2.8-2.2V9L12 7z" stroke="#fff" strokeWidth="1.3" strokeLinejoin="round"/>
-        <path d="M9.2 9L6.5 10.5M14.8 9L17.5 10.5M12 14.2V17M9.2 12.2L7.5 15M14.8 12.2L16.5 15" stroke="#fff" strokeWidth="1.3" strokeLinecap="round"/>
-      </svg>
+      <img src={algrassLogo} alt="Algrass" style={{ width: 58, height: 58, objectFit: 'contain', display: 'block' }} />
     </div>
   );
 }
