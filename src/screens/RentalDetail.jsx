@@ -640,6 +640,7 @@ export default function RentalDetail() {
           onPress={() => navigate('/checkout', { state: {
             game: {
               id:          game.id,
+              city:        game.city ?? null,
               type:        'rental',
               source:      'rental',
               field:       title,

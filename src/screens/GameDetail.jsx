@@ -2018,6 +2018,7 @@ export default function GameDetail() {
               onPress={() => {
                 const checkoutGame = {
                   id:          g.id,
+                  city:        g.city ?? null,
                   field:       g.field,
                   date:        g.date,
                   dateKey:     g.dateKey,

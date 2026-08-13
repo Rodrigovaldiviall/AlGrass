@@ -867,11 +867,15 @@ export default function ConfirmReservation() {
   async function applyCode() {
     if (!promoInput.trim() || promoLoading) return;
     setPromoLoading(true);
-    const result = await validatePromoCode(promoInput, unitPrice, game?.type ?? null);
+    const result = await validatePromoCode(promoInput, unitPrice, game?.type ?? null, authUser?.id ?? null, game?.city ?? null);
     setPromoLoading(false);
-    if (result.error === 'wrong_type') { setPromoApplied(null); setPromoError('Este código no aplica para este tipo de reserva.'); return; }
+    if (result.error === 'wrong_type')         { setPromoApplied(null); setPromoError('Este código no aplica para este tipo de reserva.'); return; }
+    if (result.error === 'city_not_allowed')   { setPromoApplied(null); setPromoError('Esta promoción no está disponible en esta ciudad.'); return; }
+    if (result.error === 'not_started')        { setPromoApplied(null); setPromoError('Esta promoción todavía no está disponible.'); return; }
+    if (result.error === 'limit_reached')      { setPromoApplied(null); setPromoError('Esta promoción ya alcanzó su límite de usos.'); return; }
+    if (result.error === 'limit_reached_user') { setPromoApplied(null); setPromoError('Ya usaste esta promoción el máximo de veces.'); return; }
     if (result.error) { setPromoApplied(null); setPromoError('Código no válido'); return; }
-    setPromoApplied({ kind: 'percent', value: result.value, discount: result.discount, code: result.code });
+    setPromoApplied({ kind: result.discount_type, value: result.value, discount: result.discount, code: result.code, promoCodeId: result.promoCodeId });
     setPromoError('');
   }
 
@@ -905,7 +909,7 @@ export default function ConfirmReservation() {
   function buildMainSnapshot(paymentMethod) {
     return {
       gameId: game?.id, gameType: game?.type,
-      unitPrice, promoCode: promoApplied?.code ?? null, promoDiscount: promoApplied?.discount ?? 0,
+      unitPrice, promoCode: promoApplied?.code ?? null, promoCodeId: promoApplied?.promoCodeId ?? null, promoDiscount: promoApplied?.discount ?? 0,
       totalAmount: total, subtotalAmount: subtotal,
       playersCount: isRental ? 1 : 1 + guests.length, guestTotal: isRental ? 0 : guestsTotal,
       paymentMethod, creditApplied, source: game?.source ?? 'match',

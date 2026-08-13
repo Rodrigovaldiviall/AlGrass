@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase.js';
-import { isExpiredPeru, parsePeruDateTime } from '../lib/peruTime.js';
+import { isExpiredPeru, hasStartedPeru, parsePeruDateTime } from '../lib/peruTime.js';
 import { notifyWaitlistUsers } from './waitlistService.js';
 
 // ── internal helpers ──────────────────────────────────────────────────────────
@@ -78,21 +78,62 @@ export async function getWalletBalance() {
 
 // ── promo codes ───────────────────────────────────────────────────────────────
 
-export async function validatePromoCode(code, unitPrice, gameType = null) {
+export async function validatePromoCode(code, unitPrice, gameType = null, userId = null, gameCity = null) {
   if (!supabase || !code?.trim()) return { error: 'invalid' };
   const { data, error } = await supabase
     .from('promo_codes')
-    .select('discount_percent, expires_at, promo_games_type')
+    .select('id, discount_type, discount_percent, discount_amount, starts_at, expires_at, promo_games_type, max_uses_total, max_uses_per_user, city')
     .eq('code', code.trim().toUpperCase())
     .eq('active', true)
     .maybeSingle();
   if (error || !data) return { error: 'invalid' };
   if (isExpiredPeru(data.expires_at)) return { error: 'invalid' };
+  if (!hasStartedPeru(data.starts_at)) return { error: 'not_started' };
   if (data.promo_games_type && data.promo_games_type !== 'all' && data.promo_games_type !== gameType) {
     return { error: 'wrong_type' };
   }
-  const discount = Math.min(unitPrice * (data.discount_percent / 100), unitPrice);
-  return { discount, value: data.discount_percent, code: code.trim().toUpperCase() };
+
+  // Segmentación por ciudad (contra la ciudad DEL EVENTO/VENUE, no del usuario).
+  //   city NULL/'' → válida para todas. Si tiene ciudad, debe coincidir con gameCity.
+  // Normalización robusta (case/acentos/espacios) reutilizando deaccent del módulo.
+  if (data.city && deaccent(data.city).trim().toLowerCase() !== deaccent(gameCity || '').trim().toLowerCase()) {
+    return { error: 'city_not_allowed' };
+  }
+
+  // Límites de uso. Fuente de verdad = reservations (status='spend', promo_code_id).
+  // Los refunds NO restan usos (solo se cuentan 'spend'). Sin contadores sincronizados.
+  if (data.max_uses_total != null) {
+    // COUNT global vía RPC SECURITY DEFINER: el count directo desde el cliente subcuenta
+    // por RLS (solo ve filas propias). La RPC devuelve el escalar entero directo en `data`.
+    const { data: totalUses } = await supabase.rpc('count_promo_uses', { p_promo_id: data.id });
+    if ((totalUses ?? 0) >= data.max_uses_total) return { error: 'limit_reached' };
+  }
+  if (data.max_uses_per_user != null) {
+    const uid = userId ?? (await getSession())?.user?.id ?? null;
+    if (uid) {
+      const { count } = await supabase
+        .from('reservations')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'spend')
+        .eq('promo_code_id', data.id)
+        .eq('user_id', uid);
+      if ((count ?? 0) >= data.max_uses_per_user) return { error: 'limit_reached_user' };
+    }
+  }
+
+  // Descuento sobre el subtotal elegible (= unitPrice del titular, igual que hoy).
+  //   percent → % del subtotal (tope: el propio subtotal).
+  //   fixed   → min(monto nominal, subtotal). Nunca deja total negativo.
+  const discount = data.discount_type === 'fixed'
+    ? Math.min(Number(data.discount_amount) || 0, unitPrice)
+    : Math.min(unitPrice * (data.discount_percent / 100), unitPrice);
+  return {
+    discount,
+    value: data.discount_type === 'fixed' ? data.discount_amount : data.discount_percent,
+    code: code.trim().toUpperCase(),
+    promoCodeId: data.id,
+    discount_type: data.discount_type,
+  };
 }
 
 // ── user search ───────────────────────────────────────────────────────────────
@@ -154,7 +195,7 @@ async function setMatchPublishedIfEmpty(gameId) {
 // ── reserve ───────────────────────────────────────────────────────────────────
 
 // Appends a spend record to reservations (append-only ledger).
-export async function createReservation({ gameId, unitPrice, promoCode, promoDiscount, totalAmount, subtotalAmount, playersCount, guestTotal, paymentMethod, creditApplied, source }, ctx) {
+export async function createReservation({ gameId, unitPrice, promoCode, promoCodeId, promoDiscount, totalAmount, subtotalAmount, playersCount, guestTotal, paymentMethod, creditApplied, source }, ctx) {
   const db = ctx?.db ?? supabase;
   if (!db) return { skipped: true };
   const actor = ctx?.actor ?? (await getSession())?.user?.id;
@@ -170,6 +211,7 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoDis
       status:              'spend',
       unit_price:          unitPrice,
       promo_code:          promoCode || null,
+      promo_code_id:       promoCodeId || null,
       promo_discount:      promoDiscount || 0,
       credit_applied:      creditApplied || 0,
       total_amount:        totalAmount > 0 ? totalAmount : null,

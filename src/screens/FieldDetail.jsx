@@ -49,6 +49,7 @@ function buildField(sel) {
   ].filter(Boolean);
   return {
     id:          sel.id,
+    city:        sel.city ?? null,
     field:       sel.field,
     address:     sel.address || '',
     venueLat:    sel.venueLat ?? null,
@@ -491,6 +492,7 @@ export default function FieldDetail() {
         onPress={() => navigate('/checkout', { state: {
           game: {
             id:          g.id,
+            city:        g.city ?? null,
             field:       g.field,
             date:        g.date,
             time:        g.time,

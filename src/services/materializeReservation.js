@@ -25,7 +25,7 @@ const _firstName = (n) => (n || '').split(' ')[0];
 
 export async function materializeReservation(ctx, snapshot) {
   const {
-    gameId, gameType, unitPrice, promoCode, promoDiscount, totalAmount, subtotalAmount,
+    gameId, gameType, unitPrice, promoCode, promoCodeId, promoDiscount, totalAmount, subtotalAmount,
     playersCount, guestTotal, paymentMethod, creditApplied, source,
     guests = [], reservedSlots = 0, referral = null, titularNet,
     hostUserId = null, venueId = null, releaseHours, payerName,
@@ -35,7 +35,7 @@ export async function materializeReservation(ctx, snapshot) {
 
   // 1) Asiento en el ledger (spend). La proveniencia order_id viaja en el ctx.
   const { data: resData, error, skipped, rentalTaken } = await createReservation({
-    gameId, unitPrice, promoCode, promoDiscount,
+    gameId, unitPrice, promoCode, promoCodeId, promoDiscount,
     totalAmount, subtotalAmount, playersCount, guestTotal,
     paymentMethod, creditApplied, source,
   }, ctx);

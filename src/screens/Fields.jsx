@@ -586,13 +586,23 @@ export default function Fields() {
     supabase.from('venues').select('city').not('city', 'is', null).then(({ data }) => {
       const cities = [...new Set((data ?? []).map(r => r.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
       setAvailableCities(cities);
-      if (!userCity && cities.length > 0) {
-        setUserCity(cities[0]);
-        try {
-          const p = JSON.parse(localStorage.getItem('pichanga_profile')) || {};
-          localStorage.setItem('pichanga_profile', JSON.stringify({ ...p, city: cities[0] }));
-        } catch {}
-      }
+      // Fuente ÚNICA persistente = pichanga_profile.city (AuthContext la sincroniza desde
+      // users.city). Se re-lee FRESCA y se usa un updater funcional para no pisar con el
+      // default alfabético (cities[0]) una ciudad ya elegida/persistida por el usuario.
+      let persisted = '';
+      try { persisted = JSON.parse(localStorage.getItem('pichanga_profile'))?.city || ''; } catch {}
+      setUserCity(prev => {
+        if (prev) return prev;              // ya hay ciudad activa → no recalcular
+        if (persisted) return persisted;    // preferencia persistida gana al default
+        if (cities.length > 0) {            // usuario sin ciudad: default (única vez que se persiste)
+          try {
+            const p = JSON.parse(localStorage.getItem('pichanga_profile')) || {};
+            localStorage.setItem('pichanga_profile', JSON.stringify({ ...p, city: cities[0] }));
+          } catch {}
+          return cities[0];
+        }
+        return prev;
+      });
       setCityReady(true);
     }).catch(() => {
       setCityReady(true);

@@ -8,6 +8,15 @@ export function isExpiredPeru(expiresAt) {
   return expiry.getTime() <= Date.now();
 }
 
+// Twin de isExpiredPeru: ¿ya llegó este instante de inicio? null/ inválido → sí (siempre activo).
+// Misma comparación de epoch UTC; sin conversión de timezone.
+export function hasStartedPeru(startsAt) {
+  if (!startsAt) return true;
+  const start = new Date(startsAt);
+  if (isNaN(start.getTime())) return true;
+  return start.getTime() <= Date.now();
+}
+
 // Use { timeZone } only in the format call — never re-parse the resulting string as a Date.
 export function formatPeruDate(utcTs, opts = { day: 'numeric', month: 'long' }) {
   return new Date(utcTs).toLocaleDateString('es-PE', { timeZone: TIMEZONE, ...opts });
