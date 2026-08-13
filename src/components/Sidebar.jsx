@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { BLUE, TEXT, SUB, HAIR, TAB_INACTIVE, RED } from '../constants';
+import { BLUE, TEXT, SUB, HAIR, TAB_INACTIVE, RED, GREEN } from '../constants';
 import I from '../icons';
 import { haptic } from '../utils/haptic';
 import { readNotifBadgeLabel, badgeLabel } from '../utils/notifBadge';
@@ -79,11 +79,11 @@ export default function Sidebar() {
     <nav className="sidebar">
       {/* Brand */}
       <div style={{ padding: '48px 30px 27px', borderBottom: `1px solid ${HAIR}` }}>
-        <div style={{ fontSize: 33, fontWeight: 800, color: BLUE, letterSpacing: -1.2, lineHeight: 1 }}>
-          Algrass
+        <div style={{ fontSize: 33, fontWeight: 800, letterSpacing: -1.2, lineHeight: 1 }}>
+          <span style={{ color: BLUE }}>Al</span><span style={{ color: GREEN }}>Grass</span>
         </div>
         <div style={{ fontSize: 18, color: SUB, marginTop: 8, letterSpacing: -0.1 }}>
-          Encuentra tu partido
+          Despreocúpate y juega
         </div>
       </div>
 

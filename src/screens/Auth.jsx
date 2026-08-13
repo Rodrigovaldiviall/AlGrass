@@ -4,7 +4,7 @@ import { useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import * as sharedLink from '../lib/sharedLink';
-import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT } from '../constants';
+import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN } from '../constants';
 import I from '../icons';
 import ConfirmReservation from './ConfirmReservation';
 import { deriveGameState, isGamePast } from '../utils/deriveGameState';
@@ -677,7 +677,7 @@ export default function AuthScreen() {
       <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
         <div style={{ padding: '4px 16px 8px', textAlign: 'center' }}>
           <span style={{ fontSize: 32, fontWeight: 800, color: TEXT, letterSpacing: -1 }}>
-            Al<span style={{ color: BLUE }}>Grass</span>
+            <span style={{ color: BLUE }}>Al</span><span style={{ color: GREEN }}>Grass</span>
           </span>
           <div style={{ marginTop: 16, fontSize: 20, fontWeight: 700, color: TEXT, letterSpacing: -0.3 }}>Suscribirme o Ingresar</div>
           <div style={{ marginTop: 2, fontSize: 13, color: SUB, letterSpacing: -0.1 }}>{subtitle}</div>

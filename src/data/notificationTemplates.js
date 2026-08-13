@@ -177,6 +177,16 @@ export const notificationTemplates = {
     imageType:   'algrass_logo',
   },
 
+  // Cancelación administrativa de un rental (cancel_rental). El backend construye el
+  // custom_text completo (motivo + crédito); aquí solo título fijo + body de respaldo.
+  // Sin lógica de negocio: no interpreta motivo, refund ni rol.
+  RESERVA_CANCELADA: {
+    title:       'Reserva cancelada',
+    body:        'La reserva fue cancelada.',
+    sourceLabel: 'Algrass',
+    imageType:   'algrass_logo',
+  },
+
   // ── Broadcasts ─────────────────────────────────────────────────────────────
 
   new_venue_opened: {

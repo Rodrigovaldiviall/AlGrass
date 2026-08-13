@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { BLUE, TEXT, SUB, ORANGE } from '../constants';
+import { BLUE, TEXT, SUB, ORANGE, GREEN } from '../constants';
 
 // ── Acceso privado TEMPORAL (hasta el lanzamiento) ──────────────────────────
 // Toda la lógica vive aquí. Envuelve la app en main.jsx: <PrivateAccessGate><App/></...>.
@@ -39,7 +39,7 @@ export default function PrivateAccessGate({ children }) {
     <div style={{ position: 'fixed', inset: 0, zIndex: 100000, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px 20px' }}>
       <form onSubmit={submit} style={{ width: '100%', maxWidth: 340, display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
         <div style={{ fontSize: 40, fontWeight: 800, color: TEXT, letterSpacing: -1.2, lineHeight: 1 }}>
-          Al<span style={{ color: BLUE }}>Grass</span>
+          <span style={{ color: BLUE }}>Al</span><span style={{ color: GREEN }}>Grass</span>
         </div>
         <div style={{ marginTop: 12, fontSize: 15, color: SUB, letterSpacing: -0.1 }}>Despreocúpate y juega.</div>
         <div style={{ marginTop: 28, fontSize: 20, fontWeight: 700, color: TEXT, letterSpacing: -0.3 }}>Próximamente.</div>
