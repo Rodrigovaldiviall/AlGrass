@@ -615,7 +615,10 @@ export default function Fields() {
       const p = JSON.parse(localStorage.getItem('pichanga_profile')) || {};
       localStorage.setItem('pichanga_profile', JSON.stringify({ ...p, city: c }));
     } catch {}
-    if (user?.id) supabase.from('users').update({ city: c }).eq('id', user.id);
+    // supabase-js es lazy: sin .then()/await la query NUNCA se envía (por eso antes users.city
+    // no se actualizaba desde el header, a diferencia de Settings.saveCity que hace await).
+    if (user?.id) supabase.from('users').update({ city: c }).eq('id', user.id)
+      .then(({ error }) => { if (error) console.warn('[city] users.update failed:', error); });
   }
   const [selectedKey, setSelectedKey] = useState(() => {
     try { return JSON.parse(sessionStorage.getItem('fl'))?.sel ?? TODAY_KEY; } catch { return TODAY_KEY; }

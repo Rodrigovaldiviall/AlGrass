@@ -1155,7 +1155,10 @@ export default function PickupGames() {
       const p = JSON.parse(localStorage.getItem('pichanga_profile')) || {};
       localStorage.setItem('pichanga_profile', JSON.stringify({ ...p, city: c }));
     } catch {}
-    if (user?.id) supabase.from('users').update({ city: c }).eq('id', user.id);
+    // supabase-js es lazy: sin .then()/await la query NUNCA se envía (por eso antes users.city
+    // no se actualizaba desde el header, a diferencia de Settings.saveCity que hace await).
+    if (user?.id) supabase.from('users').update({ city: c }).eq('id', user.id)
+      .then(({ error }) => { if (error) console.warn('[city] users.update failed:', error); });
   }
   const [selectedKey, setSelectedKey] = useState(() => {
     try { return JSON.parse(sessionStorage.getItem('pg'))?.sel ?? TODAY_KEY; } catch { return TODAY_KEY; }
@@ -1611,12 +1614,11 @@ export default function PickupGames() {
       )}
       {showCitySheet && (
         <CityOnboardSheet onDone={city => {
-          try {
-            const p = JSON.parse(localStorage.getItem(_PROFILE_KEY)) || {};
-            localStorage.setItem(_PROFILE_KEY, JSON.stringify({ ...p, city }));
-          } catch {}
+          // Reutiliza el handler explícito: setUserCity + pichanga_profile + public.users.city
+          // (solo si hay usuario autenticado). Antes esta vía escribía únicamente
+          // pichanga_profile, por lo que users.city no se actualizaba en el onboarding.
+          handleCityChange(city);
           localStorage.setItem(_WELCOME_KEY, '1');
-          setUserCity(city);
           setShowCitySheet(false);
         }} />
       )}
