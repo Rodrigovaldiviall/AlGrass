@@ -10,25 +10,33 @@ const INTRO_KEY = 'algrass_intro_seen';
 const HL = { color: '#fff', fontWeight: 700, textDecoration: 'underline' };
 
 const BULLETS = [
-  <>Cada uno paga su cupo. <span style={HL}>Chau a estar cobrando.</span></>,
-  <>¿Falta gente? ¿Te quedaste fuera de lista? ¿Solo quieres jugar? <span style={HL}>Igual juegas.</span></>,
+  <>
+    <span style={{ ...HL, display: 'block' }}>Chau a estar cobrando.</span>
+    <span style={{ display: 'block', marginTop: 2 }}>Cada uno paga su cupo.</span>
+  </>,
+  <>
+    <span style={{ ...HL, display: 'block' }}>No dejes de jugar.</span>
+    <span style={{ display: 'block', marginTop: 2 }}>¿Falta gente? ¿Te quedaste fuera de lista? ¿Solo quieres jugar?</span>
+  </>,
   <span style={HL}>Reserva al toque, cuando quieras.</span>,
 ];
 
 // Shared intro content — referenced by both the mobile overlay and the desktop landing
 // so future edits apply to both.
-const INTRO_TITLE    = 'Bienvenido a AlGrass';
+const INTRO_TITLE    = (
+  <>
+    <span style={{ display: 'block', fontSize: '0.62em', fontWeight: 700, letterSpacing: '-0.01em', opacity: 0.92, lineHeight: 1.15 }}>Bienvenido a</span>
+    <span style={{ display: 'block', fontSize: '1.53em', lineHeight: 1.05 }}>AlGrass</span>
+  </>
+);
 const INTRO_SUBTITLE = 'Despreocúpate y juega.';
 const INTRO_CTA      = 'Empecemos';
 
 // ── Minimal glow dot for bullets ──────────────────────────────────────────
 function Dot() {
   return (
-    <div style={{
-      width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
-      marginTop: 8,
-      background: 'rgba(164,190,255,0.90)',
-      boxShadow: '0 0 6px 2px rgba(100,140,255,0.45)',
+    <img src={logo} alt="" style={{
+      width: 61, height: 61, objectFit: 'contain', flexShrink: 0, marginTop: -8,
     }} />
   );
 }
@@ -41,28 +49,17 @@ function OnboardingOverlay({ onDone }) {
       background: 'linear-gradient(180deg, rgba(4,8,22,0.10) 0%, rgba(4,8,22,0.30) 35%, rgba(4,8,22,0.72) 70%, rgba(4,8,22,0.90) 100%)',
       animation: 'intro-overlay-in 0.7s ease both',
       display: 'flex', flexDirection: 'column', alignItems: 'center',
-      padding: 'calc(env(safe-area-inset-top) + 52px) 28px calc(env(safe-area-inset-bottom) + 48px)',
+      padding: 'calc(env(safe-area-inset-top) + 52px) 12px calc(env(safe-area-inset-bottom) + 48px)',
     }}>
 
       {/* Content area — flex-grows to fill, centers its children */}
       <div style={{
         flex: 1, display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
-        width: '100%', maxWidth: 360,
-        paddingBottom: '18%',
+        width: '100%', maxWidth: 440,
+        paddingBottom: '6%',
+        transform: 'translateY(5vh)',
       }}>
-        {/* Logo */}
-        <img
-          src={logo}
-          alt="AlGrass"
-          style={{
-            width: 88, height: 88, objectFit: 'contain',
-            marginBottom: 18,
-            animation: 'intro-logo-in 0.8s cubic-bezier(0.22,0.61,0.36,1) 0.20s both',
-            filter: 'drop-shadow(0 2px 12px rgba(0,0,0,0.30))',
-          }}
-        />
-
         {/* Title */}
         <h1 style={{
           margin: '0 0 10px',
@@ -90,7 +87,7 @@ function OnboardingOverlay({ onDone }) {
             <div
               key={i}
               style={{
-                display: 'flex', alignItems: 'flex-start', gap: 12,
+                display: 'flex', alignItems: 'flex-start', gap: 1,
                 animation: `intro-item-in 0.65s cubic-bezier(0.22,0.61,0.36,1) ${0.70 + i * 0.13}s both`,
               }}
             >
@@ -147,7 +144,7 @@ function DesktopLanding({ onStart }) {
           <p style={{ margin: '0 0 24px', fontSize: 21, fontWeight: 700, lineHeight: 1.5, whiteSpace: 'nowrap', color: '#fff', maxWidth: 360, textShadow: '0 1px 14px rgba(0,0,0,0.50)' }}>
             {INTRO_SUBTITLE}
           </p>
-          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 30 }}>
+          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 30, marginLeft: -73 }}>
             {BULLETS.map((text, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
                 <Dot />
