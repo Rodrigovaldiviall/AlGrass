@@ -92,6 +92,7 @@ function buildGame(sel) {
     duration: `${sel.durationMin ?? 60} min`,
     fieldNumber: sel.fieldName || GAME_DEFAULTS.fieldNumber,
     address,
+    city:              sel.city                ?? null,
     venueLat:          sel.venueLat            ?? null,
     venueLng:          sel.venueLng            ?? null,
     venueDistrict:     sel.venueDistrict       ?? null,
