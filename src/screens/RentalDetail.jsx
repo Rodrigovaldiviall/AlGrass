@@ -423,7 +423,7 @@ export default function RentalDetail() {
         : null,
     ]).then(([freshGame, spendsRes]) => {
       if (freshGame) setGame(prev => prev
-        ? { ...prev, status: freshGame.status, reserved: freshGame.status === 'reserved', bookedByUserId: freshGame.bookedByUserId ?? null }
+        ? { ...prev, status: freshGame.status, reserved: freshGame.status === 'reserved', bookedByUserId: freshGame.bookedByUserId ?? null, fieldCoverPath: freshGame.fieldCoverPath ?? prev.fieldCoverPath, fieldCoverVersion: freshGame.fieldCoverVersion ?? prev.fieldCoverVersion, venueCoverPath: freshGame.venueCoverPath ?? prev.venueCoverPath, venueCoverVersion: freshGame.venueCoverVersion ?? prev.venueCoverVersion }
         : freshGame
       );
       setLoading(false);
@@ -570,12 +570,18 @@ export default function RentalDetail() {
             />
           )}
           <Pressable
-            onPress={() => navigate('/venue', { state: { venue: { venueName: game.venueName, name: title, address: game.address, district: game.venueDistrict, lat: game.venueLat, lng: game.venueLng, chips } } })}
+            onPress={() => navigate('/venue', { state: { venue: { venueName: game.venueName, name: title, address: game.address, district: game.venueDistrict, lat: game.venueLat, lng: game.venueLng, chips: [
+              { kind: 'format', label: game.format || '7v7' },
+              game.covered && { kind: 'covered', label: 'Techado' },
+              game.filmed  && { kind: 'filmed',  label: 'Filmado' },
+              game.parking && { kind: 'parking', label: 'Estacionamiento' },
+              game.showers && { kind: 'showers', label: 'Duchas' },
+            ].filter(Boolean), fieldCoverPath: game.fieldCoverPath ?? null, fieldCoverVersion: game.fieldCoverVersion ?? null, venueCoverPath: game.venueCoverPath ?? null, venueCoverVersion: game.venueCoverVersion ?? null } } })}
             style={{ borderRadius: 12 }}>
             <InfoRow
               icon={I.fieldIcon()}
-              primary={title}
-              secondary={[game.address, game.venueDistrict].filter(Boolean).join(' · ') || undefined}
+              primary={<span style={{ textDecoration: 'underline' }}>{title}</span>}
+              secondary={<span style={{ textDecoration: 'underline' }}>{[game.address, game.venueDistrict].filter(Boolean).join(' · ')}</span>}
               action={<MapsLinkButton lat={game.venueLat} lng={game.venueLng} address={game.address} />}
             />
           </Pressable>

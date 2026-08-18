@@ -884,8 +884,8 @@ export default function Fields() {
       <FieldRow key={f.id} f={f} last={last}
         userBooked={myBookedFresh && myBookedIds.has(f.id)}
         isHost={!!user?.id && !!f.hostUserId && f.hostUserId === user.id}
-        coverPath={f.venueCoverPath ?? null}
-        coverVersion={f.venueCoverVersion ?? null}
+        coverPath={f.fieldCoverPath ?? f.venueCoverPath ?? null}
+        coverVersion={f.fieldCoverPath ? f.fieldCoverVersion : f.venueCoverVersion}
         badgeReady={myBookedFresh}
         onPress={() => navigate(`/rental/${f.id}`, { state: { field: f, backPath: '/fields', mapReturn: { view, selectedVenue, sheetExpanded: snapIndex === 0 } } })} />
     );

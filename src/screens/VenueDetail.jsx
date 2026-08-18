@@ -6,6 +6,8 @@ import InfoRow from '../components/InfoRow';
 import AmenityChips from '../components/AmenityChips';
 import MapsLinkButton from '../components/MapsLinkButton';
 import VenueMiniMap from '../components/VenueMiniMap';
+import { supabase } from '../lib/supabase';
+import { getVenueCoverUrl } from '../utils/venue';
 
 // Caché del último venue (sessionStorage) — mismo principio que RentalDetail/_readRDCache:
 // conserva el último estado real para no caer a placeholder mientras se resuelve la navegación.
@@ -38,6 +40,12 @@ export default function VenueDetail() {
   const addressText = Array.isArray(v?.address) ? v.address.filter(Boolean).join(' ') : (v?.address || '');
   const secondary = [addressText, v?.district].filter(Boolean).join(' · ') || undefined;
 
+  // Foto de la cancha: prioridad FIELD → VENUE → placeholder. Reutiliza getVenueCoverUrl
+  // (genérico para cualquier path del bucket `venues`); cache busting por *_updated_at.
+  const _coverPath    = v?.fieldCoverPath ?? v?.venueCoverPath ?? null;
+  const _coverVersion = v?.fieldCoverPath ? v?.fieldCoverVersion : v?.venueCoverVersion;
+  const coverSrc      = _coverPath ? getVenueCoverUrl(supabase, _coverPath, _coverVersion) : null;
+
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
       {/* Header (mismo estilo que las pantallas de detalle) */}
@@ -63,10 +71,12 @@ export default function VenueDetail() {
           />
         </div>
 
-        {/* Foto panorámica (placeholder) */}
+        {/* Foto de la cancha (FIELD → VENUE → placeholder). Mismo tamaño/aspect ratio. */}
         <div style={{ padding: '6px 16px 12px' }}>
-          <div style={{ width: '100%', aspectRatio: '16/7', borderRadius: 14, background: '#F2F2F4', backgroundImage: 'repeating-linear-gradient(135deg, #E8E8EC 0 14px, #F2F2F4 14px 28px)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: SUB, fontSize: 12, letterSpacing: 0.3 }}>
-            Foto panorámica
+          <div style={{ width: '100%', aspectRatio: '16/7', borderRadius: 14, overflow: 'hidden', background: '#F2F2F4', backgroundImage: coverSrc ? 'none' : 'repeating-linear-gradient(135deg, #E8E8EC 0 14px, #F2F2F4 14px 28px)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: SUB, fontSize: 12, letterSpacing: 0.3 }}>
+            {coverSrc
+              ? <img src={coverSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+              : 'Foto panorámica'}
           </div>
         </div>
 

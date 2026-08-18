@@ -97,6 +97,10 @@ function buildGame(sel) {
     venueLng:          sel.venueLng            ?? null,
     venueDistrict:     sel.venueDistrict       ?? null,
     venueName:         sel.venueName           ?? null,
+    fieldCoverPath:    sel.fieldCoverPath      ?? null,
+    fieldCoverVersion: sel.fieldCoverVersion   ?? null,
+    venueCoverPath:    sel.venueCoverPath      ?? null,
+    venueCoverVersion: sel.venueCoverVersion   ?? null,
     chips,
     description: GAME_DEFAULTS.description,
     recommendations: GAME_DEFAULTS.recommendations,
@@ -1860,12 +1864,12 @@ export default function GameDetail() {
               action={(isHost || isBooked || isGuest || guestsInRoster.length > 0 || infoMode) ? <WAChatButton /> : undefined}
             />
             <Pressable
-              onPress={() => navigate('/venue', { state: { venue: { venueName: g.venueName, name: g.fieldNumber, address: g.address, district: g.venueDistrict, lat: g.venueLat, lng: g.venueLng, chips: g.chips } } })}
+              onPress={() => navigate('/venue', { state: { venue: { venueName: g.venueName, name: g.fieldNumber, address: g.address, district: g.venueDistrict, lat: g.venueLat, lng: g.venueLng, chips: g.chips, fieldCoverPath: g.fieldCoverPath ?? null, fieldCoverVersion: g.fieldCoverVersion ?? null, venueCoverPath: g.venueCoverPath ?? null, venueCoverVersion: g.venueCoverVersion ?? null } } })}
               style={{ borderRadius: 12 }}>
               <InfoRow
                 icon={I.fieldIcon()}
-                primary={g.fieldNumber}
-                secondary={<span>{g.address[0]}{g.address[1] ? <><br />{g.address[1]}</> : null}{g.venueDistrict ? ` · ${g.venueDistrict}` : ''}</span>}
+                primary={<span style={{ textDecoration: 'underline' }}>{g.fieldNumber}</span>}
+                secondary={<span style={{ textDecoration: 'underline' }}>{g.address[0]}{g.address[1] ? <><br />{g.address[1]}</> : null}{g.venueDistrict ? ` · ${g.venueDistrict}` : ''}</span>}
                 action={<MapsLinkButton lat={g.venueLat} lng={g.venueLng} address={g.address} />}
               />
             </Pressable>
