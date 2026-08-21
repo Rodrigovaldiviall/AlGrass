@@ -15,7 +15,7 @@ const BULLETS = [
     <span style={{ display: 'block', marginTop: 2 }}>Cada uno paga su cupo.</span>
   </>,
   <>
-    <span style={{ ...HL, display: 'block' }}>No dejes de jugar.</span>
+    <span style={{ ...HL, display: 'block' }}>Siempre juegas.</span>
     <span style={{ display: 'block', marginTop: 2 }}>¿Falta gente? ¿Te quedaste fuera de lista? ¿Solo quieres jugar?</span>
   </>,
   <span style={HL}>Reserva al toque, cuando quieras.</span>,

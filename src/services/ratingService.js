@@ -85,66 +85,24 @@ export async function fetchMyRatings(userId) {
   }]));
 }
 
-// ── Create initial rating rows for past games (idempotent, ON CONFLICT DO NOTHING) ─
-// Rentals: only the current user (they are the booker).
-// Matches: all confirmed game_players of those games (enables cross-user analytics).
+// ── Create the CURRENT user's own initial rating row for their past games ──────
+// Idempotente (ON CONFLICT DO NOTHING → no sobrescribe una fila ya calificada o con
+// popup_shown_at). Cada usuario administra EXCLUSIVAMENTE su propia fila: nunca se
+// crean placeholders para otro user_id (ni jugadores ni host). El host obtiene su
+// propia fila al abrir su Profile, porque Profile ya incluye los partidos que
+// organizó dentro de sus eventos. Aplica igual a matches y rentals.
 export async function upsertRatingRows(userId, games) {
   if (!supabase || !userId || !games.length) return;
 
-  const matchGames  = games.filter(g => g.type !== 'rental');
-  const rentalGames = games.filter(g => g.type === 'rental');
-  const rows = [];
+  const rows = games.map(g => ({
+    user_id:        userId,
+    game_id:        g.gameId ?? g.id,
+    game_type:      g.type === 'rental' ? 'rental' : 'match',
+    host_user_id:   g.hostUserId ?? null,
+    event_ended_at: computeEventEndedAt(g),
+    stars: null, comment: null, popup_shown_at: null, rated_at: null,
+  }));
 
-  // Rentals — only the current user
-  for (const g of rentalGames) {
-    rows.push({
-      user_id:        userId,
-      game_id:        g.gameId ?? g.id,
-      game_type:      'rental',
-      host_user_id:   g.hostUserId ?? null,
-      event_ended_at: computeEventEndedAt(g),
-      stars: null, comment: null, popup_shown_at: null, rated_at: null,
-    });
-  }
-
-  // Matches — query all confirmed participants and create a row per player
-  if (matchGames.length) {
-    const gameIds = matchGames.map(g => g.gameId ?? g.id);
-    const metaMap = Object.fromEntries(matchGames.map(g => [g.gameId ?? g.id, g]));
-    const { data: players, error: gpErr } = await supabase
-      .from('game_players')
-      .select('game_id, user_id')
-      .in('game_id', gameIds)
-      .eq('status', 'confirmed');
-    if (gpErr) console.error('[rating] game_players query error:', gpErr.message);
-    for (const p of (players || [])) {
-      const meta = metaMap[p.game_id];
-      if (!meta) continue;
-      rows.push({
-        user_id:        p.user_id,
-        game_id:        p.game_id,
-        game_type:      'match',
-        host_user_id:   meta.hostUserId ?? null,
-        event_ended_at: computeEventEndedAt(meta),
-        stars: null, comment: null, popup_shown_at: null, rated_at: null,
-      });
-    }
-    // Host — ignoreDuplicates handles the case where host is also a confirmed player
-    for (const g of matchGames) {
-      const hostId = g.hostUserId ?? null;
-      if (!hostId) continue;
-      rows.push({
-        user_id:        hostId,
-        game_id:        g.gameId ?? g.id,
-        game_type:      'match',
-        host_user_id:   hostId,
-        event_ended_at: computeEventEndedAt(g),
-        stars: null, comment: null, popup_shown_at: null, rated_at: null,
-      });
-    }
-  }
-
-  if (!rows.length) return;
   const { error } = await supabase
     .from(TABLE)
     .upsert(rows, { onConflict: 'user_id,game_id', ignoreDuplicates: true });
