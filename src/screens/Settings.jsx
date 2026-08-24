@@ -25,7 +25,13 @@ async function fetchAvailableCities() {
 
 const TERMS_TEXT = `Algrass es una plataforma de reservas deportivas que conecta jugadores con organizadores de partidos y campos de fútbol. Al suscribirte aceptas usar la plataforma de forma responsable y confirmas ser mayor de 18 años. Las reservas están sujetas a disponibilidad y los pagos son procesados de forma segura. Algrass no se responsabiliza por lesiones ocurridas durante los partidos. Los organizadores son responsables de las condiciones de sus instalaciones. Nos reservamos el derecho de suspender cuentas que incumplan estas normas.`;
 
-const PRIVACY_TEXT = `Recopilamos únicamente los datos necesarios para gestionar tu cuenta y reservas: nombre, email, y datos de contacto. No compartimos tu información personal con terceros salvo los organizadores de los partidos que reserves. Tus datos de pago son procesados por proveedores seguros certificados y nunca los almacenamos directamente. Puedes solicitar la eliminación de tu cuenta y datos en cualquier momento contactándonos. Cumplimos con la Ley de Protección de Datos Personales del Perú (Ley 29733).`;
+const PRIVACY_TEXT = `En AlGrass tratamos los datos necesarios para crear y gestionar tu cuenta, organizar partidos y reservas, gestionar pagos, invitaciones, referidos, promociones y demás funcionalidades de la Plataforma.
+
+Tus datos pueden ser tratados por proveedores tecnológicos y de pago necesarios para prestar nuestros servicios y, cuando corresponda, compartidos con complejos deportivos o autoridades conforme a la ley. AlGrass no vende ni alquila tus datos personales y no almacena los datos completos de tus tarjetas.
+
+Puedes ejercer tus derechos de acceso, rectificación, cancelación y oposición (ARCO), así como solicitar la eliminación de tu cuenta, escribiendo a legal@algrass.com.
+
+AlGrass S.A.C. trata tus datos conforme a la Ley N.º 29733, Ley de Protección de Datos Personales, y su normativa aplicable.`;
 
 const FAQ_GROUPS = [
   {
@@ -241,7 +247,7 @@ function LegalModal({ type, onClose }) {
           </button>
         </div>
         <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '16px 20px 28px' }}>
-          <p style={{ fontSize: 14.5, color: TEXT, lineHeight: 1.65, margin: 0 }}>{body}</p>
+          <p style={{ fontSize: 14.5, color: TEXT, lineHeight: 1.65, margin: 0, whiteSpace: 'pre-line' }}>{body}</p>
           <button
             onClick={() => { onClose(); navigate(isTerms ? '/terms' : '/privacy'); }}
             style={{ display: 'block', marginTop: 20, padding: 0, background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
