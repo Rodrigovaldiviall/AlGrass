@@ -778,7 +778,7 @@ function PlayerModal({ player, onClose, isHost = false }) {
 }
 
 // ── ModifySheet
-function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, onReserveSlots, reserveSlotsDisabled = false, releaseHours = 48, reservedUsed = 0, reservedTotal = 0, slotCanceled = false, windowClosed = false, noSlots = false }) {
+function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, onReserveSlots, reserveSlotsDisabled = false, releaseHours = 48, reservedUsed = 0, reservedTotal = 0, slotCanceled = false, windowClosed = false, noSlots = false, within24h = false }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
@@ -856,7 +856,7 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
         ) : (
           <button onClick={onCancel} style={{ ...rowStyle, marginBottom: 0 }}>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 15, fontWeight: 600, color: DANGER }}>Cancelar reserva</div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: DANGER }}>{within24h ? 'Gestionar asistencia' : 'Cancelar reserva'}</div>
             </div>
             {chevron(DANGER + '80')}
           </button>
@@ -953,7 +953,7 @@ function HostCancelInvitedSheet({ gameId, invitedPlayers, unitPrice = 0, onClose
 }
 
 // ── CancelSheet
-function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, guestId, guestSelfName, payerName, payerCode, onClose, onDone, titularAlreadyCanceled = false, guestSubBreakdown = null, slotAmounts = null, selfUserId = null }) {
+function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, guestId, guestSelfName, payerName, payerCode, onClose, onDone, titularAlreadyCanceled = false, guestSubBreakdown = null, slotAmounts = null, selfUserId = null, within24h = false }) {
   const [open, setOpen]           = useState(false);
   const [step, setStep]           = useState('select');
   const [titularChecked, setTitularChecked]   = useState(false);
@@ -996,9 +996,12 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
   const { rootRef, scrollRef, dragY, dragging } = useSheetPull({ onClose: dismiss });
 
   function confirm() {
-    setCapturedRefund(totalRefund);
     setStep('processing');
     setTimeout(async () => {
+      // Verdad final = suma de los refundAmount REALES devueltos por el backend
+      // (no la estimación `totalRefund` del preview). Solo se suman operaciones que se
+      // EJECUTARON (ni skipped ni error).
+      let realRefundAmount = 0;
       if (isGuest) {
         removePlayers(gameId, [...checkedGuests, ...(effectiveSelfChecked ? [guestId] : [])]);
         if (effectiveSelfChecked) {
@@ -1020,12 +1023,14 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
           if (_sr?.[0]?.has_reservation) {
             await supabase.rpc('reserve_slots', { p_game_id: gameId, p_reserved_slots_total: 0 });
           }
-          const { skipped: s1, error: e1 } = await cancelGamePlayer(gameId);
+          const { skipped: s1, error: e1, refundAmount: rA1 } = await cancelGamePlayer(gameId);
           if (!s1 && e1) console.error('[cancel] guest self failed:', e1);
+          if (!s1 && !e1) realRefundAmount += (rA1 || 0);
         }
         if (checkedGuests.size > 0) {
-          const { skipped: s2, error: e2 } = await cancelGuestPlayers(gameId, [...checkedGuests]);
+          const { skipped: s2, error: e2, refundAmount: rA2 } = await cancelGuestPlayers(gameId, [...checkedGuests]);
           if (!s2 && e2) console.error('[cancel] guest sub-players failed:', e2);
+          if (!s2 && !e2) realRefundAmount += (rA2 || 0);
         }
       } else {
         if (checkedGuests.size > 0) removePlayers(gameId, [...checkedGuests]);
@@ -1051,15 +1056,24 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
           }
           // titular first so cascade detection in cancelGuestPlayers sees titular as canceled
           try {
-            const { skipped, error } = await cancelGamePlayer(gameId, { skipNotification: checkedGuests.size > 0 });
+            const { skipped, error, refundAmount: rAT } = await cancelGamePlayer(gameId, { skipNotification: checkedGuests.size > 0 });
             if (skipped || error) { if (error) console.error('[cancel] titular failed:', error); }
-            else if (checkedGuests.size > 0) await cancelGuestPlayers(gameId, [...checkedGuests], { selfAlsoCanceled: true });
+            else {
+              realRefundAmount += (rAT || 0);
+              if (checkedGuests.size > 0) {
+                const { skipped: sG, error: eG, refundAmount: rAG } = await cancelGuestPlayers(gameId, [...checkedGuests], { selfAlsoCanceled: true });
+                if (!sG && eG) console.error('[cancel] titular guest chain failed:', eG);
+                if (!sG && !eG) realRefundAmount += (rAG || 0);
+              }
+            }
           } catch (e) { console.error('[cancel] chain threw:', e); }
         } else if (checkedGuests.size > 0) {
-          const { skipped, error } = await cancelGuestPlayers(gameId, [...checkedGuests]);
+          const { skipped, error, refundAmount: rAG2 } = await cancelGuestPlayers(gameId, [...checkedGuests]);
           if (!skipped && error) console.error('[cancel] partial guest cancel failed:', error);
+          if (!skipped && !error) realRefundAmount += (rAG2 || 0);
         }
       }
+      setCapturedRefund(realRefundAmount);
       setStep('done');
       setTimeout(() => onDone({ titularCanceled: !isGuest && effectiveTitularChecked }), 1600);
     }, 1800);
@@ -1084,12 +1098,23 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
         {step === 'select' && (<>
           <div style={{ padding: '20px 16px 0', flexShrink: 0 }}>
             <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 16px' }} />
-            <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, letterSpacing: -0.2 }}>Cancelar reserva</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, letterSpacing: -0.2 }}>{within24h ? 'Gestionar asistencia' : 'Cancelar reserva'}</div>
             <div style={{ fontSize: 13, color: SUB, marginTop: 4, marginBottom: 10 }}>Selecciona</div>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '9px 12px', borderRadius: 10, background: '#F0FFF4', marginBottom: 14 }}>
-              <svg width="15" height="15" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={GREEN} strokeWidth="1.4"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={GREEN} strokeWidth="1.5" strokeLinecap="round"/></svg>
-              <span style={{ fontSize: 12.5, color: GREEN, fontWeight: 500, lineHeight: 1.45 }}>Las cancelaciones generan un crédito aplicable a tu próxima reserva.</span>
-            </div>
+            {within24h ? (
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '9px 12px', borderRadius: 10, background: '#F6F7F9', marginBottom: 14 }}>
+                <svg width="15" height="15" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={SUB} strokeWidth="1.4"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={SUB} strokeWidth="1.5" strokeLinecap="round"/></svg>
+                <span style={{ fontSize: 12.5, color: SUB, fontWeight: 500, lineHeight: 1.45 }}>
+                  <span style={{ display: 'block', fontWeight: 700, marginBottom: 4 }}>¿No podrás asistir?</span>
+                  Ya no es posible cancelar con devolución porque faltan menos de 24 horas para el partido.
+                  <span style={{ display: 'block', marginTop: 6 }}>Si tú o alguno de tus invitados no podrá asistir, te agradecemos que lo indiques para que podamos intentar completar el lugar.</span>
+                </span>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '9px 12px', borderRadius: 10, background: '#F0FFF4', marginBottom: 14 }}>
+                <svg width="15" height="15" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={GREEN} strokeWidth="1.4"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={GREEN} strokeWidth="1.5" strokeLinecap="round"/></svg>
+                <span style={{ fontSize: 12.5, color: GREEN, fontWeight: 500, lineHeight: 1.45 }}>Las cancelaciones generan un crédito aplicable a tu próxima reserva.</span>
+              </div>
+            )}
           </div>
           <div ref={scrollRef} className="no-sb" style={{ overflowY: 'auto', overscrollBehavior: 'contain', flex: 1 }}>
             {isGuest ? (
@@ -1101,12 +1126,14 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                     <span style={{ fontSize: 14.5, fontWeight: 600, color: BLUE }}>{guestSelfName} (Tú)</span>
                     {payerName && <div style={{ fontSize: 11.5, color: SUB, marginTop: 2, lineHeight: 1.3 }}>El reembolso se acreditará a {payerName}</div>}
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                    {(histSelf ?? breakdown?.unitPrice) > 0 && (
-                      <span style={{ fontSize: 13, color: SUB, textDecoration: 'line-through' }}>{fmt(histSelf ?? breakdown.unitPrice)}</span>
-                    )}
-                    <span style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>S/. 0.00</span>
-                  </div>
+                  {!within24h && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                      {(histSelf ?? breakdown?.unitPrice) > 0 && (
+                        <span style={{ fontSize: 13, color: SUB, textDecoration: 'line-through' }}>{fmt(histSelf ?? breakdown.unitPrice)}</span>
+                      )}
+                      <span style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>S/. 0.00</span>
+                    </div>
+                  )}
                 </button>
                 {/* Guest user's own guests (those they paid for) */}
                 {guestList.map(guest => {
@@ -1117,7 +1144,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 14.5, fontWeight: 600, color: TEXT }}>{guest.name}</div>
                       </div>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(guestRefundFor(guest.id))}</div>
+                      {!within24h && <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(guestRefundFor(guest.id))}</div>}
                     </button>
                   );
                 })}
@@ -1151,7 +1178,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                   <div style={{ flex: 1 }}>
                     <span style={{ fontSize: 14.5, fontWeight: 600, color: BLUE }}>{userName} (Tú)</span>
                   </div>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(titularRefund)}</div>
+                  {!within24h && <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(titularRefund)}</div>}
                 </div>
               ) : (
                 <button onClick={() => setTitularChecked(v => !v)} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, borderBottom: `1px solid ${HAIR}`, fontFamily: 'inherit', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
@@ -1159,7 +1186,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                   <div style={{ flex: 1 }}>
                     <span style={{ fontSize: 14.5, fontWeight: 600, color: BLUE }}>{userName} (Titular)</span>
                   </div>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(titularRefund)}</div>
+                  {!within24h && <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(titularRefund)}</div>}
                 </button>
               )}
               {guestList.map(guest => {
@@ -1170,7 +1197,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 14.5, fontWeight: 600, color: TEXT }}>{guest.name}</div>
                     </div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(guestRefundFor(guest.id))}</div>
+                    {!within24h && <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(guestRefundFor(guest.id))}</div>}
                   </button>
                 );
               })}
@@ -1200,12 +1227,14 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
             </>)}
           </div>
           <div style={{ padding: '12px 16px calc(12px + env(safe-area-inset-bottom))', borderTop: `1px solid ${HAIR}`, flexShrink: 0 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-              <span style={{ fontSize: 14, color: SUB }}>Total a cancelar</span>
-              <span style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{fmt(totalRefund)}</span>
-            </div>
+            {!within24h && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+                <span style={{ fontSize: 14, color: SUB }}>Total a cancelar</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{fmt(totalRefund)}</span>
+              </div>
+            )}
             <button onClick={canConfirm ? confirm : undefined} style={{ width: '100%', height: 50, borderRadius: 14, background: canConfirm ? DANGER : '#E8E8EC', color: canConfirm ? '#fff' : '#9A9AA0', border: 'none', cursor: canConfirm ? 'pointer' : 'not-allowed', fontSize: 15, fontWeight: 700, fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-              Confirmar cancelación
+              {within24h ? 'Cancelar asistencia' : 'Confirmar cancelación'}
             </button>
           </div>
         </>)}
@@ -1227,7 +1256,11 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
               <div style={{ fontSize: 14, color: SUB, textAlign: 'center', lineHeight: 1.45 }}>
                 Se generó un crédito de <strong style={{ color: GREEN }}>{fmt(capturedRefund)}</strong> en tu perfil.
               </div>
-            ) : null}
+            ) : (
+              <div style={{ fontSize: 14, color: SUB, textAlign: 'center', lineHeight: 1.45 }}>
+                Asistencia cancelada.
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1506,6 +1539,12 @@ export default function GameDetail() {
   // reservas, exista o no una R1 (activa/cancelada/expirada). Se basa en el tiempo, no en la R1.
   const releaseHours = isCaptainGold ? 24 : 48;
   const slotReservationClosed = !!gameStart && now >= new Date(gameStart.getTime() - releaseHours * 3600_000);
+  // PRESENTACIÓN de la política de 24h (solo preview; la autoridad económica al ejecutar
+  // sigue siendo match_cancellation_window/realRefundAmount). Espeja el corte estricto del
+  // backend: refundable ⇔ now < (inicio - 24h); por tanto NO reembolsable (modo "gestionar
+  // asistencia") ⇔ now >= (inicio - 24h). Reutiliza gameStart + now ya existentes; sin query
+  // ni helper nuevos. Si no hay gameStart, se asume reembolsable (flujo actual intacto).
+  const cancelWithin24h = !!gameStart && now >= new Date(gameStart.getTime() - 24 * 3600_000);
   // Attendance window: [game_start - 15min, game_end)
   const attendanceOpen = infoMode && !!gameStart && !!gameEnd
     && now >= new Date(gameStart.getTime() - 15 * 60_000)
@@ -2241,6 +2280,7 @@ export default function GameDetail() {
           onReserveSlots={openReserveSlots}
           reservedUsed={slotRes?.reserved_slots_used ?? 0}
           reservedTotal={slotRes?.reserved_slots_total ?? 0}
+          within24h={cancelWithin24h}
         />
       )}
       {reserveSlotsOpen && slotRes && (
@@ -2312,6 +2352,7 @@ export default function GameDetail() {
           guestSubBreakdown={g.guestSubBreakdown}
           slotAmounts={myAmounts}
           selfUserId={user?.id}
+          within24h={cancelWithin24h}
           onClose={() => setCancelOpen(false)}
           onDone={handleCancelDone}
         />

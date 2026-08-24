@@ -344,6 +344,23 @@ export async function cancelGamePlayer(gameId, { skipNotification = false } = {}
   }
   const row = rows[0];
 
+  // Autoridad ECONÓMICA (regla 24h) desde el servidor, ANTES del claim: si no podemos
+  // determinar la política de devolución, abortamos SIN cancelar (no dejamos al jugador
+  // en un estado parcialmente procesado). Nunca se decide con Date.now() ni con un boolean
+  // enviado por la UI.
+  const { data: windowData, error: windowErr } = await supabase
+    .rpc('match_cancellation_window', { p_game_id: gameId });
+  if (windowErr) {
+    console.error('[cancelGamePlayer] match_cancellation_window failed:', windowErr);
+    return { error: windowErr };
+  }
+  const win = Array.isArray(windowData) ? windowData[0] : windowData;
+  if (!win || typeof win.refundable !== 'boolean') {
+    console.error('[cancelGamePlayer] match_cancellation_window returned no verdict');
+    return { error: new Error('CANCELLATION_WINDOW_UNAVAILABLE') };
+  }
+  const refundable = win.refundable;
+
   // Atomic claim: only the call that flips confirmed→canceled proceeds to refund.
   const { data: claimed, error: cancelErr } = await supabase
     .from('game_players')
@@ -357,24 +374,28 @@ export async function cancelGamePlayer(gameId, { skipNotification = false } = {}
     return { skipped: true };
   }
   const claimedRow = claimed[0];
+  // historicalAmount = snapshot histórico de la plaza (NUNCA se modifica; game_players.amount
+  // se conserva). refundAmount = dinero realmente devuelto = 0 si la regla 24h no reembolsa.
+  const historicalAmount = Number(claimedRow.amount) || 0;
+  const refundAmount     = refundable ? historicalAmount : 0;
   const refundTo   = claimedRow.payer_id; // refund always goes to the payer, not the canceler
   await setMatchPublishedIfEmpty(gameId);
   notifyWaitlistUsers(gameId);
 
-  if (claimedRow.amount > 0) {
+  if (refundAmount > 0) {
     const { error: ledgerErr } = await supabase.from('reservations').insert({
       game_id:         gameId,
       user_id:         refundTo,
       canceled_by:     session.user.id,
       status:          'refund',
-      unit_price:      claimedRow.amount,
-      subtotal_amount: claimedRow.amount,
+      unit_price:      refundAmount,
+      subtotal_amount: refundAmount,
       players_count:   1,
       guest_total:     0,
       canceled_at:     new Date().toISOString(),
     });
     if (ledgerErr) console.error('[cancelGamePlayer] refund ledger insert failed:', ledgerErr);
-    await applyRefund(refundTo, claimedRow.amount);
+    await applyRefund(refundTo, refundAmount);
 
     if (refundTo === session.user.id) {
       // Self-paid slot: credit goes back to the canceler.
@@ -435,7 +456,8 @@ export async function cancelGamePlayer(gameId, { skipNotification = false } = {}
     }
   }
 
-  return { data: row };
+  // refundable = veredicto temporal (regla 24h); refundAmount = dinero realmente devuelto.
+  return { data: row, refundable, refundAmount };
 }
 
 // Cancels confirmed guest slots owned by current user (payer_id = session.user.id),
@@ -444,6 +466,22 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
   if (!supabase || !guestUserIds?.length) return { skipped: true };
   const session = await getSession();
   if (!session?.user?.id) return { skipped: true };
+
+  // Autoridad ECONÓMICA (regla 24h) desde el servidor, ANTES del claim: si no podemos
+  // determinar la política de devolución, abortamos SIN cancelar ningún invitado. Misma
+  // fuente temporal única que cancelGamePlayer; nunca Date.now() ni un boolean de la UI.
+  const { data: windowData, error: windowErr } = await supabase
+    .rpc('match_cancellation_window', { p_game_id: gameId });
+  if (windowErr) {
+    console.error('[cancelGuestPlayers] match_cancellation_window failed:', windowErr);
+    return { error: windowErr };
+  }
+  const win = Array.isArray(windowData) ? windowData[0] : windowData;
+  if (!win || typeof win.refundable !== 'boolean') {
+    console.error('[cancelGuestPlayers] match_cancellation_window returned no verdict');
+    return { error: new Error('CANCELLATION_WINDOW_UNAVAILABLE') };
+  }
+  const refundable = win.refundable;
 
   // Cancelación + liberación de R1 propia ATÓMICAS en el backend: en UNA transacción
   // cancela SOLO los guests que ESTE payer paga (payer_id = auth.uid()) y están
@@ -463,21 +501,24 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
   await setMatchPublishedIfEmpty(gameId);
   notifyWaitlistUsers(gameId, claimed.length);
 
-  const refundTotal = claimed.reduce((s, r) => s + (r.amount || 0), 0);
-  if (refundTotal > 0) {
+  // historicalRefundTotal = suma histórica de game_players.amount (snapshots; NUNCA se
+  // modifican). refundAmount = dinero realmente devuelto = 0 si la regla 24h no reembolsa.
+  const historicalRefundTotal = claimed.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const refundAmount = refundable ? historicalRefundTotal : 0;
+  if (refundAmount > 0) {
     const { error: ledgerErr } = await supabase.from('reservations').insert({
       game_id:         gameId,
       user_id:         session.user.id,
       canceled_by:     session.user.id,
       status:          'refund',
       unit_price:      claimed[0]?.amount ?? 0,
-      subtotal_amount: refundTotal,
+      subtotal_amount: refundAmount,
       players_count:   claimed.length,
-      guest_total:     refundTotal,
+      guest_total:     refundAmount,
       canceled_at:     new Date().toISOString(),
     });
     if (ledgerErr) console.error('[cancelGuestPlayers] refund ledger insert failed:', ledgerErr);
-    await applyRefund(session.user.id, refundTotal);
+    await applyRefund(session.user.id, refundAmount);
   }
 
   // Fetch payer + all guest names in one query for all notification types
@@ -491,7 +532,7 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
       const byId = Object.fromEntries((users ?? []).map(u => [u.id, u.full_name]));
       const payerFirst = (byId[session.user.id] ?? '').split(' ')[0] || 'El titular';
 
-      if (refundTotal > 0) {
+      if (refundAmount > 0) {
         const titularTemplate = selfAlsoCanceled
           ? 'reservation_cancelled_self_and_guests'
           : 'reservation_cancelled_guests_credit';
@@ -545,7 +586,8 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
       });
     });
 
-  return { data: claimed };
+  // refundable = veredicto temporal (regla 24h); refundAmount = dinero realmente devuelto.
+  return { data: claimed, refundable, refundAmount };
 }
 
 // Returns the set of game_ids from the given list that the current user has
