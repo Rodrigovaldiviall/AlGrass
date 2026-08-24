@@ -135,7 +135,7 @@ function TopBar({ title, onCancel, rightNode }) {
 
 // ── PlayerRow ──────────────────────────────────────────────────────────────
 
-function PlayerRow({ p, checked, onToggle }) {
+function PlayerRow({ p, checked, onToggle, rostered = false }) {
   return (
     <button
       onClick={onToggle}
@@ -148,7 +148,8 @@ function PlayerRow({ p, checked, onToggle }) {
       <span style={{
         width: 24, height: 24, borderRadius: 7,
         border: `1.6px solid ${checked ? ORANGE : '#C7C7CC'}`,
-        background: checked ? ORANGE : '#fff',
+        // Jugador ya inscrito (no seleccionable) → interior gris para distinguirlo.
+        background: checked ? ORANGE : (rostered ? '#E5E5EA' : '#fff'),
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
         flexShrink: 0,
       }}>
@@ -321,7 +322,7 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
         )}
 
         {q && !noMatchAtAll && listBelow.map(p => (
-          <PlayerRow key={p.id} p={p} checked={false} onToggle={() => toggle(p.id)} />
+          <PlayerRow key={p.id} p={p} checked={false} rostered={rosterPlayerIds.has(p.id)} onToggle={() => toggle(p.id)} />
         ))}
 
         {!q && hasAnyData && listBelow.length > 0 && (
@@ -333,7 +334,7 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
               Favoritos
             </div>
             {listBelow.map(p => (
-              <PlayerRow key={p.id} p={p} checked={false} onToggle={() => toggle(p.id)} />
+              <PlayerRow key={p.id} p={p} checked={false} rostered={rosterPlayerIds.has(p.id)} onToggle={() => toggle(p.id)} />
             ))}
           </>
         )}
@@ -1072,7 +1073,7 @@ export default function ConfirmReservation() {
               recipient_user_id: guest.id,
               source_type: 'venue', delivery_type: 'automatic', category: 'invitation',
               template_key: 'invited_by_player',
-              custom_text: `${firstName(authUser?.name)} te invitó a jugar. Revisa los detalles.`,
+              custom_text: 'AlGrass te invitó a jugar. Revisa los detalles.',
               game_id: gameId, venue_id: game?.venueId ?? null,
               created_by: authUser?.id,
               sent_at: new Date().toISOString(),

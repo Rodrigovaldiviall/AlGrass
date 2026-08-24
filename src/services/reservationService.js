@@ -695,9 +695,7 @@ export async function cancelInvitedPlayers(gameId, invitedUserIds, unitPrice = 0
   // Mismo patrón/plantilla que cancelGuestPlayers: 'guest_invitation_cancelled_by_owner'.
   // `rows` = filas confirmadas invitadas por este host al momento del select; en una
   // re-cancelación quedan 0 (ya no están 'confirmed') → return skip previo, sin notificar.
-  const { data: hostRow } = await supabase
-    .from('users_public').select('full_name').eq('id', session.user.id).maybeSingle();
-  const hostFirst = (hostRow?.full_name ?? '').split(' ')[0] || 'El titular';
+  // De cara al jugador la invitación gratuita se presenta como de "AlGrass" (no el host).
   rows.forEach(r => {
     if (!r.user_id) return;
     supabase.from('notifications').insert({
@@ -706,7 +704,7 @@ export async function cancelInvitedPlayers(gameId, invitedUserIds, unitPrice = 0
       delivery_type:     'automatic',
       category:          'invitation',
       template_key:      'guest_invitation_cancelled_by_owner',
-      custom_text:       `${hostFirst} canceló tu invitación.`,
+      custom_text:       'AlGrass canceló tu invitación.',
       game_id:           gameId,
       reservation_id:    r.reservation_id ?? null,
       created_by:        session.user.id,

@@ -760,7 +760,7 @@ function PlayerModal({ player, onClose, isHost = false }) {
 }
 
 // ── ModifySheet
-function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, onReserveSlots, reserveSlotsDisabled = false, reserveSlotsHint = 'Debes estar inscrito', reservedUsed = 0, reservedTotal = 0 }) {
+function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, onReserveSlots, reserveSlotsDisabled = false, releaseHours = 48, reservedUsed = 0, reservedTotal = 0 }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
@@ -807,9 +807,7 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
             style={{ ...rowStyle, cursor: reserveSlotsDisabled ? 'default' : 'pointer', opacity: reserveSlotsDisabled ? 0.45 : 1 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
               <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Reservar cupos</span>
-              {reserveSlotsDisabled && (
-                <span style={{ fontSize: 12.5, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap' }}>- {reserveSlotsHint}</span>
-              )}
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: SUB, whiteSpace: 'nowrap' }}>· Disponible hasta {releaseHours} h antes</span>
             </div>
             <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
               {reservedTotal > 0 && (
@@ -1661,6 +1659,13 @@ export default function GameDetail() {
     return sbRoster.find(p => p.user_id === user.id)?.payer_id ?? null;
   }, [isGuest, sbRoster, user?.id]);
 
+  // Invitación GRATUITA (host/Admin, reservation_type='invited'): de cara al jugador se
+  // presenta como de "AlGrass", no como el payer real. Solo presentación; datos intactos.
+  const isFreeInvite = useMemo(() => {
+    if (!isGuest || !user?.id) return false;
+    return sbRoster.find(p => p.user_id === user.id)?.reservation_type === 'invited';
+  }, [isGuest, sbRoster, user?.id]);
+
   // live breakdown derived from Supabase — overrides stale/null location.state price
   const liveUnitPrice  = sbGame?.price ?? g.paymentBreakdown?.unitPrice ?? g.priceNumber;
   const liveBreakdown  = liveUnitPrice
@@ -1826,19 +1831,35 @@ export default function GameDetail() {
                     </>
                   )}
                 </span>
-              ) : g.paidBy ? (
-                <button onClick={() => setSelectedPlayer({ name: g.paidBy, user_id: payerUserId })} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 14px', borderRadius: 999, background: '#F0FFF4', border: 'none', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: GREEN }}>Invitado por</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: BLUE }}>{g.paidByCode ? `@${g.paidByCode}` : g.paidBy}</span>
-                  {guestOwnGuests.length > 0 && (
-                    <>
-                      <span style={{ fontSize: 12, color: TEXT, opacity: 0.35, marginLeft: 2 }}>·</span>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: TEXT }}>{guestOwnGuests.length}</span>
-                      <span style={{ fontSize: 12, color: TEXT }}>{guestOwnGuests.length === 1 ? 'invitado tuyo activo' : 'invitados tuyos activos'}</span>
-                    </>
-                  )}
-                </button>
-              ) : (
+              ) : g.paidBy ? (() => {
+                // Contenido compartido; solo cambia el "invitador" visible y si es clicable.
+                const guestSuffix = guestOwnGuests.length > 0 && (
+                  <>
+                    <span style={{ fontSize: 12, color: TEXT, opacity: 0.35, marginLeft: 2 }}>·</span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: TEXT }}>{guestOwnGuests.length}</span>
+                    <span style={{ fontSize: 12, color: TEXT }}>{guestOwnGuests.length === 1 ? 'invitado tuyo activo' : 'invitados tuyos activos'}</span>
+                  </>
+                );
+                const box = { display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 14px', borderRadius: 999, background: '#F0FFF4' };
+                // Invitación gratuita → "AlGrass", NO clicable, sin @code ni PlayerModal.
+                if (isFreeInvite) {
+                  return (
+                    <span style={box}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: GREEN }}>Invitado por</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: BLUE }}>AlGrass</span>
+                      {guestSuffix}
+                    </span>
+                  );
+                }
+                // Invitado PAGADO → comportamiento actual: clicable, abre PlayerModal del payer.
+                return (
+                  <button onClick={() => setSelectedPlayer({ name: g.paidBy, user_id: payerUserId })} style={{ ...box, border: 'none', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: GREEN }}>Invitado por</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: BLUE }}>{g.paidByCode ? `@${g.paidByCode}` : g.paidBy}</span>
+                    {guestSuffix}
+                  </button>
+                );
+              })() : (
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 14px', borderRadius: 999, background: '#F0FFF4', fontSize: 13, fontWeight: 500, color: GREEN }}>
                   <span style={{ fontWeight: 600 }}>Inscrito</span>
                   {guestsInRoster.length > 0 && (
@@ -2091,7 +2112,7 @@ export default function GameDetail() {
           invitedCount={invitedByHost.length}
           showReserveSlots={!isHost && (isCaptain || isCaptainGold)}
           reserveSlotsDisabled={mySlotCanceled || slotReservationClosed}
-          reserveSlotsHint={slotReservationClosed && !mySlotCanceled ? 'Cupos liberados' : 'Debes estar inscrito'}
+          releaseHours={releaseHours}
           onReserveSlots={openReserveSlots}
           reservedUsed={slotRes?.reserved_slots_used ?? 0}
           reservedTotal={slotRes?.reserved_slots_total ?? 0}

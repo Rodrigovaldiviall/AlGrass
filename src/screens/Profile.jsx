@@ -265,6 +265,8 @@ function deriveMatchCards(myPlayerRows, payerNames, userId) {
         guestId:      userId,
         paidBy:       payer?.name || 'Usuario',
         paidByCode:   payer?.code || null,
+        // Invitación gratuita (host/Admin) → presentar como "AlGrass".
+        invited:      state.guestRow?.reservation_type === 'invited',
         activeGuestCount: state.activeGuestCount,
         price:        null,
       });
@@ -1819,6 +1821,7 @@ function GameRow({ game, onPress, muted = false, userId = null, highlighted = fa
             <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap', minWidth: PM, textAlign: 'center' }}>
               {game.activeGuestCount > 0
                 ? `${game.activeGuestCount} ${game.activeGuestCount === 1 ? 'invitado' : 'invitados'}`
+                : game.invited ? 'por AlGrass'
                 : `por ${abbreviateName(game.paidBy)}`}
             </div>
           </div>
@@ -2339,7 +2342,7 @@ export default function Profile() {
       supabase
         .from('game_players')
         .select(`
-          game_id, user_id, payer_id, status, amount,
+          game_id, user_id, payer_id, status, amount, reservation_type,
           games:game_id ( date_key, time, format, total_spots, current_players, duration_min, host_user_id, type, game_amenities:amenities, fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, district, cover_image_path, cover_updated_at, venue_amenities:amenities ) ) )
         `)
         .or(`user_id.eq.${uid},payer_id.eq.${uid}`)

@@ -564,6 +564,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
         <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap', minWidth: PILL_MIN, textAlign: 'center' }}>
           {guestInfo.activeGuestCount > 0
             ? `${guestInfo.activeGuestCount} ${guestInfo.activeGuestCount === 1 ? 'invitado' : 'invitados'}`
+            : guestInfo.invited ? 'por AlGrass'
             : guestInfo.paidBy ? `por ${abbreviateName(guestInfo.paidBy)}` : null}
         </div>
       </div>
@@ -1031,7 +1032,7 @@ export default function PickupGames() {
     if (!supabase || !user?.id) return;
     supabase
       .from('game_players')
-      .select('game_id, user_id, payer_id, status')
+      .select('game_id, user_id, payer_id, status, reservation_type')
       .or(`user_id.eq.${user.id},payer_id.eq.${user.id}`)
       .then(async ({ data, error }) => {
         if (error) return;
@@ -1203,6 +1204,8 @@ export default function PickupGames() {
         paidBy:         payer.name || 'Usuario',
         payerCode:      payer.code || null,
         guestId:        state.guestRow?.user_id ?? null,
+        // Invitación gratuita (host/Admin) → presentar como "AlGrass".
+        isFreeInvite:   state.guestRow?.reservation_type === 'invited',
         isGuestCanceled: state.canceledRow ? state.canceledRow.payer_id !== user.id : false,
       });
     });
@@ -1432,7 +1435,7 @@ export default function PickupGames() {
         last={last}
         booked={myPlayerRowsReady && !isHost && st?.isBooked}
         inWaitlist={waitlistReady && !isHost && waitlistGameIds.has(g.id)}
-        guestInfo={myPlayerRowsReady && !isHost && st?.isGuestConfirmed ? { paidBy: st.paidBy, payerCode: st.payerCode, guestId: st.guestId, activeGuestCount: st.activeGuestCount } : undefined}
+        guestInfo={myPlayerRowsReady && !isHost && st?.isGuestConfirmed ? { paidBy: st.paidBy, payerCode: st.payerCode, guestId: st.guestId, activeGuestCount: st.activeGuestCount, invited: st.isFreeInvite } : undefined}
         canceledCount={myPlayerRowsReady && !isHost && st?.relationship === 'canceled-with-guests' ? st.activeGuestCount : undefined}
         activeGuestCount={myPlayerRowsReady ? (st?.activeGuestCount ?? 0) : 0}
         liveOpenSpots={g.openSpots}
