@@ -15,6 +15,7 @@ import { markWaitlistReserved } from '../services/waitlistService';
 import { materializeReservation } from '../services/materializeReservation';
 import { createOrder, failOrder, confirmOrder } from '../services/orderService';
 import { charge } from '../services/paymentAdapter';
+import { uuidv4 } from '../lib/uuid';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import { getAvatarUrl } from '../utils/avatar';
 import { gameStartDate } from '../utils/deriveGameState';
@@ -438,7 +439,15 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPreCharge, o
     if (!canPay || paying !== 'idle') return;
     setPaying('loading');
     // HOLD justo antes del cobro (main externo). addGuests/invited → {skip:true} (sin Order).
-    const pre = await onPreCharge?.(activeTab);
+    // Guarda: una excepción inesperada de onPreCharge NO debe dejar el sheet en 'loading'.
+    let pre;
+    try {
+      pre = await onPreCharge?.(activeTab);
+    } catch (e) {
+      console.error('[pay] onPreCharge threw:', e);
+      setPaying('idle');
+      return;
+    }
     if (pre?.error) {
       // create_order abortó (NO_CAPACITY, etc.): el padre ya mostró el overlay; cerrar sheet.
       setPaying('idle');
@@ -451,13 +460,19 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPreCharge, o
       setPaying('confirming');
       setTimeout(async () => {
         // Seam de pago: paymentAdapter (hoy Math.random). Mañana Culqi sin tocar este flujo.
-        const { approved, paymentProof } = await charge({ amount, currency, paymentMethod: activeTab });
-        if (approved) {
-          setOpen(false);
-          setTimeout(() => { setPaying('idle'); onPaid?.(activeTab, paymentProof, orderId); }, 260);
-        } else {
-          onRejected?.(orderId);
-          setPaying('rejected');
+        // Guarda: una excepción inesperada de charge NO debe dejar el sheet en 'confirming'.
+        try {
+          const { approved, paymentProof } = await charge({ amount, currency, paymentMethod: activeTab });
+          if (approved) {
+            setOpen(false);
+            setTimeout(() => { setPaying('idle'); onPaid?.(activeTab, paymentProof, orderId); }, 260);
+          } else {
+            onRejected?.(orderId);
+            setPaying('rejected');
+          }
+        } catch (e) {
+          console.error('[pay] charge threw:', e);
+          setPaying('idle');
         }
       }, 2200);
     }, 1400);
@@ -965,7 +980,7 @@ export default function ConfirmReservation() {
   // create_order es el ÚNICO responsable del HOLD.
   async function handlePreCharge(method) {
     if (addGuestsMode || invitedMode) return { skip: true };
-    const idempotencyKey = crypto.randomUUID();          // nueva key por intento (dedup en create_order)
+    const idempotencyKey = uuidv4();          // nueva key por intento (dedup en create_order)
     const claimComposition = isRental
       ? { titular: true }
       : { titular: true, guests, reserved_slots: reservedSlots };

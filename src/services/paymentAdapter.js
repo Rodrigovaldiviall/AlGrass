@@ -12,6 +12,8 @@
 // Culqi.js), sin cambiar la firma: el intent sumará `token` y paymentProof se
 // rellenará con el cargo real. El checkout no cambia.
 
+import { uuidv4 } from '../lib/uuid';
+
 // charge(intent): intenta el cobro. Async siempre (Culqi es I/O de red), aunque el
 // sim resuelva de inmediato. Rechazo = valor normal (approved:false), no excepción;
 // las excepciones quedan para fallos de transporte/gateway (hoy el sim no produce).
@@ -22,7 +24,7 @@ export async function charge({ amount, currency, paymentMethod }) {
     approved,
     // Comprobante opaco del gateway; el checkout lo reenvía tal cual a confirm_order.
     paymentProof: approved
-      ? { provider: 'simulated', reference: crypto.randomUUID(), capturedAt: new Date().toISOString() }
+      ? { provider: 'simulated', reference: uuidv4(), capturedAt: new Date().toISOString() }
       : null,
   };
 }

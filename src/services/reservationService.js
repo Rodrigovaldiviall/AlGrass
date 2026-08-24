@@ -445,30 +445,19 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
   const session = await getSession();
   if (!session?.user?.id) return { skipped: true };
 
-  const { data: rows, error: findErr } = await supabase
-    .from('game_players')
-    .select('id, user_id, reservation_id, amount')
-    .eq('game_id', gameId)
-    .in('user_id', guestUserIds)
-    .eq('payer_id', session.user.id)
-    .eq('status', 'confirmed');
-
-  if (findErr || !rows?.length) {
-    console.warn('[cancelGuestPlayers] no confirmed guest rows — skipping');
-    return { skipped: true };
-  }
-
-  const ids = rows.map(r => r.id);
-  // Atomic per-slot claim: refund only the slots this call actually transitioned.
-  const { data: claimed, error: cancelErr } = await supabase
-    .from('game_players')
-    .update({ status: 'canceled', canceled_at: new Date().toISOString(), counts_reserved_slot: false })
-    .in('id', ids)
-    .eq('status', 'confirmed')
-    .select('id, user_id, amount');
-  if (cancelErr) { console.error('[cancelGuestPlayers] update failed:', cancelErr); return { error: cancelErr }; }
+  // Cancelación + liberación de R1 propia ATÓMICAS en el backend: en UNA transacción
+  // cancela SOLO los guests que ESTE payer paga (payer_id = auth.uid()) y están
+  // 'confirmed', y por cada uno realmente cancelado libera su R1 PROPIA
+  // (reserved_by_user_id = su user_id) vía release_slot_reservation. Devuelve las
+  // filas realmente canceladas (id, user_id, amount, reservation_id) para que el
+  // refund/wallet/notificaciones sigan EXACTAMENTE igual, aquí en JS.
+  const { data: claimed, error: cancelErr } = await supabase.rpc('cancel_guest_players', {
+    p_game_id:  gameId,
+    p_user_ids: guestUserIds,
+  });
+  if (cancelErr) { console.error('[cancelGuestPlayers] rpc failed:', cancelErr); return { error: cancelErr }; }
   if (!claimed?.length) {
-    console.warn('[cancelGuestPlayers] no slots transitioned — skipping refund');
+    console.warn('[cancelGuestPlayers] no slots transitioned — skipping');
     return { skipped: true };
   }
   await setMatchPublishedIfEmpty(gameId);
@@ -494,8 +483,8 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
   // Fetch payer + all guest names in one query for all notification types
   const guestRows = claimed.filter(r => r.user_id);
   // Un batch puede abarcar varias reservas → mapa game_player.id → reservation_id
-  // (reservation_id vive en `rows`, no en `claimed`).
-  const resByGpId = Object.fromEntries(rows.map(r => [r.id, r.reservation_id]));
+  // (reservation_id llega en `claimed` desde el RPC).
+  const resByGpId = Object.fromEntries(claimed.map(r => [r.id, r.reservation_id]));
   const allIds = [session.user.id, ...guestRows.map(r => r.user_id)];
   supabase.from('users_public').select('id, full_name').in('id', allIds)
     .then(({ data: users }) => {
@@ -556,7 +545,7 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
       });
     });
 
-  return { data: rows };
+  return { data: claimed };
 }
 
 // Returns the set of game_ids from the given list that the current user has
@@ -664,7 +653,7 @@ export async function cancelInvitedPlayers(gameId, invitedUserIds, unitPrice = 0
 
   const { data: rows, error: findErr } = await supabase
     .from('game_players')
-    .select('id, user_id')
+    .select('id, user_id, reservation_id')
     .eq('game_id', gameId)
     .in('user_id', invitedUserIds)
     .eq('invited_by_user_id', session.user.id)
@@ -701,6 +690,31 @@ export async function cancelInvitedPlayers(gameId, invitedUserIds, unitPrice = 0
     invited_by_user_id: session.user.id,
   });
   if (ledgerErr) console.error('[cancelInvitedPlayers] ledger insert failed:', ledgerErr);
+
+  // Notificar a cada invitado REALMENTE cancelado (una por jugador, no al host).
+  // Mismo patrón/plantilla que cancelGuestPlayers: 'guest_invitation_cancelled_by_owner'.
+  // `rows` = filas confirmadas invitadas por este host al momento del select; en una
+  // re-cancelación quedan 0 (ya no están 'confirmed') → return skip previo, sin notificar.
+  const { data: hostRow } = await supabase
+    .from('users_public').select('full_name').eq('id', session.user.id).maybeSingle();
+  const hostFirst = (hostRow?.full_name ?? '').split(' ')[0] || 'El titular';
+  rows.forEach(r => {
+    if (!r.user_id) return;
+    supabase.from('notifications').insert({
+      recipient_user_id: r.user_id,
+      source_type:       'venue',
+      delivery_type:     'automatic',
+      category:          'invitation',
+      template_key:      'guest_invitation_cancelled_by_owner',
+      custom_text:       `${hostFirst} canceló tu invitación.`,
+      game_id:           gameId,
+      reservation_id:    r.reservation_id ?? null,
+      created_by:        session.user.id,
+      sent_at:           new Date().toISOString(),
+    }).then(({ error }) => {
+      if (error) console.error('[notif] guest_invitation_cancelled_by_owner failed for', r.user_id, error);
+    });
+  });
 
   return { data: rows };
 }
