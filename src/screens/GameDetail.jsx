@@ -326,19 +326,30 @@ function PaymentDetail({ price, breakdown, paidBy, userName, titularCanceled = f
     </div>
   );
   const bdPromoDisc = breakdown?.promoDiscount ?? 0;
-  const activeCount = activeGuestCount !== null ? activeGuestCount : (breakdown?.guestsCount ?? 0);
-  const activeGuestsTotal = activeCount * (breakdown?.unitPrice || 0);
-  const computedTotal = titularCanceled
-    ? activeGuestsTotal
-    : Math.max(0, (breakdown?.unitPrice || 0) - bdPromoDisc + activeGuestsTotal);
+  // Detalle HISTÓRICO: si el snapshot trae total, se usan sus campos históricos
+  // DIRECTAMENTE (total/guestsCount/guestsTotal). NUNCA se reconstruye con el conteo
+  // actual del roster ni con unitPrice. La cancelación del cupo titular y los importes
+  // de los invitados que él pagó son dimensiones INDEPENDIENTES: aunque titularCanceled
+  // sea true, los invitados activos conservan su importe histórico (breakdown.guestsTotal).
+  const historical = breakdown?.total != null;
+  const activeCount = historical
+    ? (breakdown?.guestsCount ?? 0)
+    : (activeGuestCount !== null ? activeGuestCount : (breakdown?.guestsCount ?? 0));
+  const activeGuestsTotal = historical
+    ? (breakdown?.guestsTotal ?? (activeCount * (breakdown?.unitPrice ?? 0)))
+    : (activeCount * (breakdown?.unitPrice ?? 0));
+  const computedTotal = historical
+    ? breakdown.total
+    : (titularCanceled ? activeGuestsTotal : Math.max(0, (breakdown?.unitPrice ?? 0) - bdPromoDisc + activeGuestsTotal));
   const content = (
     <div style={{ padding: '12px 14px 14px', background: '#fff', display: 'flex', flexDirection: 'column', gap: 8 }}>
       {paidBy ? (
         <>
           {(() => {
-            const slotPrice = breakdown?.unitPrice || parseFloat((price || '').replace(/[^\d.]/g, '').replace(/^\./, '')) || 0;
-            const subUnitPrice = guestSubBreakdown?.unitPrice || slotPrice;
-            const ownGuestsTotal = activeCount * subUnitPrice;
+            const slotPrice = breakdown?.unitPrice ?? (parseFloat((price || '').replace(/[^\d.]/g, '').replace(/^\./, '')) || 0);
+            const subUnitPrice = guestSubBreakdown?.unitPrice ?? slotPrice;
+            // Invitados que YO pago: total histórico (Σ game_players.amount), nunca conteo × precio.
+            const ownGuestsTotal = historical ? activeGuestsTotal : (activeCount * subUnitPrice);
             return (<>
               {row(`${userName || 'Usuario'} (Titular)`, fmt(slotPrice))}
               {row(`Pagado por ${paidBy}`, `−${fmt(slotPrice)}`, false, true)}
@@ -387,7 +398,7 @@ function PaymentDetail({ price, breakdown, paidBy, userName, titularCanceled = f
 }
 
 // ── PaymentDetailSheet
-function PaymentDetailSheet({ price, breakdown, paidBy, userName, titularCanceled, activeGuestCount, guestSubBreakdown, onClose }) {
+function PaymentDetailSheet({ price, breakdown, paidBy, userName, titularCanceled, activeGuestCount, guestSubBreakdown, onClose, ready = true }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
@@ -397,7 +408,14 @@ function PaymentDetailSheet({ price, breakdown, paidBy, userName, titularCancele
       <div className="sheet-panel" ref={rootRef} onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(24px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? `translateY(${dragY}px)` : 'translateY(100%)', transition: dragging ? 'none' : 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
         <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 20px' }} />
         <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 16, textAlign: 'center', letterSpacing: -0.2 }}>Detalles del pago</div>
-        <PaymentDetail price={price} breakdown={breakdown} paidBy={paidBy} userName={userName} titularCanceled={titularCanceled} activeGuestCount={activeGuestCount} guestSubBreakdown={guestSubBreakdown} alwaysExpanded />
+        {ready ? (
+          <PaymentDetail price={price} breakdown={breakdown} paidBy={paidBy} userName={userName} titularCanceled={titularCanceled} activeGuestCount={activeGuestCount} guestSubBreakdown={guestSubBreakdown} alwaysExpanded />
+        ) : (
+          // Snapshot histórico aún cargando: NUNCA mostrar el precio actual mientras tanto.
+          <div style={{ padding: '24px 0', display: 'flex', justifyContent: 'center' }}>
+            <div style={{ width: 28, height: 28, borderRadius: '50%', border: `3px solid ${SOFT}`, borderTop: `3px solid ${BLUE}`, animation: 'spin 0.9s linear infinite' }} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -760,7 +778,7 @@ function PlayerModal({ player, onClose, isHost = false }) {
 }
 
 // ── ModifySheet
-function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, onReserveSlots, reserveSlotsDisabled = false, releaseHours = 48, reservedUsed = 0, reservedTotal = 0 }) {
+function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, onReserveSlots, reserveSlotsDisabled = false, releaseHours = 48, reservedUsed = 0, reservedTotal = 0, slotCanceled = false, windowClosed = false, noSlots = false }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
@@ -807,7 +825,15 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
             style={{ ...rowStyle, cursor: reserveSlotsDisabled ? 'default' : 'pointer', opacity: reserveSlotsDisabled ? 0.45 : 1 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
               <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Reservar cupos</span>
-              <span style={{ fontSize: 12.5, fontWeight: 600, color: SUB, whiteSpace: 'nowrap' }}>· Disponible hasta {releaseHours} h antes</span>
+              {/* Solo PRESENTACIÓN: el texto refleja el estado que GameDetail ya calcula.
+                  Cancelado → "Debes estar inscrito"; dentro de la ventana → "Hasta Xh antes
+                  del partido"; fuera de la ventana (reservable) → "Se libera Xh antes". */}
+              <span style={{ fontSize: noSlots ? 13 : 12.5, fontWeight: noSlots ? 400 : 600, color: noSlots ? '#BEBEC8' : SUB, whiteSpace: 'nowrap' }}>
+                · {slotCanceled ? 'Debes estar inscrito'
+                   : windowClosed ? `Hasta ${releaseHours} h antes del partido`
+                   : noSlots ? 'Sin cupos'
+                   : `Se libera ${releaseHours} h antes`}
+              </span>
             </div>
             <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
               {reservedTotal > 0 && (
@@ -927,7 +953,7 @@ function HostCancelInvitedSheet({ gameId, invitedPlayers, unitPrice = 0, onClose
 }
 
 // ── CancelSheet
-function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, guestId, guestSelfName, payerName, payerCode, onClose, onDone, titularAlreadyCanceled = false, guestSubBreakdown = null }) {
+function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, guestId, guestSelfName, payerName, payerCode, onClose, onDone, titularAlreadyCanceled = false, guestSubBreakdown = null, slotAmounts = null, selfUserId = null }) {
   const [open, setOpen]           = useState(false);
   const [step, setStep]           = useState('select');
   const [titularChecked, setTitularChecked]   = useState(false);
@@ -939,19 +965,24 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
   const titularDiscount = breakdown
     ? (breakdown.promoDiscount != null ? breakdown.promoDiscount : (breakdown.discount ?? 0))
     : 0;
-  const titularRefund = breakdown
-    ? Math.max(0, (breakdown.unitPrice || 0) - titularDiscount)
-    : parsedPrice;
-  const guestRefund = isGuest
+  // Importe HISTÓRICO por plaza = game_players.amount (fuente real del refund; coincide
+  // con lo que acredita el wallet). Fallback al snapshot/precio solo si el mapa aún no
+  // llegó. NUNCA se usa el precio actual del partido para importes históricos.
+  const histSelf = slotAmounts?.[selfUserId];
+  const legacyTitularRefund = breakdown ? Math.max(0, (breakdown.unitPrice || 0) - titularDiscount) : parsedPrice;
+  const legacyGuestRefund = isGuest
     ? (guestSubBreakdown?.unitPrice || breakdown?.unitPrice || parsedPrice)
     : (breakdown?.unitPrice || parsedPrice);
+  const titularRefund = histSelf != null ? histSelf : legacyTitularRefund;
+  const guestRefundFor = (id) => { const a = slotAmounts?.[id]; return a != null ? a : legacyGuestRefund; };
   const isSimple = !isGuest && !titularAlreadyCanceled && guestList.length === 0;
   const isGuestSimple = isGuest && guestList.length === 0;
   const effectiveTitularChecked = isSimple || titularChecked;
   const effectiveSelfChecked = isGuestSimple || selfChecked;
+  const checkedGuestsSum = [...checkedGuests].reduce((s, id) => s + guestRefundFor(id), 0);
   const totalRefund = isGuest
-    ? checkedGuests.size * guestRefund
-    : (effectiveTitularChecked ? titularRefund : 0) + checkedGuests.size * guestRefund;
+    ? checkedGuestsSum
+    : (effectiveTitularChecked ? titularRefund : 0) + checkedGuestsSum;
   const canConfirm = isGuest ? (effectiveSelfChecked || checkedGuests.size > 0) : totalRefund > 0;
   const fmt = n => `S/. ${Number(n).toFixed(2)}`;
 
@@ -1071,8 +1102,8 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                     {payerName && <div style={{ fontSize: 11.5, color: SUB, marginTop: 2, lineHeight: 1.3 }}>El reembolso se acreditará a {payerName}</div>}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                    {breakdown?.unitPrice > 0 && (
-                      <span style={{ fontSize: 13, color: SUB, textDecoration: 'line-through' }}>{fmt(breakdown.unitPrice)}</span>
+                    {(histSelf ?? breakdown?.unitPrice) > 0 && (
+                      <span style={{ fontSize: 13, color: SUB, textDecoration: 'line-through' }}>{fmt(histSelf ?? breakdown.unitPrice)}</span>
                     )}
                     <span style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>S/. 0.00</span>
                   </div>
@@ -1086,7 +1117,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 14.5, fontWeight: 600, color: TEXT }}>{guest.name}</div>
                       </div>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(guestRefund)}</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(guestRefundFor(guest.id))}</div>
                     </button>
                   );
                 })}
@@ -1107,8 +1138,9 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
               </>
             ) : (<>
               {titularAlreadyCanceled ? (
+                // Plaza titular ya cancelada: NO seleccionable (sin checkbox/control), sin
+                // importe, "Cancelado". No entra en totalRefund (effectiveTitularChecked=false).
                 <div style={{ width: '100%', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: `1px solid ${HAIR}` }}>
-                  <span style={{ ...checkboxStyle(false), opacity: 0.35 }} />
                   <div style={{ flex: 1 }}>
                     <span style={{ fontSize: 14.5, fontWeight: 600, color: SUB }}>{userName} (Titular)</span>
                   </div>
@@ -1138,7 +1170,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 14.5, fontWeight: 600, color: TEXT }}>{guest.name}</div>
                     </div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(guestRefund)}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(guestRefundFor(guest.id))}</div>
                   </button>
                 );
               })}
@@ -1666,11 +1698,101 @@ export default function GameDetail() {
     return sbRoster.find(p => p.user_id === user.id)?.reservation_type === 'invited';
   }, [isGuest, sbRoster, user?.id]);
 
-  // live breakdown derived from Supabase — overrides stale/null location.state price
+  // CURRENT price (games.price_per_person): SOLO para operaciones NUEVAS (agregar
+  // jugadores / checkout). NUNCA para importes históricos.
   const liveUnitPrice  = sbGame?.price ?? g.paymentBreakdown?.unitPrice ?? g.priceNumber;
-  const liveBreakdown  = liveUnitPrice
-    ? { unitPrice: liveUnitPrice, promoDiscount: g.paymentBreakdown?.promoDiscount ?? 0 }
-    : g.paymentBreakdown;
+
+  // ── HISTÓRICO ─────────────────────────────────────────────────────────────────
+  // Filas del usuario actual (su propia plaza + las que él paga). game_players.amount es
+  // la autoridad histórica por plaza (coincide con cancelGamePlayer/cancelGuestPlayers) y
+  // reservation_id identifica la COMPRA histórica exacta del titular. Consulta ACOTADA
+  // (user_id/payer_id = él) → no expone amounts ajenos (GameDetail es público). Sin N+1.
+  const [myRows, setMyRows] = useState(null); // Array<{user_id,payer_id,amount,reservation_id}> | null
+  useEffect(() => {
+    if (!supabase || !gameId || !user?.id) return;
+    supabase.from('game_players')
+      .select('user_id, payer_id, amount, reservation_id')
+      .eq('game_id', gameId).eq('status', 'confirmed')
+      .or(`user_id.eq.${user.id},payer_id.eq.${user.id}`)
+      .then(({ data }) => { setMyRows(data ?? []); });
+  }, [gameId, user?.id, fgTick]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Mapa user_id → amount (fuente histórica por plaza; lo consume CancelSheet sin cambios).
+  const myAmounts = useMemo(() => {
+    if (myRows == null) return null;
+    const map = {};
+    myRows.forEach(r => { map[r.user_id] = Number(r.amount) || 0; });
+    return map;
+  }, [myRows]);
+  // reservation_id de la plaza PROPIA del titular (user_id === self && payer_id === self).
+  const myReservationId = useMemo(() => {
+    if (!myRows || !user?.id) return null;
+    return myRows.find(r => r.user_id === user.id && r.payer_id === user.id)?.reservation_id ?? null;
+  }, [myRows, user?.id]);
+
+  // Reservation histórica del titular — LAZY: al abrir "Detalle de pago", si falta el
+  // snapshot de navegación. Se carga por su reservation_id EXACTO (NO la más reciente),
+  // así una operación posterior del mismo payer no sustituye la compra original. RLS
+  // reservations_select_own permite leer la propia.
+  const [myReservation, setMyReservation] = useState(null);
+  useEffect(() => {
+    if (!paymentDetailOpen || g.paymentBreakdown || myReservation || isGuest) return;
+    if (!supabase || !myReservationId) return;
+    supabase.from('reservations')
+      .select('unit_price, promo_discount')
+      .eq('id', myReservationId).maybeSingle()
+      .then(({ data }) => { if (data) setMyReservation(data); });
+  }, [paymentDetailOpen, g.paymentBreakdown, myReservation, isGuest, myReservationId]); // eslint-disable-line
+
+  // Breakdown HISTÓRICO para "Detalle de pago" — resumen económico del usuario actual
+  // construido con la MISMA verdad por plaza que CancelSheet (game_players via myRows):
+  //   · mi cupo   → fila user_id = self (amount = importe histórico de mi cupo)
+  //   · invitados → filas payer_id = self && user_id != self (los que YO pago), SUMANDO
+  //     su amount de TODAS mis operaciones (R1/R2/R3…). Nunca conteo/precio actual.
+  // El bruto+descuento del TITULAR (para la línea "Descuento") sale de su reservation
+  // propia (myReservation) o del snapshot de navegación — 1 sola fuente, sin queries nuevas.
+  const histBreakdown = useMemo(() => {
+    if (myRows != null && user?.id) {
+      const selfRow    = myRows.find(r => r.user_id === user.id);
+      const guestRows  = myRows.filter(r => r.payer_id === user.id && r.user_id !== user.id);
+      const iAmGuest   = !!selfRow && selfRow.payer_id !== user.id;         // mi cupo lo pagó otro
+      const mySlotAmt  = selfRow ? (Number(selfRow.amount) || 0) : 0;       // importe histórico de mi cupo
+      const guestsCount = guestRows.length;
+      const guestsTotal = guestRows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+      // Bruto + descuento del titular: solo si pagué mi cupo (no soy guest). Fuente:
+      // reservation propia o snapshot de navegación (ambos describen mi cupo). Si no hay,
+      // se usa el neto (game_players.amount) sin línea de descuento.
+      const resPromo = !iAmGuest
+        ? (myReservation
+            ? { unit_price: myReservation.unit_price, promo_discount: myReservation.promo_discount }
+            : (g.paymentBreakdown ? { unit_price: g.paymentBreakdown.unitPrice, promo_discount: g.paymentBreakdown.promoDiscount } : null))
+        : null;
+      const unitPrice     = resPromo?.unit_price != null ? (Number(resPromo.unit_price) || 0) : mySlotAmt;
+      const promoDiscount = resPromo?.promo_discount != null ? (Number(resPromo.promo_discount) || 0) : 0;
+      const mySlotNet     = iAmGuest ? 0 : Math.max(0, unitPrice - promoDiscount);
+      return {
+        unitPrice,                 // "Titular" (bruto de mi cupo)
+        promoDiscount,             // "Descuento"
+        guestsCount,               // "Invitados (N)"
+        guestsTotal,               // total de invitados (Σ game_players.amount)
+        total: mySlotNet + guestsTotal,
+        paidByOther: iAmGuest,     // mi cupo lo pagó otro → línea "Pagado por X"
+        mySlotAmount: mySlotAmt,
+      };
+    }
+    // Mientras myRows carga: snapshot de navegación si existe (no precio actual).
+    if (g.paymentBreakdown) return g.paymentBreakdown;
+    return null;
+  }, [myRows, myReservation, g.paymentBreakdown, user?.id]);
+  // Precio HISTÓRICO (string) para el prop `price` de PaymentDetail — respaldo histórico,
+  // NUNCA g.price/precio actual. Deriva de histBreakdown (total → unitPrice).
+  const histPrice = useMemo(() => {
+    const amt = histBreakdown?.total ?? histBreakdown?.unitPrice;
+    return amt != null ? `S/. ${Number(amt).toFixed(2)}` : null;
+  }, [histBreakdown]);
+  // Snapshot histórico listo para "Detalle de pago": hay breakdown propio, o ya llegó
+  // myAmounts (para resolver la plaza del usuario). Evita un render transitorio con g.price.
+  const histReady = !!g.paymentBreakdown || !!myReservation || myAmounts != null;
   // true when my own slot is canceled (Rule 3: show titular-cancelado, hide paidBy)
   const livePaidBy     = mySlotCanceled ? null : g.paidBy;
 
@@ -2010,7 +2132,7 @@ export default function GameDetail() {
         ) : (isBooked || infoMode) ? (
           /* ── Player: payment + gestionar ────────────────── */
           <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}` }}>
-            {(isPastGame || isStarted) && infoMode && <PaymentDetail price={g.price} breakdown={liveBreakdown} paidBy={livePaidBy} userName={user?.name || 'Usuario'} titularCanceled={titularCanceled || mySlotCanceled} activeGuestCount={isGuest ? guestOwnGuests.length : guestsInRoster.length} guestSubBreakdown={isGuest ? g.guestSubBreakdown : null} />}
+            {(isPastGame || isStarted) && infoMode && <PaymentDetail price={histPrice} breakdown={histBreakdown} paidBy={livePaidBy} userName={user?.name || 'Usuario'} titularCanceled={titularCanceled || mySlotCanceled} activeGuestCount={isGuest ? guestOwnGuests.length : guestsInRoster.length} guestSubBreakdown={isGuest ? g.guestSubBreakdown : null} />}
             {(isBooked || guestsInRoster.length > 0) && !isStarted && (
               <div style={{ padding: '12px 16px' }}>
                 <button
@@ -2111,8 +2233,11 @@ export default function GameDetail() {
           canAddPlayers={hostWindowOpen}
           invitedCount={invitedByHost.length}
           showReserveSlots={!isHost && (isCaptain || isCaptainGold)}
-          reserveSlotsDisabled={mySlotCanceled || slotReservationClosed}
+          reserveSlotsDisabled={mySlotCanceled || slotReservationClosed || effectiveAvailability === 0}
           releaseHours={releaseHours}
+          slotCanceled={mySlotCanceled}
+          windowClosed={slotReservationClosed}
+          noSlots={effectiveAvailability === 0}
           onReserveSlots={openReserveSlots}
           reservedUsed={slotRes?.reserved_slots_used ?? 0}
           reservedTotal={slotRes?.reserved_slots_total ?? 0}
@@ -2160,8 +2285,9 @@ export default function GameDetail() {
       )}
       {paymentDetailOpen && (
         <PaymentDetailSheet
-          price={g.price}
-          breakdown={guestCanceledView ? g.guestSubBreakdown : liveBreakdown}
+          price={histPrice}
+          ready={histReady}
+          breakdown={guestCanceledView ? g.guestSubBreakdown : histBreakdown}
           paidBy={livePaidBy}
           userName={user?.name || 'Usuario'}
           titularCanceled={titularCanceled || guestCanceledView || mySlotCanceled}
@@ -2173,8 +2299,8 @@ export default function GameDetail() {
       {cancelOpen && (
         <CancelSheet
           gameId={gameId}
-          breakdown={guestCanceledView ? g.guestSubBreakdown : liveBreakdown}
-          price={g.price}
+          breakdown={guestCanceledView ? g.guestSubBreakdown : histBreakdown}
+          price={histPrice}
           guestList={isGuest ? guestOwnGuests : (guestCanceledView ? guestOwnGuests : guestsInRoster)}
           userName={user?.name || 'Usuario'}
           isGuest={isGuest}
@@ -2184,6 +2310,8 @@ export default function GameDetail() {
           payerCode={g.paidByCode}
           titularAlreadyCanceled={guestCanceledView || titularCanceled}
           guestSubBreakdown={g.guestSubBreakdown}
+          slotAmounts={myAmounts}
+          selfUserId={user?.id}
           onClose={() => setCancelOpen(false)}
           onDone={handleCancelDone}
         />
