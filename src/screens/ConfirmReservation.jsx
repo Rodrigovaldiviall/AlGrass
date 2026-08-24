@@ -322,7 +322,7 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
         )}
 
         {q && !noMatchAtAll && listBelow.map(p => (
-          <PlayerRow key={p.id} p={p} checked={false} rostered={rosterPlayerIds.has(p.id)} onToggle={() => toggle(p.id)} />
+          <PlayerRow key={p.id} p={p} checked={false} rostered={rosterPlayerIds.has(p.id) || p.id === hostUserId} onToggle={() => toggle(p.id)} />
         ))}
 
         {!q && hasAnyData && listBelow.length > 0 && (
@@ -334,7 +334,7 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
               Favoritos
             </div>
             {listBelow.map(p => (
-              <PlayerRow key={p.id} p={p} checked={false} rostered={rosterPlayerIds.has(p.id)} onToggle={() => toggle(p.id)} />
+              <PlayerRow key={p.id} p={p} checked={false} rostered={rosterPlayerIds.has(p.id) || p.id === hostUserId} onToggle={() => toggle(p.id)} />
             ))}
           </>
         )}
