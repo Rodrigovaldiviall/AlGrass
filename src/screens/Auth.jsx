@@ -9,6 +9,7 @@ import I from '../icons';
 import ConfirmReservation from './ConfirmReservation';
 import { deriveGameState, isGamePast } from '../utils/deriveGameState';
 import { getGameById } from '../services/gameService';
+import { TERMS_SUMMARY, PRIVACY_SUMMARY } from '../data/legalSummaries';
 
 // ── Shared primitives ──────────────────────────────────────────────────────
 
@@ -208,15 +209,14 @@ function getUserPhone() {
   try { return JSON.parse(localStorage.getItem(PROFILE_KEY) || 'null')?.phone || ''; } catch { return ''; }
 }
 
-const TERMS_TEXT = `Algrass es una plataforma de reservas deportivas que conecta jugadores con organizadores de partidos y campos de fútbol. Al suscribirte aceptas usar la plataforma de forma responsable y confirmas ser mayor de 18 años. Las reservas están sujetas a disponibilidad y los pagos son procesados de forma segura. Algrass no se responsabiliza por lesiones ocurridas durante los partidos. Los organizadores son responsables de las condiciones de sus instalaciones. Nos reservamos el derecho de suspender cuentas que incumplan estas normas.`;
-
-const PRIVACY_TEXT = `Recopilamos únicamente los datos necesarios para gestionar tu cuenta y reservas: nombre, email, y datos de contacto. No compartimos tu información personal con terceros salvo los organizadores de los partidos que reserves. Tus datos de pago son procesados por proveedores seguros certificados y nunca los almacenamos directamente. Puedes solicitar la eliminación de tu cuenta y datos en cualquier momento contactándonos. Cumplimos con la Ley de Protección de Datos Personales del Perú (Ley 29733).`;
-
-function LegalModal({ type, onClose }) {
+// Modal de RESUMEN (registro/deslogueado). Mismo contenido de resumen que Settings
+// (fuente única: legalSummaries). El enlace inferior abre el documento COMPLETO en
+// /terms o /privacy vía onViewFull, que preserva el origen para volver a este resumen.
+function LegalModal({ type, onClose, onViewFull }) {
   if (!type) return null;
   const isTerms = type === 'terms';
   const title = isTerms ? 'Términos de Servicio' : 'Política de Privacidad';
-  const body  = isTerms ? TERMS_TEXT : PRIVACY_TEXT;
+  const body  = isTerms ? TERMS_SUMMARY : PRIVACY_SUMMARY;
   return (
     <div
       onClick={onClose}
@@ -246,7 +246,13 @@ function LegalModal({ type, onClose }) {
           </button>
         </div>
         <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '16px 20px 28px' }}>
-          <p style={{ fontSize: 14.5, color: TEXT, lineHeight: 1.65, margin: 0 }}>{body}</p>
+          <p style={{ fontSize: 14.5, color: TEXT, lineHeight: 1.65, margin: 0, whiteSpace: 'pre-line' }}>{body}</p>
+          <button
+            onClick={() => onViewFull?.(type)}
+            style={{ display: 'block', marginTop: 20, padding: 0, background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 2 }}>{isTerms ? 'Términos del Servicio completos:' : 'Política de Privacidad completa:'}</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: BLUE, textDecoration: 'underline' }}>{isTerms ? 'https://algrass.com/terms' : 'https://algrass.com/privacy'}</div>
+          </button>
         </div>
       </div>
     </div>
@@ -435,8 +441,32 @@ export default function AuthScreen() {
     return () => { cancelled = true; };
   }, [user, game, state?.backPath]);
 
+  // Registro/deslogueado: al volver del documento legal COMPLETO (Atrás en LegalPage,
+  // navigate(-1) → /auth) recuperamos el contexto que dejó openFullLegal antes de navegar:
+  // el tipo de resumen a reabrir + un snapshot NO sensible (solo nombre/email). Se lee y
+  // CONSUME una sola vez al montar (mismo patrón que _resume/oauth_resume). La contraseña
+  // NUNCA se guarda ni restaura; accept NUNCA se restaura (arranca false). Entrada directa a
+  // /terms|/privacy no deja flag → aquí no restaura nada. Se declara ANTES que `step` para que
+  // el modo login/signup pueda considerarlo en su inicialización.
+  const [_legalResume] = useState(() => {
+    const empty = { type: null, name: '', email: '' };
+    try {
+      const type = sessionStorage.getItem('auth_legal_resume');
+      if (type !== 'terms' && type !== 'privacy') return empty;
+      sessionStorage.removeItem('auth_legal_resume');
+      let form = { name: '', email: '' };
+      try { const raw = sessionStorage.getItem('auth_legal_form'); if (raw) form = JSON.parse(raw); } catch { /* snapshot corrupto → se ignora */ }
+      sessionStorage.removeItem('auth_legal_form');
+      return { type, name: form.name || '', email: form.email || '' };
+    } catch { /* sessionStorage no disponible */ return empty; }
+  });
+
   // 'signup' | 'login'
   const [step, setStep]             = useState(() => {
+    // Excepción contextual: si regresamos del flujo legal iniciado desde Crear cuenta
+    // (_legalResume lo demuestra), forzar 'signup'. Una entrada normal NO activa esto y
+    // sigue respetando la regla de mostrar "Iniciar sesión" a quien ya conoce la página.
+    if (_legalResume.type) return 'signup';
     try {
       if (sessionStorage.getItem('auth_prefer_login') === '1') {
         sessionStorage.removeItem('auth_prefer_login');
@@ -449,15 +479,26 @@ export default function AuthScreen() {
     } catch {}
     return 'signup';
   });
-  const [email, setEmail]           = useState('');
+  const [email, setEmail]           = useState(_legalResume.email);
   const [pass, setPass]             = useState('');
-  const [name, setName]             = useState('');
+  const [name, setName]             = useState(_legalResume.name);
   const [accept, setAccept]         = useState(false);
   const [socialLoading, setSocialLoading] = useState(null);
   const [socialError, setSocialError]     = useState('');
-  const [legalModal, setLegalModal]       = useState(null);
+  const [legalModal, setLegalModal]       = useState(_legalResume.type);
   const [authError,   setAuthError]       = useState('');
   const [authLoading, setAuthLoading]     = useState(false);
+
+  // Abre el documento COMPLETO (/terms | /privacy) desde el resumen y marca el origen para que,
+  // al pulsar Atrás en LegalPage, se reabra este resumen. Nunca lleva a Settings ni requiere sesión.
+  const openFullLegal = (t) => {
+    try {
+      sessionStorage.setItem('auth_legal_resume', t);
+      // Solo datos NO sensibles: nombre y email. NUNCA contraseña ni aceptación.
+      sessionStorage.setItem('auth_legal_form', JSON.stringify({ name, email }));
+    } catch { /* sessionStorage no disponible */ }
+    navigate(t === 'terms' ? '/terms' : '/privacy');
+  };
 
   // Recuperación de contraseña por OTP oficial de Supabase. UNA pantalla, dos estados:
   // 'email' (pide correo) → 'verify' (código + nueva contraseña + confirmar).
@@ -810,7 +851,7 @@ export default function AuthScreen() {
         )}
       </div>
 
-      <LegalModal type={legalModal} onClose={() => setLegalModal(null)} />
+      <LegalModal type={legalModal} onClose={() => setLegalModal(null)} onViewFull={openFullLegal} />
     </div>
   );
 }

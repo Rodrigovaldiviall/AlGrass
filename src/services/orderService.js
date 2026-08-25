@@ -51,3 +51,14 @@ export function confirmOrder({ orderId, paymentProof }) {
     body: { orderId, paymentProof },
   });
 }
+
+// getOrderStatus(RPC/REST): lectura SOLO del estado de la Order propia. La RLS
+// (orders_select_own = payer_user_id = auth.uid()) la acota a las Orders del payer.
+// Sin escritura, sin lógica: devuelve el { data, error } CRUDO de Supabase.
+export function getOrderStatus({ orderId }) {
+  return supabase
+    .from('orders')
+    .select('status')
+    .eq('id', orderId)
+    .maybeSingle();
+}

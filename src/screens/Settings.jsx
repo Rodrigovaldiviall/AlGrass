@@ -12,6 +12,7 @@ import { SupportMenu } from '../components/SupportMenu';
 import VenueLeadScreen from '../components/VenueLeadScreen';
 import { validateDeleteAccount, executeDeleteAccount } from '../services/deleteAccountService';
 import pkg from '../../package.json';
+import { TERMS_SUMMARY, PRIVACY_SUMMARY } from '../data/legalSummaries';
 
 const PROFILE_KEY = 'pichanga_profile';
 const PRIVACY_KEY = 'pichanga_privacy';
@@ -23,15 +24,8 @@ async function fetchAvailableCities() {
   return [...new Set((data ?? []).map(r => r.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
 }
 
-const TERMS_TEXT = `Algrass es una plataforma de reservas deportivas que conecta jugadores con organizadores de partidos y campos de fútbol. Al suscribirte aceptas usar la plataforma de forma responsable y confirmas ser mayor de 18 años. Las reservas están sujetas a disponibilidad y los pagos son procesados de forma segura. Algrass no se responsabiliza por lesiones ocurridas durante los partidos. Los organizadores son responsables de las condiciones de sus instalaciones. Nos reservamos el derecho de suspender cuentas que incumplan estas normas.`;
-
-const PRIVACY_TEXT = `En AlGrass tratamos los datos necesarios para crear y gestionar tu cuenta, organizar partidos y reservas, gestionar pagos, invitaciones, referidos, promociones y demás funcionalidades de la Plataforma.
-
-Tus datos pueden ser tratados por proveedores tecnológicos y de pago necesarios para prestar nuestros servicios y, cuando corresponda, compartidos con complejos deportivos o autoridades conforme a la ley. AlGrass no vende ni alquila tus datos personales y no almacena los datos completos de tus tarjetas.
-
-Puedes ejercer tus derechos de acceso, rectificación, cancelación y oposición (ARCO), así como solicitar la eliminación de tu cuenta, escribiendo a legal@algrass.com.
-
-AlGrass S.A.C. trata tus datos conforme a la Ley N.º 29733, Ley de Protección de Datos Personales, y su normativa aplicable.`;
+const TERMS_TEXT = TERMS_SUMMARY;
+const PRIVACY_TEXT = PRIVACY_SUMMARY;
 
 const FAQ_GROUPS = [
   {

@@ -13,7 +13,7 @@ import { createReservation, createGamePlayer, createInvitedReservation, validate
 import { resolveCaptainGroupAssignment } from '../services/captainGroupService';
 import { markWaitlistReserved } from '../services/waitlistService';
 import { materializeReservation } from '../services/materializeReservation';
-import { createOrder, failOrder, confirmOrder } from '../services/orderService';
+import { createOrder, failOrder, confirmOrder, getOrderStatus } from '../services/orderService';
 import { charge } from '../services/paymentAdapter';
 import { uuidv4 } from '../lib/uuid';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
@@ -771,6 +771,19 @@ export default function ConfirmReservation() {
   const [promoLoading, setPromoLoading] = useState(false);
   const [freeConfirming, setFreeConfirming] = useState(false);
   const [capacityError, setCapacityError]   = useState(null);
+  // Confirmación de la Order: un ÚNICO timer de polling (pollTimerRef), un guard de
+  // "ya resuelto" (evita navegación/terminal duplicados) y un guard de montaje (evita
+  // setState/navigate tras unmount). El poll consulta SIEMPRE el MISMO orderId.
+  const pollTimerRef        = useRef(null);
+  const checkoutResolvedRef = useRef(false);
+  const mountedRef          = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
+    };
+  }, []);
   const [showConfirmed, setShowConfirmed] = useState(false);
   const [creditLoading, setCreditLoading]   = useState(true);
   const { isCaptain, isCaptainGold } = useGlobalRoles();
@@ -1015,21 +1028,54 @@ export default function ConfirmReservation() {
   async function handleExternalPaid(method, paymentProof, orderId) {
     if (!orderId) { handlePaid(method); return; }
     setFreeConfirming(true);
-    const { data, error } = await confirmOrder({ orderId, paymentProof });
-    if (!error && data?.ok) {
-      // Éxito: el titular se materializó server-side → consumir el referral y cerrar.
+
+    // Éxito confirmado UNA sola vez (directo o vía polling): reutiliza la navegación de
+    // éxito existente. Nunca navega dos veces ni tras unmount.
+    const resolveConfirmed = () => {
+      if (checkoutResolvedRef.current || !mountedRef.current) return;
+      checkoutResolvedRef.current = true;
+      if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
       try { localStorage.removeItem(`pending_game_referral:${game?.id}`); } catch {}
       finishConfirmedNavigation();
-      return;
-    }
-    // El body de la respuesta de error solo puede leerse una vez; de él se deriva `code`.
+    };
+
+    // Terminal NO confirmado (failed/expired, o capacidad agotada explícita): detiene el
+    // loading y muestra el error con el MECANISMO EXISTENTE (overlay capacityError).
+    const resolveTerminal = () => {
+      if (checkoutResolvedRef.current || !mountedRef.current) return;
+      checkoutResolvedRef.current = true;
+      if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
+      setFreeConfirming(false);
+      setCapacityError(game?.type === 'rental' ? 'RENTAL_TAKEN' : 'GAME_FULL');
+    };
+
+    // Poll del MISMO orderId hasta estado RESOLUTIVO. Un único timer (pollTimerRef).
+    // pending → seguir; lectura incierta (red/auth/RLS: error o data null) → NO se asume
+    // nada, la operación sigue INCIERTA y el overlay permanece → reintentar.
+    const pollStatus = async () => {
+      if (checkoutResolvedRef.current || !mountedRef.current) return;
+      const { data: row, error: readErr } = await getOrderStatus({ orderId });
+      if (checkoutResolvedRef.current || !mountedRef.current) return;
+      const status = (!readErr && row) ? row.status : null;   // null = incierto → seguir
+      if (status === 'confirmed') { resolveConfirmed(); return; }
+      if (status === 'failed' || status === 'expired') { resolveTerminal(); return; }
+      pollTimerRef.current = setTimeout(pollStatus, 1000);     // pending / incierto
+    };
+
+    const { data, error } = await confirmOrder({ orderId, paymentProof });
+    if (checkoutResolvedRef.current || !mountedRef.current) return;
+    if (!error && data?.ok) { resolveConfirmed(); return; }
+
+    // confirm_order devolvió error: NO cerramos el overlay ni volvemos a ConfirmReservation,
+    // y NO asumimos que la Order esté failed. Terminal de capacidad EXPLÍCITO (la Order NO se
+    // confirmará nunca) → mecanismo existente. Cualquier otro error (p. ej. AUTH_REQUIRED) →
+    // la Order puede seguir PENDING: consultamos su estado real y mantenemos el overlay.
     let body = null;
     try { body = await error?.context?.json(); } catch {}
     const code = body?.error ?? null;
-    setFreeConfirming(false);
-    if (code === 'GAME_FULL')    { setCapacityError('GAME_FULL'); return; }
-    if (code === 'RENTAL_TAKEN') { setCapacityError('RENTAL_TAKEN'); return; }
-    console.warn('[checkout] confirm_order failed:', code ?? error);   // Order queda PENDING (reintentable)
+    if (code === 'GAME_FULL' || code === 'RENTAL_TAKEN') { resolveTerminal(); return; }
+    console.warn('[checkout] confirm_order failed; polling order status:', code ?? error);
+    pollStatus();
   }
 
   // onRejected del PaymentSheet. Externo main → fail_order libera el HOLD (Regla 2:
