@@ -49,16 +49,36 @@ export async function materializeReservation(ctx, snapshot) {
   if (gameType === 'match' || !gameType) {
     const slotRes = await loadSlotSnapshot(db, gameId, referral);
     const aTit = resolveCaptainGroupAssignment(slotRes, { actorUserId: actor, enrolleeUserId: actor, linkOwnerUserId: referral });
-    const { error: gpErr } = await createGamePlayer({ gameId, reservationId, amount: titularNet, hostUserId, gameSlotReservationId: aTit.gameSlotReservationId, countsReservedSlot: aTit.countsReservedSlot, referredByUserId: aTit.referredByUserId }, ctx);
+    const { data: titularGp, error: gpErr } = await createGamePlayer({ gameId, reservationId, amount: titularNet, hostUserId, gameSlotReservationId: aTit.gameSlotReservationId, countsReservedSlot: aTit.countsReservedSlot, referredByUserId: aTit.referredByUserId }, ctx);
     if (gpErr?.message?.startsWith('GAME_FULL')) return { code: 'GAME_FULL' };
     if (!gpErr) referralConsumed = true;
+    // R1 creada/activada EN ESTE checkout: reserve_slots corre DESPUÉS de derivar el snapshot, por
+    // lo que titular/invitados quedaban NULL/NULL (problema de timing, no exclusión). Capturamos su
+    // id para rellenar ÚNICAMENTE esos NULL de ESTE checkout; la herencia (assignment no-nulo por
+    // link/grupo) NO se toca. No se altera reserve_slots, enforce_capacity ni referred_by_user_id.
+    let newR1Id = null;
     if (reservedSlots > 0 && !gpErr) {
-      const { error: rsErr } = await db.rpc('reserve_slots', { p_game_id: gameId, p_reserved_slots_total: reservedSlots, p_actor: actor });
+      const { data: r1Data, error: rsErr } = await db.rpc('reserve_slots', { p_game_id: gameId, p_reserved_slots_total: reservedSlots, p_actor: actor });
       if (rsErr) return rsErr.message?.startsWith('GAME_FULL') ? { code: 'GAME_FULL', referralConsumed } : { error: rsErr, referralConsumed };
+      const r1Row = Array.isArray(r1Data) ? r1Data[0] : r1Data;
+      newR1Id = r1Row?.id ?? null;
+      // Titular: solo si NO heredó una R1 (assignment null por timing) pasa a la R1 de este checkout.
+      if (newR1Id && aTit.gameSlotReservationId == null && titularGp?.id) {
+        const { error: tErr } = await db.from('game_players')
+          .update({ game_slot_reservation_id: newR1Id, counts_reserved_slot: true })
+          .eq('id', titularGp.id);
+        if (tErr) console.error('[materializeReservation] titular R1 assign failed:', tErr);
+      }
     }
     await Promise.all(guests.map(guest => {
       const aG = resolveCaptainGroupAssignment(slotRes, { actorUserId: actor, enrolleeUserId: guest.id, linkOwnerUserId: null });
-      return createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice, hostUserId, gameSlotReservationId: aG.gameSlotReservationId, countsReservedSlot: aG.countsReservedSlot, referredByUserId: aG.referredByUserId }, ctx);
+      // Invitados de ESTE checkout: si no heredaron R1 y aquí nació una, entran a ella (counts=true);
+      // si heredaron (link/grupo), su assignment queda intacto. referred_by_user_id NO se altera.
+      const fillNewR1 = newR1Id && aG.gameSlotReservationId == null;
+      return createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice, hostUserId,
+        gameSlotReservationId: fillNewR1 ? newR1Id : aG.gameSlotReservationId,
+        countsReservedSlot:    fillNewR1 ? true    : aG.countsReservedSlot,
+        referredByUserId:      aG.referredByUserId }, ctx);
     }));
   }
 

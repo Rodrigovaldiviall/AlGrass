@@ -13,6 +13,8 @@ import { maxBirthParts, birthYears, birthMonthsCount, birthDaysCount, clampBirth
 import { uploadAvatar, getAvatarUrl } from '../utils/avatar';
 // Solicitud real de Capitán (tabla captain_requests). NO toca user_roles.
 import { createCaptainRequest, fetchMyOpenCaptainRequest, UNIQUE_VIOLATION } from '../services/captainRequestService';
+// Roles efectivos (fuente existente: user_roles vía fetchMyGlobalRoles). Solo lectura.
+import { useGlobalRoles } from '../hooks/useGlobalRoles';
 
 const iStyle = (locked = false) => ({
   flex: 1, height: 34, borderRadius: 8,
@@ -32,6 +34,8 @@ export default function CaptainRequest() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const uid = user?.id ?? null;
+  // Rol efectivo AUTORITATIVO (captain/captain_gold) desde el sistema existente de roles.
+  const { isCaptain, ready: rolesReady } = useGlobalRoles();
 
   const [ready, setReady]       = useState(() => !(supabase && user?.id));
   const [email, setEmail]       = useState(user?.email || '');
@@ -268,6 +272,18 @@ export default function CaptainRequest() {
           <div style={{ marginTop: 8, fontSize: 14.5, color: SUB, lineHeight: 1.5, maxWidth: 320 }}>Recibimos tu solicitud para ser Capitán. La revisaremos y te avisaremos cuando tengamos novedades.</div>
           <button onClick={() => navigate(-1)} style={{ marginTop: 26, width: '100%', maxWidth: 320, height: 50, borderRadius: 14, background: BLUE, color: '#fff', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 700, fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Continuar</button>
         </div>
+      ) : (!rolesReady || hasOpenRequest === null) ? (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: 40, height: 40, borderRadius: '50%', border: '4px solid #EAEAEE', borderTop: `4px solid ${BLUE}`, animation: 'spin 0.9s linear infinite' }} />
+        </div>
+      ) : isCaptain ? (
+        <div className="no-sb" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '24px 28px calc(28px + env(safe-area-inset-bottom))' }}>
+          <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#EAF8EF', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}>
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill={GREEN}/><path d="M7 12.5l3.2 3.2L17 8.8" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: TEXT, letterSpacing: -0.3 }}>¡Ya eres capitán!</div>
+          <div style={{ marginTop: 8, fontSize: 14.5, color: SUB, lineHeight: 1.5, maxWidth: 320 }}>Ya tienes acceso a beneficios de capitán. Despreocúpate y juega.</div>
+        </div>
       ) : hasOpenRequest === true ? (
         <div className="no-sb" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '24px 28px calc(28px + env(safe-area-inset-bottom))' }}>
           <div style={{ width: 64, height: 64, borderRadius: '50%', background: `${BLUE}14`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}>
@@ -275,10 +291,6 @@ export default function CaptainRequest() {
           </div>
           <div style={{ fontSize: 20, fontWeight: 700, color: TEXT, letterSpacing: -0.3 }}>Solicitud en revisión</div>
           <div style={{ marginTop: 8, fontSize: 14.5, color: SUB, lineHeight: 1.5, maxWidth: 320 }}>Ya recibimos tu solicitud para ser Capitán. Te avisaremos cuando tengamos novedades.</div>
-        </div>
-      ) : hasOpenRequest === null ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ width: 40, height: 40, borderRadius: '50%', border: '4px solid #EAEAEE', borderTop: `4px solid ${BLUE}`, animation: 'spin 0.9s linear infinite' }} />
         </div>
       ) : (
       <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '16px 16px calc(28px + env(safe-area-inset-bottom))' }}>
