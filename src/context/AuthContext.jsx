@@ -39,12 +39,52 @@ function clearUserScopedCache() {
   } catch {}
 }
 
+// ── Reconciliación determinista de correo (Auth → public.users) ──────────────
+// Fuente AUTORITATIVA: supabase.auth.getUser() consulta al SERVIDOR de Auth y
+// devuelve el email VIGENTE ya confirmado (auth.users.email). A diferencia de
+// getSession()/session.user.email —que provienen del JWT persistido y pueden
+// quedar ANTIGUOS tras un cambio confirmado en otro dispositivo hasta que el
+// token se refresque (TOKEN_REFRESHED no es determinista por apertura)—, getUser
+// no depende de que llegue ningún evento en tiempo real. Idempotente y
+// autolimitada: solo escribe si public.users difiere. confirmed_email = ese email
+// porque, al ser auth.users.email vigente, Supabase YA lo confirmó (un cambio de
+// correo pendiente NO altera auth.users.email; solo lo hace al confirmarse).
+// DEVUELVE el email autoritativo (o null si getUser falla) para que el caller deje
+// también el user React + cache (pichanga_user) canónicos, sin otra llamada getUser.
+async function reconcileEmailFromAuth() {
+  const { data, error } = await supabase.auth.getUser();
+  const authUser = data?.user;
+  if (error || !authUser?.id || !authUser.email) return null; // fallo transitorio → no tocar nada
+  // Reconcilia public.users SOLO si difiere (idempotente; una escritura como mucho).
+  const { data: row } = await supabase
+    .from('users').select('email').eq('id', authUser.id).maybeSingle();
+  if (row?.email && row.email !== authUser.email) {
+    const { error: upErr } = await supabase
+      .from('users')
+      .update({ email: authUser.email, confirmed_email: authUser.email })
+      .eq('id', authUser.id);
+    if (upErr) console.warn('[auth] email reconcile:', upErr.message);
+  }
+  return authUser.email;
+}
+
 export function AuthProvider({ children }) {
   const [user, setUserState] = useState(() => getUser());
 
   function login(userData) {
     setUserState(userData);
     setUser(userData);
+  }
+
+  // Aplica el email AUTORITATIVO (de reconcileEmailFromAuth) al user React + cache
+  // pichanga_user, sin reconstruir el resto del usuario. No-op si el email no cambió
+  // (evita re-render/escritura innecesarios, CASO 4) o si es null (getUser falló →
+  // no tocar sesión ni cache). Nunca crea un user desde null (no rompe logout).
+  function applyAuthoritativeEmail(email) {
+    if (!email) return;
+    setUserState(prev => (prev && prev.email !== email) ? { ...prev, email } : prev);
+    const cur = getUser();
+    if (cur && cur.email !== email) setUser({ ...cur, email });
   }
 
   function logout() {
@@ -124,6 +164,14 @@ export function AuthProvider({ children }) {
         const baseUser = { id: su.id, name, email, provider, providers, identities };
         login(baseUser);
 
+        // Punto DETERMINISTA: toda hidratación de sesión (INITIAL_SESSION en cada apertura,
+        // SIGNED_IN, PASSWORD_RECOVERY) pasa por aquí. Reconcilia con el email autoritativo del
+        // servidor (getUser), no con session.user.email (JWT persistido, posiblemente antiguo).
+        // Cubre el caso multidispositivo aunque A nunca reciba USER_UPDATED/TOKEN_REFRESHED.
+        // Parte 1 (reconcilia public.users) + email AUTORITATIVO. Una sola llamada getUser
+        // en vuelo; su promesa se reutiliza abajo para dejar el user React con el email real.
+        const authEmailP = reconcileEmailFromAuth();
+
         // Fetch canonical full_name + user_code from public.users — overrides auth metadata
         supabase
           .from('users')
@@ -142,18 +190,8 @@ export function AuthProvider({ children }) {
                 .eq('id', su.id)
                 .maybeSingle();
               data = retried;
-              if (!data?.full_name) return;
-            }
-
-            // Reconciliación multi-dispositivo del correo (fuente de verdad: auth.users.email).
-            // Si el cambio se confirmó en otro dispositivo sin sesión, public.users quedó desfasado.
-            // Al hidratar una sesión válida, lo corregimos UNA vez y solo si hay inconsistencia real;
-            // cuando ya coinciden no hace nada (autolimitada, sin polling ni proceso en background).
-            if (su.email && data.email && data.email !== su.email) {
-              supabase.from('users')
-                .update({ email: su.email, confirmed_email: su.email })
-                .eq('id', su.id)
-                .then(({ error }) => { if (error) console.warn('[auth] email reconcile:', error.message); });
+              // Sin perfil canónico aún, pero el email autoritativo sí debe aplicarse.
+              if (!data?.full_name) { applyAuthoritativeEmail(await authEmailP); return; }
             }
 
             let userCode = data.user_code || null;
@@ -177,6 +215,7 @@ export function AuthProvider({ children }) {
 
             const canonical = {
               ...baseUser,
+              email: (await authEmailP) || baseUser.email, // autoritativo; NO revierte a OLD (si getUser falló, conserva el actual)
               name: data.full_name,
               ...(userCode     && { userCode }),
               ...(resolvedCity && { city: resolvedCity }),
@@ -191,6 +230,12 @@ export function AuthProvider({ children }) {
               localStorage.setItem('pichanga_profile', JSON.stringify(stored));
             } catch {}
           });
+      }
+      // Complemento en TIEMPO REAL para la sesión ya abierta: si el cambio se confirma mientras
+      // la app está activa (sin reload), estos eventos disparan la MISMA reconciliación autoritativa.
+      // No es la garantía (esa es getUser en la hidratación), solo evita esperar a la próxima apertura.
+      if (event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') {
+        reconcileEmailFromAuth().then(applyAuthoritativeEmail);
       }
       if (event === 'SIGNED_OUT') {
         setUserState(null);

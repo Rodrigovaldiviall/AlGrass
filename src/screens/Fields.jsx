@@ -9,7 +9,6 @@ import TabBar from '../components/TabBar';
 import fieldPriceBg from '../assets/field price.webp';
 import fieldNoAvailable from '../assets/Field no available.webp';
 import { supabase } from '../lib/supabase';
-import { getVenueCoverUrl } from '../utils/venue';
 import { getRentalGames } from '../services/gameService';
 import { getVenues } from '../services/venueService';
 import DistrictSheet from '../components/DistrictSheet';
@@ -465,13 +464,14 @@ function SkeletonFieldRows() {
 }
 
 // ── Field row
-function FieldThumbnail({ price, reserved, userBooked, isHost, coverPath, coverVersion, badgeReady = true }) {
-  const src         = coverPath ? getVenueCoverUrl(supabase, coverPath, coverVersion) : null;
+function FieldThumbnail({ price, reserved, userBooked, isHost, badgeReady = true }) {
   const unavailable = reserved && !userBooked && !isHost;
   const bgStyle     = (asset) => ({ position: 'absolute', inset: 0, backgroundImage: `url(${asset})`, backgroundSize: '120%', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', display: 'flex', alignItems: 'center', justifyContent: 'center' });
   return (
-    <div style={{ position: 'relative', width: 88, height: 56, borderRadius: 10, overflow: 'hidden', flexShrink: 0 }}>
-      {!unavailable && src && <div style={{ position: 'absolute', inset: 0, backgroundImage: `url(${src})`, backgroundSize: 'cover', backgroundPosition: 'center' }} />}
+    // Fondo SIEMPRE el asset local fieldPriceBg (nunca cover remoto de field/venue): todos los
+    // estados (cargando, precio, Reservado, Organiza) comparten el mismo background desde el
+    // primer render; solo cambia el contenido encima. 'No disponible' superpone su propio asset.
+    <div style={{ position: 'relative', width: 88, height: 56, borderRadius: 10, overflow: 'hidden', flexShrink: 0, backgroundImage: `url(${fieldPriceBg})`, backgroundSize: '120%', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }}>
 
       {isHost ? (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -503,7 +503,7 @@ function FieldThumbnail({ price, reserved, userBooked, isHost, coverPath, coverV
   );
 }
 
-function FieldRow({ f, last, onPress, userBooked, isHost, coverPath, coverVersion, badgeReady = true }) {
+function FieldRow({ f, last, onPress, userBooked, isHost, badgeReady = true }) {
   const [pressed, setPressed] = useState(false);
   return (
     <div
@@ -536,7 +536,7 @@ function FieldRow({ f, last, onPress, userBooked, isHost, coverPath, coverVersio
           <GameMetaLine format={f.format} durationMin={f.durationMin} parking={f.parking} covered={f.covered} womenOnly={false} filmed={f.filmed} />
         </div>
       </div>
-      <FieldThumbnail price={isHost ? null : f.price} reserved={f.reserved} userBooked={userBooked} isHost={isHost} coverPath={coverPath} coverVersion={coverVersion} badgeReady={badgeReady} />
+      <FieldThumbnail price={isHost ? null : f.price} reserved={f.reserved} userBooked={userBooked} isHost={isHost} badgeReady={badgeReady} />
       <div style={{ pointerEvents: 'none', marginLeft: 6 }}>{I.chev()}</div>
     </div>
   );
@@ -884,8 +884,6 @@ export default function Fields() {
       <FieldRow key={f.id} f={f} last={last}
         userBooked={myBookedFresh && myBookedIds.has(f.id)}
         isHost={!!user?.id && !!f.hostUserId && f.hostUserId === user.id}
-        coverPath={f.fieldCoverPath ?? f.venueCoverPath ?? null}
-        coverVersion={f.fieldCoverPath ? f.fieldCoverVersion : f.venueCoverVersion}
         badgeReady={myBookedFresh}
         onPress={() => navigate(`/rental/${f.id}`, { state: { field: f, backPath: '/fields', mapReturn: { view, selectedVenue, sheetExpanded: snapIndex === 0 } } })} />
     );

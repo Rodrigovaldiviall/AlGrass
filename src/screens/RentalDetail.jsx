@@ -10,10 +10,10 @@ import { useForegroundTick } from '../hooks/useForegroundTick';
 import { supabase } from '../lib/supabase';
 import { getVenueCoverUrl } from '../utils/venue';
 import { getAvatarUrl } from '../utils/avatar';
-import { isGamePast } from '../utils/deriveGameState';
+import { isGamePast, isGameStarted } from '../utils/deriveGameState';
 import RatingBlock from '../components/RatingBlock';
 import { getGameById } from '../services/gameService';
-import { cancelRental } from '../services/reservationService';
+import { cancelRental, getRentalCancellationWindow } from '../services/reservationService';
 import { shareOrCopy } from '../utils/share';
 import { useAuth } from '../context/AuthContext';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -211,13 +211,27 @@ function CTA({ price, onPress }) {
 }
 
 // ── Cancel sheet
-function CancelSheet({ userName, refundAmount, onClose, onConfirm, onDone }) {
+function CancelSheet({ userName, gameId, baseAmount = 0, onClose, onConfirm, onDone }) {
   const [open, setOpen]               = useState(false);
   const [step, setStep]               = useState('select');
-  const [capturedRefund, setCaptured] = useState(0);
+  const [pct, setPct]                 = useState(null);   // preview del servidor: 100 | 50 | 0 | null (cargando)
+  const [captured, setCaptured]       = useState({ amount: 0, pct: 0 });
   const fmt = n => `S/. ${Number(n).toFixed(2)}`;
 
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
+
+  // Preview INFORMATIVO del tramo (autoridad de tiempo en el servidor). El importe real
+  // proviene de la RPC al confirmar (el tramo puede cambiar mientras el sheet está abierto).
+  useEffect(() => {
+    let alive = true;
+    getRentalCancellationWindow(gameId).then(({ data }) => {
+      if (alive && data && typeof data.refund_pct === 'number') setPct(data.refund_pct);
+    });
+    return () => { alive = false; };
+  }, [gameId]);
+
+  // Crédito ESTIMADO para el preview (100/50 sobre el pago histórico conocido, round 2 dec).
+  const estRefund = pct === 100 ? baseAmount : pct === 50 ? Math.round(baseAmount * 50) / 100 : 0;
 
   function dismiss() {
     if (step === 'processing') return;
@@ -227,10 +241,11 @@ function CancelSheet({ userName, refundAmount, onClose, onConfirm, onDone }) {
   const { rootRef, scrollRef, dragY, dragging } = useSheetPull({ onClose: dismiss });
 
   async function confirm() {
-    setCaptured(refundAmount);
     setStep('processing');
     const result = await onConfirm();
-    if (result?.error) { setStep('select'); return; }
+    if (result?.error || result?.skipped) { setStep('select'); return; }
+    // Verdad final: importe y tramo REALES devueltos por cancel_rental_self (no el preview).
+    setCaptured({ amount: Number(result.refundAmount) || 0, pct: Number(result.refundPct) || 0 });
     setStep('done');
     setTimeout(onDone, 1600);
   }
@@ -259,27 +274,33 @@ function CancelSheet({ userName, refundAmount, onClose, onConfirm, onDone }) {
           <div style={{ padding: '20px 16px 0', flexShrink: 0 }}>
             <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 16px' }} />
             <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, letterSpacing: -0.2 }}>Cancelar reserva</div>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '9px 12px', borderRadius: 10, background: '#F0FFF4', marginBottom: 14, marginTop: 10 }}>
-              <svg width="15" height="15" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={GREEN} strokeWidth="1.4"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={GREEN} strokeWidth="1.5" strokeLinecap="round"/></svg>
-              <span style={{ fontSize: 12.5, color: GREEN, fontWeight: 500, lineHeight: 1.45 }}>Las cancelaciones generan un crédito aplicable a tu próxima reserva.</span>
-            </div>
+            <div style={{ fontSize: 14.5, fontWeight: 600, color: BLUE, marginTop: 10, marginBottom: 4 }}>{userName} (Tú)</div>
           </div>
-          <div ref={scrollRef} className="no-sb" style={{ overflowY: 'auto', overscrollBehavior: 'contain', flex: 1 }}>
-            <div style={{ width: '100%', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: `1px solid ${HAIR}` }}>
-              <div style={{ flex: 1 }}>
-                <span style={{ fontSize: 14.5, fontWeight: 600, color: BLUE }}>{userName} (Tú)</span>
+          <div ref={scrollRef} className="no-sb" style={{ overflowY: 'auto', overscrollBehavior: 'contain', flex: 1, padding: '0 16px' }}>
+            {pct === null ? (
+              <div style={{ fontSize: 13, color: SUB, padding: '10px 0 4px' }}>Calculando condiciones de cancelación…</div>
+            ) : pct === 0 ? (
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px', borderRadius: 10, background: '#F6F7F9', marginTop: 6 }}>
+                <svg width="15" height="15" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={SUB} strokeWidth="1.4"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={SUB} strokeWidth="1.5" strokeLinecap="round"/></svg>
+                <span style={{ fontSize: 12.5, color: SUB, fontWeight: 500, lineHeight: 1.45 }}>Esta cancelación no genera reembolso.</span>
               </div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(refundAmount)}</div>
-            </div>
+            ) : (
+              <>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '9px 12px', borderRadius: 10, background: '#F0FFF4', marginTop: 6 }}>
+                  <svg width="15" height="15" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={GREEN} strokeWidth="1.4"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={GREEN} strokeWidth="1.5" strokeLinecap="round"/></svg>
+                  <span style={{ fontSize: 12.5, color: GREEN, fontWeight: 500, lineHeight: 1.45 }}>Recibirás el {pct}% como crédito aplicable a tu próxima reserva.</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 2px 2px' }}>
+                  <span style={{ fontSize: 14, color: SUB }}>Crédito estimado</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{fmt(estRefund)}</span>
+                </div>
+              </>
+            )}
           </div>
           <div style={{ padding: '12px 16px calc(12px + env(safe-area-inset-bottom))', borderTop: `1px solid ${HAIR}`, flexShrink: 0 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-              <span style={{ fontSize: 14, color: SUB }}>Total a cancelar</span>
-              <span style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{fmt(refundAmount)}</span>
-            </div>
             <button
-              onClick={confirm}
-              style={{ width: '100%', height: 50, borderRadius: 14, background: DANGER, color: '#fff', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 700, fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+              onClick={pct === null ? undefined : confirm}
+              style={{ width: '100%', height: 50, borderRadius: 14, background: pct === null ? '#E8E8EC' : DANGER, color: pct === null ? '#9A9AA0' : '#fff', border: 'none', cursor: pct === null ? 'not-allowed' : 'pointer', fontSize: 15, fontWeight: 700, fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
               Confirmar cancelación
             </button>
           </div>
@@ -298,9 +319,13 @@ function CancelSheet({ userName, refundAmount, onClose, onConfirm, onDone }) {
               <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke={GREEN} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </div>
             <div style={{ fontSize: 17, fontWeight: 700, color: TEXT }}>Cancelación procesada</div>
-            {capturedRefund > 0 && (
+            {captured.amount > 0 ? (
               <div style={{ fontSize: 14, color: SUB, textAlign: 'center', lineHeight: 1.45 }}>
-                Se generó un crédito de <strong style={{ color: GREEN }}>{fmt(capturedRefund)}</strong> en tu perfil.
+                Se generó un crédito de <strong style={{ color: GREEN }}>{fmt(captured.amount)}</strong> en tu perfil.
+              </div>
+            ) : (
+              <div style={{ fontSize: 14, color: SUB, textAlign: 'center', lineHeight: 1.45 }}>
+                Esta cancelación no generó reembolso.
               </div>
             )}
           </div>
@@ -502,6 +527,9 @@ export default function RentalDetail() {
   const priceNum     = game.priceTotalNum ?? 0;
   const priceDisplay = priceNum > 0 ? `S/.${priceNum.toFixed(2)}` : null;
   const isPastRental = isGamePast(game.dateKey, game.time24, game.durationMin);
+  // SOLO UX: un rental ya iniciado (now >= inicio, hora Perú) no debe permitir entrar al flujo
+  // de cancelación (autoridad económica y guard RENTAL_ALREADY_STARTED siguen en cancel_rental_self).
+  const alreadyStarted = isGameStarted(game.dateKey, game.time24);
   const existingRating = location.state?.rating ?? (() => {
     try { return JSON.parse(localStorage.getItem('pichanga_ratings') || '{}')[game.id] ?? null; } catch { return null; }
   })();
@@ -624,7 +652,7 @@ export default function RentalDetail() {
         <div style={{ height: 8 }} />
       </div>
 
-      {statusReady && !isHost && isPastRental && userBooked ? (
+      {statusReady && !isHost && alreadyStarted && userBooked ? (
         <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '12px 16px' }}>
           <button
             onClick={() => setPaymentOpen(true)}
@@ -685,7 +713,8 @@ export default function RentalDetail() {
       {cancelOpen && (
         <CancelSheet
           userName={userName}
-          refundAmount={myReservation?.amount ?? 0}
+          gameId={game.id}
+          baseAmount={myReservation?.amount ?? 0}
           onClose={() => setCancelOpen(false)}
           onConfirm={handleCancel}
           onDone={goBack}

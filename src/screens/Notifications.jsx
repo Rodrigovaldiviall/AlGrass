@@ -22,9 +22,28 @@ const NOTIF_SELECT = 'id, template_key, custom_text, game_id, reservation_id, re
 // El algoritmo de handlePress es único para todas; lo único que varía es este mapeo.
 const CANCELLATION_TEMPLATES = {
   invited_by_player:                 ['guest_invitation_cancelled_by_owner', 'reservation_cancelled_credit_owner'],
-  reservation_confirmed:             ['reservation_cancelled_credit_self', 'reservation_cancelled_self_and_guests', 'reservation_cancelled_guests_credit'],
-  reservation_confirmed_with_guests: ['reservation_cancelled_credit_self', 'reservation_cancelled_self_and_guests', 'reservation_cancelled_guests_credit'],
+  reservation_confirmed:             ['reservation_cancelled_credit_self', 'reservation_cancelled_self_and_guests', 'reservation_cancelled_guests_credit', 'reservation_cancelled_no_refund', 'reservation_cancelled_credit_partial'],
+  reservation_confirmed_with_guests: ['reservation_cancelled_credit_self', 'reservation_cancelled_self_and_guests', 'reservation_cancelled_guests_credit', 'reservation_cancelled_no_refund', 'reservation_cancelled_credit_partial'],
 };
+
+// Cancelaciones de la PROPIA reserva/participación del usuario (Match titular self, invitado
+// que cancela su plaza, self+invitados, y Rental). Identificación ESTRUCTURADA por template_key
+// (sin leer custom_text). NO incluye reservation_cancelled_guests_credit ni guest_invitation_*
+// (cancelación de/para invitados), que deben seguir sin navegación.
+const OWN_CANCELLATION_TEMPLATES = [
+  'reservation_cancelled_credit_self',
+  'reservation_cancelled_no_refund',
+  'reservation_cancelled_credit_partial',
+  'reservation_cancelled_credit_owner',
+  'reservation_cancelled_self_and_guests',
+];
+// Notificaciones de reserva/confirmación original (llevan reservation_id). invited_by_player se
+// EXCLUYE a propósito: no guarda reservation_id → correlación por ciclo imposible (limitación
+// ya auditada y aceptada).
+const ORIGINAL_CONFIRMATION_TEMPLATES = ['reservation_confirmed', 'reservation_confirmed_with_guests'];
+// Notificación ORIGINAL de invitación recibida por el invitado (lleva reservation_id desde el
+// cambio B). Se correlaciona con guest_invitation_cancelled_by_owner por reservation_id.
+const ORIGINAL_INVITATION_TEMPLATES = ['invited_by_player'];
 
 const _DOW = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const _MON = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -401,6 +420,21 @@ export default function Notifications() {
         const { data } = await q.maybeSingle();
         return data ?? null;
       };
+      // Rental vivo: NO tiene game_players; se comprueba por el estado real del game
+      // (type='rental' + status='reserved' + booked_by_user_id = usuario actual). Destino
+      // propio de rental: /rental/:gameId (Perfil abre los rentals por esa misma ruta).
+      const findAliveRental = async () => {
+        if (!supabase || !user?.id || !notif.gameId) return false;
+        const { data } = await supabase
+          .from('games')
+          .select('id')
+          .eq('id', notif.gameId)
+          .eq('type', 'rental')
+          .eq('status', 'reserved')
+          .eq('booked_by_user_id', user.id)
+          .maybeSingle();
+        return !!data;
+      };
       // Cancelación relacionada más cercana (idéntico: filter + reduce). Correlación por
       // reservation_id; fallback por game_id si la notificación no lo tiene.
       const matchesReservation = notif.reservationId
@@ -432,11 +466,68 @@ export default function Notifications() {
       }
 
       // Reservas propias (nueva regla): "reserva viva" tiene prioridad sobre la cancelación.
-      const alive = await findAlive();          // Casos A/B: titular o invitado confirmado
+      const alive = await findAlive();          // Match vivo: titular o invitado confirmado
       if (alive) { openGameIfLive(alive.games); return; }
-      const related = findCancellation();       // Caso C: nada confirmado → cancelación más cercana
+      if (await findAliveRental()) { navigate(`/rental/${notif.gameId}`); return; } // Rental vivo
+      const related = findCancellation();       // nada vivo → cancelación del mismo ciclo (reservation_id)
       if (related) { setHighlightedNotifId(related.id); return; }
       return;
+    }
+
+    // ── NUEVO (aislado, reversible): navegación INVERSA desde una cancelación PROPIA.
+    // Estos template_key NO son claves de CANCELLATION_TEMPLATES, así que la rama anterior no
+    // los intercepta; aquí decidimos el destino según el estado ACTUAL. No modifica helpers ni
+    // ramas existentes. Partido aún relevante → Perfil + highlight; si ya no queda nada suyo →
+    // confirmación original del MISMO reservation_id (scroll/highlight in-screen); sin destino
+    // fiable (p. ej. invitado sin reservation_id en su invitación) → comportamiento actual.
+    if (OWN_CANCELLATION_TEMPLATES.includes(notif?.templateKey) && notif?.gameId) {
+      // "Partido relevante" = MISMA semántica que el fallback de findAlive: existe ≥1 game_player
+      // CONFIRMADO del usuario (plaza propia O invitados propios) en ese game. (Rental no tiene
+      // game_players → false → va a la confirmación original.)
+      const stillRelevant = await (async () => {
+        if (!supabase || !user?.id) return false;
+        const { data } = await supabase
+          .from('game_players')
+          .select('id')
+          .eq('game_id', notif.gameId)
+          .eq('status', 'confirmed')
+          .or(`user_id.eq.${user.id},payer_id.eq.${user.id},invited_by_user_id.eq.${user.id}`)
+          .limit(1)
+          .maybeSingle();
+        return !!data;
+      })();
+      if (stillRelevant) { navigate('/profile', { state: { highlightGame: notif.gameId } }); return; }
+      if (notif.reservationId) {
+        const original = notifications
+          .filter(n => ORIGINAL_CONFIRMATION_TEMPLATES.includes(n.templateKey) && n.reservationId === notif.reservationId && n.createdAt < notif.createdAt)
+          .reduce((latest, n) => !latest || n.createdAt > latest.createdAt ? n : latest, null);
+        if (original) { setHighlightedNotifId(original.id); return; }
+      }
+      // Sin destino fiable → cae al comportamiento actual (expand/collapse) más abajo.
+    }
+
+    // ── NUEVO (aislado): cancelación de INVITADOS del titular → confirmación del MISMO lote.
+    // Reutiliza EXACTAMENTE la misma correlación por reservation_id y el mismo highlight que la
+    // rama de arriba. Solo reservation_cancelled_guests_credit; nunca Profile. Sin reservation_id
+    // o sin confirmación cargada → comportamiento actual (expand). No usa game_id/nombres/texto.
+    if (notif?.templateKey === 'reservation_cancelled_guests_credit' && notif.reservationId) {
+      const original = notifications
+        .filter(n => ORIGINAL_CONFIRMATION_TEMPLATES.includes(n.templateKey) && n.reservationId === notif.reservationId && n.createdAt < notif.createdAt)
+        .reduce((latest, n) => !latest || n.createdAt > latest.createdAt ? n : latest, null);
+      if (original) { setHighlightedNotifId(original.id); return; }
+      // Sin confirmación → cae al comportamiento actual (expand) más abajo.
+    }
+
+    // ── NUEVO (aislado): invitado cancelado por el titular → invitación ORIGINAL del MISMO ciclo.
+    // Misma correlación por reservation_id y mismo highlight. Solo guest_invitation_cancelled_by_owner
+    // (NO guest_invitation_cancelled_credit, que es la del pagador). Sin reservation_id o sin la
+    // invitación cargada (p. ej. invitaciones antiguas) → comportamiento actual (expand). Sin game_id.
+    if (notif?.templateKey === 'guest_invitation_cancelled_by_owner' && notif.reservationId) {
+      const original = notifications
+        .filter(n => ORIGINAL_INVITATION_TEMPLATES.includes(n.templateKey) && n.reservationId === notif.reservationId && n.createdAt < notif.createdAt)
+        .reduce((latest, n) => !latest || n.createdAt > latest.createdAt ? n : latest, null);
+      if (original) { setHighlightedNotifId(original.id); return; }
+      // Sin invitación original → cae al comportamiento actual (expand) más abajo.
     }
     setExpandedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
   }

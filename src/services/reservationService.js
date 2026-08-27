@@ -382,6 +382,7 @@ export async function cancelGamePlayer(gameId, { skipNotification = false } = {}
   await setMatchPublishedIfEmpty(gameId);
   notifyWaitlistUsers(gameId);
 
+  // Movimiento ECONÓMICO (ledger + wallet) SOLO cuando hay crédito. Sin cambios.
   if (refundAmount > 0) {
     const { error: ledgerErr } = await supabase.from('reservations').insert({
       game_id:         gameId,
@@ -396,64 +397,87 @@ export async function cancelGamePlayer(gameId, { skipNotification = false } = {}
     });
     if (ledgerErr) console.error('[cancelGamePlayer] refund ledger insert failed:', ledgerErr);
     await applyRefund(refundTo, refundAmount);
+  }
 
-    if (refundTo === session.user.id) {
-      // Self-paid slot: credit goes back to the canceler.
-      // Caller may pass skipNotification=true when a combined notification will be sent via cancelGuestPlayers.
-      if (!skipNotification) {
+  // Notificación de cancelación SIEMPRE (también sin crédito, tramo <24h). El texto se
+  // ramifica por `hadCredit`; el caso CON crédito queda idéntico. Economía intacta arriba.
+  const hadCredit = refundAmount > 0;
+  // ¿El usuario que cancela conserva invitados PROPIOS activos? (game_players confirmados
+  // que él paga, distintos de su propia plaza). Solo ajusta el COPY.
+  const { count: ownGuestCount } = await supabase
+    .from('game_players')
+    .select('id', { count: 'exact', head: true })
+    .eq('game_id', gameId)
+    .eq('payer_id', session.user.id)
+    .eq('status', 'confirmed')
+    .neq('user_id', session.user.id);
+  const hasActiveOwnGuests = (ownGuestCount ?? 0) > 0;
+
+  if (refundTo === session.user.id) {
+    // Self-paid slot. skipNotification=true cuando el resumen lo enviará cancelGuestPlayers.
+    if (!skipNotification) {
+      const selfCustom = hadCredit
+        ? (hasActiveOwnGuests ? 'Cancelaste tu reserva y aún tienes invitados activos. El crédito fue añadido a tu billetera.' : null)
+        : (hasActiveOwnGuests ? 'Cancelaste tu reserva y aún tienes invitados activos. Por la anticipación (menos de 24 h), no se generó crédito en tu billetera.' : null);
+      supabase.from('notifications').insert({
+        recipient_user_id: session.user.id,
+        source_type:       'venue',
+        delivery_type:     'automatic',
+        category:          hadCredit ? 'refund' : 'reservation',
+        template_key:      hadCredit ? 'reservation_cancelled_credit_self' : 'reservation_cancelled_no_refund',
+        ...(selfCustom ? { custom_text: selfCustom } : {}),
+        game_id:           gameId,
+        reservation_id:    row.reservation_id,
+        created_by:        session.user.id,
+        sent_at:           new Date().toISOString(),
+      }).then(({ error }) => {
+        if (error) console.error('[notif] cancel self (game) failed:', error);
+      });
+    }
+  } else {
+    // Guest slot paid by someone else: fetch both names in one query
+    supabase.from('users_public').select('id, full_name').in('id', [session.user.id, refundTo])
+      .then(({ data: users }) => {
+        const byId = Object.fromEntries((users ?? []).map(u => [u.id, u.full_name]));
+        const cancelerFirst = (byId[session.user.id] ?? '').split(' ')[0] || 'Un jugador';
+        const payerFirst    = (byId[refundTo]         ?? '').split(' ')[0] || 'el titular';
+        // 1 — notify the guest who canceled
         supabase.from('notifications').insert({
           recipient_user_id: session.user.id,
           source_type:       'venue',
           delivery_type:     'automatic',
-          category:          'refund',
-          template_key:      'reservation_cancelled_credit_self',
+          category:          hadCredit ? 'refund' : 'reservation',
+          template_key:      'reservation_cancelled_credit_owner',
+          custom_text:       hadCredit
+            ? (hasActiveOwnGuests
+                ? `Cancelaste la reserva y aún tienes invitados activos. El crédito fue devuelto a ${payerFirst}.`
+                : `Cancelaste la reserva. El crédito fue devuelto a ${payerFirst}.`)
+            : `Cancelaste la reserva. Por la anticipación (menos de 24 h), no se generó crédito a ${payerFirst}.`,
           game_id:           gameId,
           reservation_id:    row.reservation_id,
           created_by:        session.user.id,
           sent_at:           new Date().toISOString(),
         }).then(({ error }) => {
-          if (error) console.error('[notif] reservation_cancelled_credit_self (game) failed:', error);
+          if (error) console.error('[notif] reservation_cancelled_credit_owner failed for guest', session.user.id, error);
         });
-      }
-    } else {
-      // Guest slot paid by someone else: fetch both names in one query
-      supabase.from('users_public').select('id, full_name').in('id', [session.user.id, refundTo])
-        .then(({ data: users }) => {
-          const byId = Object.fromEntries((users ?? []).map(u => [u.id, u.full_name]));
-          const cancelerFirst = (byId[session.user.id] ?? '').split(' ')[0] || 'Un jugador';
-          const payerFirst    = (byId[refundTo]         ?? '').split(' ')[0] || 'el titular';
-          // 1 — notify the guest who canceled
-          supabase.from('notifications').insert({
-            recipient_user_id: session.user.id,
-            source_type:       'venue',
-            delivery_type:     'automatic',
-            category:          'refund',
-            template_key:      'reservation_cancelled_credit_owner',
-            custom_text:       `Cancelaste la reserva. El crédito fue devuelto a ${payerFirst}.`,
-            game_id:           gameId,
-            reservation_id:    row.reservation_id,
-            created_by:        session.user.id,
-            sent_at:           new Date().toISOString(),
-          }).then(({ error }) => {
-            if (error) console.error('[notif] reservation_cancelled_credit_owner failed for guest', session.user.id, error);
-          });
-          // 2 — notify the payer
-          supabase.from('notifications').insert({
-            recipient_user_id: refundTo,
-            source_type:       'venue',
-            delivery_type:     'automatic',
-            category:          'refund',
-            template_key:      'guest_invitation_cancelled_credit',
-            custom_text:       `${cancelerFirst} canceló su invitación. El crédito fue añadido a tu billetera.`,
-            game_id:           gameId,
-            reservation_id:    row.reservation_id,
-            created_by:        session.user.id,
-            sent_at:           new Date().toISOString(),
-          }).then(({ error }) => {
-            if (error) console.error('[notif] guest_invitation_cancelled_credit failed for payer', refundTo, error);
-          });
+        // 2 — notify the payer
+        supabase.from('notifications').insert({
+          recipient_user_id: refundTo,
+          source_type:       'venue',
+          delivery_type:     'automatic',
+          category:          hadCredit ? 'refund' : 'reservation',
+          template_key:      'guest_invitation_cancelled_credit',
+          custom_text:       hadCredit
+            ? `${cancelerFirst} canceló su invitación. El crédito fue añadido a tu billetera.`
+            : `${cancelerFirst} canceló su invitación. Por la anticipación (menos de 24 h), no se generó crédito en tu billetera.`,
+          game_id:           gameId,
+          reservation_id:    row.reservation_id,
+          created_by:        session.user.id,
+          sent_at:           new Date().toISOString(),
+        }).then(({ error }) => {
+          if (error) console.error('[notif] guest_invitation_cancelled_credit failed for payer', refundTo, error);
         });
-    }
+      });
   }
 
   // refundable = veredicto temporal (regla 24h); refundAmount = dinero realmente devuelto.
@@ -532,40 +556,45 @@ export async function cancelGuestPlayers(gameId, guestUserIds, { selfAlsoCancele
       const byId = Object.fromEntries((users ?? []).map(u => [u.id, u.full_name]));
       const payerFirst = (byId[session.user.id] ?? '').split(' ')[0] || 'El titular';
 
-      if (refundAmount > 0) {
-        const titularTemplate = selfAlsoCanceled
-          ? 'reservation_cancelled_self_and_guests'
-          : 'reservation_cancelled_guests_credit';
-        // Agrupar por reservation_id: una notificación-resumen por reserva distinta
-        // (mismo template y texto; solo cambia el subconjunto de invitados).
-        const groups = {};
-        guestRows.forEach(r => { const rid = resByGpId[r.id]; (groups[rid] ??= []).push(r); });
-        Object.entries(groups).forEach(([rid, groupRows]) => {
-          const guestNames = groupRows
-            .map(r => (byId[r.user_id] ?? '').split(' ')[0])
-            .filter(Boolean);
-          const guestNamesStr = guestNames.length === 0 ? 'tus invitados'
-            : guestNames.length === 1 ? guestNames[0]
-            : `${guestNames.slice(0, -1).join(', ')} y ${guestNames[guestNames.length - 1]}`;
-          const titularText = selfAlsoCanceled
-            ? `Cancelaste tu reserva y la de ${guestNamesStr}. El crédito fue añadido a tu billetera.`
-            : `Cancelaste la reserva de ${guestNamesStr}. El crédito fue añadido a tu billetera.`;
-          supabase.from('notifications').insert({
-            recipient_user_id: session.user.id,
-            source_type:       'venue',
-            delivery_type:     'automatic',
-            category:          'refund',
-            template_key:      titularTemplate,
-            custom_text:       titularText,
-            game_id:           gameId,
-            reservation_id:    rid,
-            created_by:        session.user.id,
-            sent_at:           new Date().toISOString(),
-          }).then(({ error }) => {
-            if (error) console.error('[notif]', titularTemplate, 'failed for titular:', session.user.id, error);
-          });
+      // Resumen al titular SIEMPRE (también sin crédito, tramo <24h). Solo cambia el TEXTO
+      // por `hadCredit`; el caso CON crédito queda idéntico. La economía ya se movió arriba.
+      const hadCredit = refundAmount > 0;
+      const titularTemplate = selfAlsoCanceled
+        ? 'reservation_cancelled_self_and_guests'
+        : 'reservation_cancelled_guests_credit';
+      // Agrupar por reservation_id: una notificación-resumen por reserva distinta
+      // (mismo template y texto; solo cambia el subconjunto de invitados).
+      const groups = {};
+      guestRows.forEach(r => { const rid = resByGpId[r.id]; (groups[rid] ??= []).push(r); });
+      Object.entries(groups).forEach(([rid, groupRows]) => {
+        const guestNames = groupRows
+          .map(r => (byId[r.user_id] ?? '').split(' ')[0])
+          .filter(Boolean);
+        const guestNamesStr = guestNames.length === 0 ? 'tus invitados'
+          : guestNames.length === 1 ? guestNames[0]
+          : `${guestNames.slice(0, -1).join(', ')} y ${guestNames[guestNames.length - 1]}`;
+        const titularText = hadCredit
+          ? (selfAlsoCanceled
+              ? `Cancelaste tu reserva y la de ${guestNamesStr}. El crédito fue añadido a tu billetera.`
+              : `Cancelaste la reserva de ${guestNamesStr}. El crédito fue añadido a tu billetera.`)
+          : (selfAlsoCanceled
+              ? `Cancelaste tu reserva y la de ${guestNamesStr}. Por la anticipación (menos de 24 h), no se generó crédito en tu billetera.`
+              : `Cancelaste la reserva de ${guestNamesStr}. Por la anticipación (menos de 24 h), no se generó crédito en tu billetera.`);
+        supabase.from('notifications').insert({
+          recipient_user_id: session.user.id,
+          source_type:       'venue',
+          delivery_type:     'automatic',
+          category:          hadCredit ? 'refund' : 'reservation',
+          template_key:      titularTemplate,
+          custom_text:       titularText,
+          game_id:           gameId,
+          reservation_id:    rid,
+          created_by:        session.user.id,
+          sent_at:           new Date().toISOString(),
+        }).then(({ error }) => {
+          if (error) console.error('[notif]', titularTemplate, 'failed for titular:', session.user.id, error);
         });
-      }
+      });
 
       // Always notify each canceled guest
       guestRows.forEach(r => {
@@ -607,83 +636,30 @@ export async function getMyBookedGameIds(gameIds) {
   return new Set((data || []).map(g => g.id));
 }
 
-// Cancels a rental reservation — no game_players involved.
-// Refund comes from the original spend reservation's subtotal_amount.
-// Idempotent: bails if a refund record already exists for this game+user.
+// Cancela un rental — TRANSPORTE FINO sobre la RPC server-authoritative cancel_rental_self.
+// La RPC es la ÚNICA autoridad: recalcula el tramo 72h/24h con now() del servidor, lee el
+// spend histórico, aplica el refund escalonado + wallet atómicamente, libera el horario y
+// notifica (incluido refund 0). El cliente YA NO lee el spend, ni calcula el refund, ni
+// inserta ledger, ni aplica wallet, ni actualiza public.games (endurecimiento de seguridad).
 export async function cancelRental(gameId) {
   if (!supabase) return { skipped: true };
-  const session = await getSession();
-  if (!session?.user?.id) return { skipped: true };
-  const userId = session.user.id;
+  const { data, error } = await supabase.rpc('cancel_rental_self', { p_game_id: gameId });
+  if (error) return { error };
+  return {
+    refundAmount: Number(data?.refund_amount) || 0,
+    refundPct:    Number(data?.refund_pct) || 0,
+  };
+}
 
-  // Idempotency: block if another user holds the booking.
-  // Allow when booked_by_user_id === userId (normal) OR null (stuck state: booked before migration).
-  const { data: gameData, error: gameCheckErr } = await supabase
-    .from('games').select('booked_by_user_id').eq('id', gameId).single();
-  if (gameCheckErr) {
-    console.warn('[cancelRental] could not verify booker — skipping');
-    return { skipped: true };
-  }
-  const currentBooker = gameData?.booked_by_user_id;
-  if (currentBooker !== null && currentBooker !== userId) {
-    console.warn('[cancelRental] another user holds this booking — skipping');
-    return { skipped: true };
-  }
-
-  const { data: rows, error: findErr } = await supabase
-    .from('reservations')
-    .select('id, subtotal_amount, total_amount')
-    .eq('game_id', gameId)
-    .eq('user_id', userId)
-    .eq('status', 'spend')
-    .order('reserved_at', { ascending: false })
-    .limit(1);
-
-  if (findErr || !rows?.length) {
-    console.warn('[cancelRental] no spend reservation found');
-    return { skipped: true };
-  }
-  const row = rows[0];
-  const refundAmount = row.subtotal_amount ?? row.total_amount ?? 0;
-
-  const { error: ledgerErr } = await supabase.from('reservations').insert({
-    game_id:         gameId,
-    user_id:         userId,
-    canceled_by:     userId,
-    status:          'refund',
-    subtotal_amount: refundAmount,
-    unit_price:      refundAmount,
-    players_count:   1,
-    guest_total:     0,
-    source:          'rental',
-    canceled_at:     new Date().toISOString(),
-    refund_of_reservation_id: row.id,
-  });
-  if (ledgerErr) { console.error('[cancelRental] ledger insert failed:', ledgerErr); return { error: ledgerErr }; }
-
-  if (refundAmount > 0) {
-    await applyRefund(userId, refundAmount);
-
-    supabase.from('notifications').insert({
-      recipient_user_id: userId,
-      source_type:       'venue',
-      delivery_type:     'automatic',
-      category:          'refund',
-      template_key:      'reservation_cancelled_credit_self',
-      game_id:           gameId,
-      created_by:        userId,
-      sent_at:           new Date().toISOString(),
-    }).then(({ error }) => {
-      if (error) console.error('[notif] reservation_cancelled_credit_self (rental) failed:', error);
-    });
-  }
-
-  const { error: gameErr } = await supabase.from('games')
-    .update({ status: 'published', booked_by_user_id: null })
-    .eq('id', gameId);
-  if (gameErr) console.error('[cancelRental] game status update failed:', gameErr);
-
-  return { refundAmount };
+// Preview SOLO para UI: veredicto del servidor del tramo actual (100/50/0) + cortes.
+// NO es la autoridad del dinero; el importe definitivo lo devuelve cancel_rental_self al
+// confirmar (el usuario puede cruzar el límite de 72h/24h con el sheet abierto).
+export async function getRentalCancellationWindow(gameId) {
+  if (!supabase) return { error: new Error('NO_SUPABASE') };
+  const { data, error } = await supabase.rpc('rental_cancellation_window', { p_game_id: gameId });
+  if (error) return { error };
+  const win = Array.isArray(data) ? data[0] : data;
+  return { data: win || null };
 }
 
 // Cancels invited player slots — no wallet movement (net cost was 0).

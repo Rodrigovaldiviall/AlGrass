@@ -9,6 +9,7 @@ import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
 import { useStaff } from '../context/StaffContext';
 import { supabase } from '../lib/supabase';
+import { peruTodayParts } from '../lib/peruTime';
 import { abbreviateName, ensureUserCode, formatDateLabel } from '../utils/format';
 import { GAMES } from '../data/games';
 import { deriveGameState, isGamePast, isGameStarted, gameStartDate } from '../utils/deriveGameState';
@@ -1080,7 +1081,7 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
 
   const [fullName,  setFullName]  = useState(profileData.fullName || userName || '');
-  const [emailVal,  setEmailVal]  = useState(profileData.email || userEmail || '');
+  const [emailVal,  setEmailVal]  = useState(userEmail || profileData.email || '');
   const [emailLocked, setEmailLocked] = useState(!startEmailUnlocked); // "Modificar" abre el campo ya desbloqueado; reutiliza el flujo de edición existente
   const [password,  setPassword]  = useState(profileData.password || '');
   const [pwCurrent, setPwCurrent] = useState('');
@@ -1115,10 +1116,11 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
   const scrollRef    = useRef(null);
   const [activeField,  setActiveField]  = useState(null); // null | 'email' | 'password'
   const [confirmField, setConfirmField] = useState(null);
-  const emailSnapshot    = useRef(profileData.email || userEmail || ''); // confirmed email — never mutated
+  const emailSnapshot    = useRef(userEmail || profileData.email || ''); // confirmed email (auth-authoritative) — never mutated
   const pwSnapshot       = useRef(profileData.password || '');
   const [pendingEmailChange, setPendingEmailChange] = useState(null);
   const [emailChangeError,  setEmailChangeError]  = useState(null);
+  const [emailChangeSaving, setEmailChangeSaving] = useState(false); // envío updateUser({email}) en curso → bloquea "Guardar cambios" hasta que aparezca el aviso o falle
 
   useEffect(() => {
     if (!pwLocked && scrollRef.current) {
@@ -1127,10 +1129,11 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
   }, [pwLocked]);
   const isSocial      = userProvider === 'google' || userProvider === 'facebook';
 
-  const _today    = new Date();
-  const MAX_YEAR  = _today.getFullYear() - 18;
-  const MAX_MONTH = _today.getMonth() + 1;
-  const MAX_DAY   = _today.getDate();
+  // Límite de edad 18+ anclado al día calendario ACTUAL en Lima (no a la zona del dispositivo).
+  const _today    = peruTodayParts();
+  const MAX_YEAR  = _today.year - 18;
+  const MAX_MONTH = _today.month;
+  const MAX_DAY   = _today.day;
 
   const detectedPrefix = detectPrefix(prefixInput);
   const isPeru = detectedPrefix?.code === '+51';
@@ -1186,8 +1189,16 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
       doLockField('email');
       setEmailVal(emailSnapshot.current); // revert synchronously — before any await
       if (supabase) {
+        setEmailChangeSaving(true); // desde la confirmación y durante todo el updateUser
         const { error } = await supabase.auth.updateUser({ email: newEmail }, { emailRedirectTo: window.location.origin + '/email-changed' });
-        if (!error) { setPendingEmailChange(newEmail); setEmailChangeError(null); }
+        setEmailChangeSaving(false); // termina junto con el aviso "Enviamos un correo…" (éxito) o el error
+        if (!error) {
+          setPendingEmailChange(newEmail); setEmailChangeError(null);
+          // Marcador de ORIGEN del cambio (este navegador/contexto). Temporal: lleva el email
+          // solicitado + timestamp; el callback lo consume/valida por TTL. Un cambio nuevo lo
+          // sobrescribe → nunca se interpreta un cambio futuro como una solicitud antigua.
+          try { localStorage.setItem('email_change_origin', JSON.stringify({ email: newEmail, ts: Date.now() })); } catch { /* localStorage no disponible */ }
+        }
         else setEmailChangeError(error.message);
       }
     } else {
@@ -1274,6 +1285,12 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
 
   function save() {
     if (activeField === 'email' || activeField === 'password') return;
+    // Guardia defensiva de edad (18+): la UI ya impide seleccionar un menor; esto evita
+    // persistir una fecha < 18 años si por cualquier vía llegara una combinación inválida.
+    if (birthDay && birthMonth && birthYear &&
+        (birthYear > MAX_YEAR ||
+         (birthYear === MAX_YEAR && birthMonth > MAX_MONTH) ||
+         (birthYear === MAX_YEAR && birthMonth === MAX_MONTH && birthDay > MAX_DAY))) return;
     let finalPassword = password;
     if (!pwLocked) {
       if (pwCurrent === '' && password === '') {
@@ -1335,7 +1352,7 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
     (birthYear === MAX_YEAR && birthMonth === MAX_MONTH) ? MAX_DAY : 31,
   );
   const availableDays   = Array.from({ length: effectiveMaxDay }, (_, i) => i + 1);
-  const availableMonths = MONTH_LABELS;
+  const availableMonths = birthYear === MAX_YEAR ? MONTH_LABELS.slice(0, MAX_MONTH) : MONTH_LABELS;
   const years           = Array.from({ length: MAX_YEAR - 1939 }, (_, i) => MAX_YEAR - i);
 
   const previewName = fullName.trim().split(/\s+/).slice(0, 2).join(' ') || 'Tu nombre';
@@ -1496,7 +1513,7 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
           </div>
         </FieldRow>
 
-        <FieldRow label="Fecha de nacimiento">
+        <FieldRow label="Fecha de nacimiento (+18)">
           <select value={birthDay ?? ''} onChange={e => { const v = Number(e.target.value); if (v) setBirthDay(v); }} style={{ ...selStyle, flex: '0 0 58px' }}>
             {birthDay == null && <option value="" disabled>—</option>}
             {availableDays.map(d => <option key={d} value={d}>{d}</option>)}
@@ -1611,12 +1628,13 @@ function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, u
         </div>
 
 <div style={{ padding: '12px 18px', borderTop: `1px solid ${HAIR}`, flexShrink: 0, position: 'relative', zIndex: 6 }}>
-        <button onClick={save} style={{
+        <button onClick={save} disabled={emailChangeSaving} style={{
           width: '100%', height: 50, borderRadius: 16,
           background: ORANGE, color: '#1B1B1F',
-          border: 'none', cursor: 'pointer',
+          border: 'none', cursor: emailChangeSaving ? 'default' : 'pointer',
           fontSize: 15, fontWeight: 700, letterSpacing: -0.1, fontFamily: 'inherit',
           boxShadow: '0 4px 14px rgba(245,165,36,0.38)',
+          opacity: emailChangeSaving ? 0.5 : 1,
           WebkitTapHighlightColor: 'transparent', outline: 'none',
         }}>
           Guardar cambios
@@ -2629,7 +2647,11 @@ export default function Profile() {
     const allGames = [...past, ...upcoming];
     const match = allGames.find(g => (g.gameId ?? g.id) === gId);
     if (!match) return;
-    if (past.some(g => g.id === match.id)) setPastExpanded(true);
+    if (past.some(g => g.id === match.id)) {
+      setPastExpanded(true);
+    } else if (upcoming.findIndex(g => g.id === match.id) >= 10) {
+      setUpcomingExpanded(true);
+    }
     setHighlightedId(match.id);
   }, [location.key, dataReady, playerDataVersion, contentVisible]); // eslint-disable-line
 

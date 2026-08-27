@@ -90,7 +90,7 @@ export async function materializeReservation(ctx, snapshot) {
       source_type: 'venue', delivery_type: 'automatic', category: 'invitation',
       template_key: 'invited_by_player',
       custom_text: `${_firstName(payerName)} te invitó a jugar. Revisa los detalles.`,
-      game_id: gameId, venue_id: venueId ?? null, created_by: actor,
+      game_id: gameId, venue_id: venueId ?? null, reservation_id: reservationId, created_by: actor,
       sent_at: new Date().toISOString(),
     }).then(({ error }) => { if (error) console.error('[notif] invited_by_player (main) failed for', guest.id, error); });
   });

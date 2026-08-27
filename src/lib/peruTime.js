@@ -1,5 +1,14 @@
 export const TIMEZONE = 'America/Lima'; // UTC-5, no DST
 
+// Partes del día calendario ACTUAL en Lima (año/mes/día), sin desfase por la zona
+// del dispositivo. 'en-CA' produce 'YYYY-MM-DD'; se separa solo para extraer números.
+export function peruTodayParts() {
+  const [year, month, day] = new Date()
+    .toLocaleDateString('en-CA', { timeZone: TIMEZONE })
+    .split('-').map(Number);
+  return { year, month, day };
+}
+
 // Pure UTC epoch comparison — no timezone conversion needed for "has this moment passed?"
 export function isExpiredPeru(expiresAt) {
   if (!expiresAt) return false;

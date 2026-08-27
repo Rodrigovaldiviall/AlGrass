@@ -91,6 +91,25 @@ export const notificationTemplates = {
     imageType:   'venue_image',
   },
 
+  // Cancelación dentro de las 24h (sin crédito). Compartida por Rental 0% (cancel_rental_self)
+  // y Match titular 0% (cancelGamePlayer). Lenguaje de crédito de billetera (AlGrass no
+  // "reembolsa" al medio de pago). Variantes con nombres/invitados llegan por custom_text.
+  reservation_cancelled_no_refund: {
+    title:       'Reserva cancelada',
+    body:        'Cancelaste tu reserva. Por la anticipación (menos de 24 h), no se generó crédito en tu billetera.',
+    sourceLabel: 'Tu partido',
+    imageType:   'venue_image',
+  },
+
+  // Rental cancelado en el tramo del 50% (crédito parcial en billetera). Dedicada a Rental
+  // para NO tocar la template compartida del 100% (reservation_cancelled_credit_self).
+  reservation_cancelled_credit_partial: {
+    title:       'Reserva cancelada',
+    body:        'Cancelaste tu reserva. Por la anticipación (menos de 72 h), se generó un crédito del 50% en tu billetera.',
+    sourceLabel: 'Tu partido',
+    imageType:   'venue_image',
+  },
+
   reservation_cancelled_credit_owner: {
     title:       'Cancelaste tu invitación',
     body:        'Cancelaste la reserva. El crédito fue devuelto al titular.',

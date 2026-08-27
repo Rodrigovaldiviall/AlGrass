@@ -28,6 +28,7 @@ function tabFromPath(pathname) {
   if (ROOT_ROUTES[pathname]) return ROOT_ROUTES[pathname];
   // Prefix-rooted sub-paths (e.g. /profile/x, /fields/x)
   if (pathname.startsWith('/profile'))       return 'perfil';
+  if (pathname.startsWith('/email-changed')) return 'perfil'; // cierre del cambio de correo → Continuar lleva a Perfil
   if (pathname.startsWith('/notifications')) return 'notificaciones';
   if (pathname.startsWith('/fields'))        return 'campos';
   if (pathname.startsWith('/games'))         return 'partidos';

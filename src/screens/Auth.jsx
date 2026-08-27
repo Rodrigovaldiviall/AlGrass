@@ -479,7 +479,9 @@ export default function AuthScreen() {
     } catch {}
     return 'signup';
   });
-  const [email, setEmail]           = useState(_legalResume.email);
+  // prefillEmail: cambio de correo confirmado en otro contexto → Ingresar con el nuevo correo ya
+  // puesto (llega por location.state, nunca por URL/query). La contraseña NUNCA se transporta.
+  const [email, setEmail]           = useState(_legalResume.email || state?.prefillEmail || '');
   const [pass, setPass]             = useState('');
   const [name, setName]             = useState(_legalResume.name);
   const [accept, setAccept]         = useState(false);

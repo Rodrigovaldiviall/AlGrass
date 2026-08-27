@@ -959,6 +959,12 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
   const [titularChecked, setTitularChecked]   = useState(false);
   const [checkedGuests, setCheckedGuests]     = useState(new Set());
   const [capturedRefund, setCapturedRefund]   = useState(0);
+  // Solo presentación: crédito devuelto al PAYER (cuando el usuario actual, invitado por otro,
+  // cancela su propia plaza). Separado de capturedRefund (crédito a "tu perfil") para no sumarlos.
+  const [capturedPayerRefund, setCapturedPayerRefund] = useState(0);
+  // Captura la acción posterior existente (arg de onDone) para dispararla al pulsar
+  // "Entendido" en vez de por autocierre; null tras usarla → evita doble ejecución.
+  const doneActionRef = useRef(null);
   const [selfChecked, setSelfChecked]         = useState(false);
 
   const parsedPrice   = parseFloat((price || '').replace(/[^\d.]/g, '').replace(/^\./, '')) || 0;
@@ -1002,6 +1008,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
       // (no la estimación `totalRefund` del preview). Solo se suman operaciones que se
       // EJECUTARON (ni skipped ni error).
       let realRefundAmount = 0;
+      let payerRefundAmount = 0; // crédito que va al PAYER (plaza invitada del usuario actual)
       if (isGuest) {
         removePlayers(gameId, [...checkedGuests, ...(effectiveSelfChecked ? [guestId] : [])]);
         if (effectiveSelfChecked) {
@@ -1025,7 +1032,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
           }
           const { skipped: s1, error: e1, refundAmount: rA1 } = await cancelGamePlayer(gameId);
           if (!s1 && e1) console.error('[cancel] guest self failed:', e1);
-          if (!s1 && !e1) realRefundAmount += (rA1 || 0);
+          if (!s1 && !e1) payerRefundAmount += (rA1 || 0); // el reembolso de la plaza invitada se acredita al PAYER
         }
         if (checkedGuests.size > 0) {
           const { skipped: s2, error: e2, refundAmount: rA2 } = await cancelGuestPlayers(gameId, [...checkedGuests]);
@@ -1074,8 +1081,11 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
         }
       }
       setCapturedRefund(realRefundAmount);
+      setCapturedPayerRefund(payerRefundAmount);
+      // Misma acción posterior que ejecutaba el autocierre; ahora se dispara al pulsar
+      // "Entendido" (sin timeout). El ref preserva el arg exacto y evita doble ejecución.
+      doneActionRef.current = { titularCanceled: !isGuest && effectiveTitularChecked };
       setStep('done');
-      setTimeout(() => onDone({ titularCanceled: !isGuest && effectiveTitularChecked }), 1600);
     }, 1800);
   }
 
@@ -1252,15 +1262,26 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
               <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke={GREEN} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </div>
             <div style={{ fontSize: 17, fontWeight: 700, color: TEXT }}>Cancelación procesada</div>
-            {capturedRefund > 0 ? (
+            {capturedPayerRefund > 0 && (
+              <div style={{ fontSize: 14, color: SUB, textAlign: 'center', lineHeight: 1.45 }}>
+                Se generó un crédito de <strong style={{ color: GREEN }}>{fmt(capturedPayerRefund)}</strong> a {payerName || 'quien te invitó'}.
+              </div>
+            )}
+            {capturedRefund > 0 && (
               <div style={{ fontSize: 14, color: SUB, textAlign: 'center', lineHeight: 1.45 }}>
                 Se generó un crédito de <strong style={{ color: GREEN }}>{fmt(capturedRefund)}</strong> en tu perfil.
               </div>
-            ) : (
+            )}
+            {capturedPayerRefund <= 0 && capturedRefund <= 0 && (
               <div style={{ fontSize: 14, color: SUB, textAlign: 'center', lineHeight: 1.45 }}>
                 Asistencia cancelada.
               </div>
             )}
+            <button
+              onClick={() => { const p = doneActionRef.current; if (!p) return; doneActionRef.current = null; onDone(p); }}
+              style={{ width: '100%', height: 50, borderRadius: 14, background: BLUE, color: '#fff', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 700, fontFamily: 'inherit', marginTop: 8, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+              Entendido
+            </button>
           </div>
         )}
       </div>
@@ -1522,7 +1543,9 @@ export default function GameDetail() {
       sent_at: new Date().toISOString(),
     }).then(({ error: nErr }) => { if (nErr) console.error('[notif]', template_key, 'failed:', nErr); });
     const { data } = await supabase.rpc('get_slot_reservation', { p_game_id: gameId });
-    setSlotRes(Array.isArray(data) ? data[0] : data);
+    const snap = Array.isArray(data) ? data[0] : data;
+    setSlotRes(snap);
+    setUserSlot(snap); // el badge del header (used/total) lee de userSlot → refrescar ya, sin recargar (mismo origen RPC)
     return true;
   }
   const [cancelOpen,  setCancelOpen]  = useState(false);

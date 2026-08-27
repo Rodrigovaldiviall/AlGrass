@@ -166,6 +166,7 @@ function PlayerRow({ p, checked, onToggle, rostered = false }) {
 // ── AddPlayers sub-screen ──────────────────────────────────────────────────
 
 function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, maxGuests = 99, spotsCount, isInscribed = false, gameId, rosterPlayerIds = new Set(), hostUserId = null }) {
+  const { user: authUser } = useAuth();
   const favorites  = getFavorites(paidPlayers);
   const hasAnyData = paidPlayers.length > 0;
 
@@ -178,6 +179,10 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
   const [sbPlayerMap, setSbPlayerMap] = useState({});
 
   const q = query.trim().toLowerCase();
+
+  // Reutiliza EXACTAMENTE la misma acción de compartir del botón del header (no es un flujo nuevo).
+  const shareInvite = () => shareOrCopy({ url: buildGameShareUrl(gameId, { sharedByUserId: authUser?.id }), onCopied: () => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); } });
+  const linkWordStyle = { color: ORANGE, fontWeight: 700, cursor: 'pointer' };
 
   useEffect(() => {
     if (!q) { setSbResults([]); return; }
@@ -318,12 +323,24 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
         {noMatchAtAll && (
           <div style={{ padding: '40px 24px', textAlign: 'center', color: SUB, fontSize: 14 }}>
             Ningún jugador coincide con "{query}".
+            <div style={{ marginTop: 8, fontSize: 13 }}>
+              Compártele el <span onClick={shareInvite} style={linkWordStyle}>link</span> para que se registre.
+            </div>
           </div>
         )}
 
         {q && !noMatchAtAll && listBelow.map(p => (
           <PlayerRow key={p.id} p={p} checked={false} rostered={rosterPlayerIds.has(p.id) || p.id === hostUserId} onToggle={() => toggle(p.id)} />
         ))}
+
+        {q && !noMatchAtAll && (
+          <div style={{ padding: '12px 24px 20px', textAlign: 'center', color: SUB, fontSize: 13 }}>
+            ¿No lo encuentras?
+            <div style={{ marginTop: 2 }}>
+              Compártele el <span onClick={shareInvite} style={linkWordStyle}>link</span> para que se registre.
+            </div>
+          </div>
+        )}
 
         {!q && hasAnyData && listBelow.length > 0 && (
           <>
@@ -1120,7 +1137,7 @@ export default function ConfirmReservation() {
               source_type: 'venue', delivery_type: 'automatic', category: 'invitation',
               template_key: 'invited_by_player',
               custom_text: 'AlGrass te invitó a jugar. Revisa los detalles.',
-              game_id: gameId, venue_id: game?.venueId ?? null,
+              game_id: gameId, venue_id: game?.venueId ?? null, reservation_id: reservationId,
               created_by: authUser?.id,
               sent_at: new Date().toISOString(),
             }).then(({ error }) => {
@@ -1195,7 +1212,7 @@ export default function ConfirmReservation() {
               source_type: 'venue', delivery_type: 'automatic', category: 'invitation',
               template_key: 'invited_by_player',
               custom_text: `${firstName(authUser?.name)} te invitó a jugar. Revisa los detalles.`,
-              game_id: gameId, venue_id: game?.venueId ?? null,
+              game_id: gameId, venue_id: game?.venueId ?? null, reservation_id: reservationId,
               created_by: authUser?.id,
               sent_at: new Date().toISOString(),
             }).then(({ error }) => {
