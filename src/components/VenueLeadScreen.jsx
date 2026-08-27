@@ -73,7 +73,7 @@ export default function VenueLeadScreen({ onClose, defaultCity = '' }) {
       <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 20, paddingRight: 20, flexShrink: 0 }}>
         <div style={{ height: 44, display: 'flex', alignItems: 'center', position: 'relative' }}>
           <div style={{ position: 'absolute', left: 0, right: 0, textAlign: 'center', pointerEvents: 'none', padding: '0 44px' }}>
-            <span style={{ color: '#fff', fontSize: 16, fontWeight: 600, letterSpacing: -0.2 }}>¿Eres dueño de una cancha?</span>
+            <span style={{ color: '#fff', fontSize: 16, fontWeight: 600, letterSpacing: -0.2 }}>Dueño de cancha</span>
           </div>
           <button
             onClick={onClose}

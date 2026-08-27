@@ -1477,9 +1477,18 @@ export default function GameDetail() {
   const [waitlistReady, setWaitlistReady] = useState(false);
   const [showWaitlistAuth, setShowWaitlistAuth] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
-  const [modifyOpen, setModifyOpen] = useState(false);
+  const [modifyOpen, setModifyOpen] = useState(() => {
+    // Reabre "Gestionar mi reserva" al remontar tras cancelar en "Agregar invitados" (checkout).
+    try { if (sessionStorage.getItem('gd_reopen_modify') === gameId) { sessionStorage.removeItem('gd_reopen_modify'); return true; } } catch { /* sessionStorage no disponible */ }
+    return false;
+  });
   const [reserveSlotsOpen, setReserveSlotsOpen] = useState(false);
   const [reserveConfirm, setReserveConfirm] = useState(null); // outcome tras guardar (ver ReserveSlotsSheet.onConfirmed)
+  // Al descartar una sub-opción de "Gestionar mi reserva" se reabre el sheet (no se pierde el flujo).
+  // ReserveSlots se abre TAMBIÉN desde el enlace "Reserva de Cupos activa": solo se reabre modify
+  // si vino DE modify (fromModify) y NO se guardó (saved).
+  const reserveSlotsFromModifyRef = useRef(false);
+  const reserveSlotsSavedRef      = useRef(false);
   const [slotRes, setSlotRes] = useState(null);
   const { isCaptain, isCaptainGold } = useGlobalRoles();
   // Al abrir "Gestionar mi reserva" precargamos slotRes con la MISMA RPC
@@ -1505,7 +1514,9 @@ export default function GameDetail() {
     }
   }
   // "Reservar cupos": reutiliza el slotRes ya cargado (no re-llama la RPC si existe).
-  async function openReserveSlots() {
+  async function openReserveSlots(fromModify = false) {
+    reserveSlotsFromModifyRef.current = !!fromModify;
+    reserveSlotsSavedRef.current = false;
     setModifyOpen(false);
     // Ventana de liberación alcanzada: no abrir el sheet (además del botón ya deshabilitado).
     // Regla temporal, independiente del estado de la R1.
@@ -1864,6 +1875,9 @@ export default function GameDetail() {
 
   function handleAddGuests() {
     setModifyOpen(false);
+    // "Agregar invitados" navega a checkout (pantalla completa). Si el usuario cancela allí,
+    // vuelve con navigate(-1) → este marcador reabre "Gestionar mi reserva" al remontar GameDetail.
+    try { sessionStorage.setItem('gd_reopen_modify', gameId); } catch { /* sessionStorage no disponible */ }
     const addGuestPrice = sbGame?.price ?? g.paymentBreakdown?.unitPrice ?? g.priceNumber;
     if (isHost) {
       navigate('/checkout', { state: {
@@ -1988,7 +2002,7 @@ export default function GameDetail() {
           {_slotsBadge && (
             <div style={{ padding: '7px 16px 0', display: 'flex', justifyContent: 'center' }}>
               <span style={{ padding: '6px 14px', borderRadius: 12, background: '#EEF2FF', fontSize: 12, fontWeight: 500, color: TEXT, lineHeight: 1.4, textAlign: 'center' }}>
-                Tienes una <button onClick={openReserveSlots} style={{ display: 'inline', padding: 0, margin: 0, background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', fontWeight: 700, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Reserva de Cupos</button> activa.
+                Tienes una <button onClick={() => openReserveSlots(false)} style={{ display: 'inline', padding: 0, margin: 0, background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', fontWeight: 700, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Reserva de Cupos</button> activa.
               </span>
             </div>
           )}
@@ -2300,7 +2314,7 @@ export default function GameDetail() {
           slotCanceled={mySlotCanceled}
           windowClosed={slotReservationClosed}
           noSlots={effectiveAvailability === 0}
-          onReserveSlots={openReserveSlots}
+          onReserveSlots={() => openReserveSlots(true)}
           reservedUsed={slotRes?.reserved_slots_used ?? 0}
           reservedTotal={slotRes?.reserved_slots_total ?? 0}
           within24h={cancelWithin24h}
@@ -2315,8 +2329,8 @@ export default function GameDetail() {
           releaseHours={releaseHours}
           shareLink={buildGameShareUrl(gameId, { sharedByUserId: user?.id })}
           onAccept={saveReserveSlots}
-          onConfirmed={setReserveConfirm}
-          onClose={() => setReserveSlotsOpen(false)}
+          onConfirmed={(r) => { reserveSlotsSavedRef.current = true; setReserveConfirm(r); }}
+          onClose={() => { setReserveSlotsOpen(false); if (reserveSlotsFromModifyRef.current && !reserveSlotsSavedRef.current) setModifyOpen(true); }}
         />
       )}
       {/* Confirmación final: entra cuando el sheet ya cerró. Reutiliza ConfirmedOverlay
@@ -2342,7 +2356,7 @@ export default function GameDetail() {
           gameId={gameId}
           invitedPlayers={invitedByHost}
           unitPrice={liveUnitPrice}
-          onClose={() => setHostCancelInvitedOpen(false)}
+          onClose={() => { setHostCancelInvitedOpen(false); setModifyOpen(true); }}
           onDone={() => { setHostCancelInvitedOpen(false); fetchRoster(); }}
         />
       )}
@@ -2356,7 +2370,7 @@ export default function GameDetail() {
           titularCanceled={titularCanceled || guestCanceledView || mySlotCanceled}
           activeGuestCount={isGuest ? guestOwnGuests.length : (isCanceledWithGuests ? activeList.length : guestsInRoster.length)}
           guestSubBreakdown={isGuest ? g.guestSubBreakdown : null}
-          onClose={() => setPaymentDetailOpen(false)}
+          onClose={() => { setPaymentDetailOpen(false); setModifyOpen(true); }}
         />
       )}
       {cancelOpen && (
@@ -2376,7 +2390,7 @@ export default function GameDetail() {
           slotAmounts={myAmounts}
           selfUserId={user?.id}
           within24h={cancelWithin24h}
-          onClose={() => setCancelOpen(false)}
+          onClose={() => { setCancelOpen(false); setModifyOpen(true); }}
           onDone={handleCancelDone}
         />
       )}

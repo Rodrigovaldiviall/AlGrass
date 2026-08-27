@@ -749,6 +749,14 @@ export default function Settings() {
             right={<ChevRight />}
             bold
           />
+          <Sep />
+          <Row
+            label="¿Eres el capitán que arma las pichangas?"
+            sublabel="Obtén beneficios."
+            onPress={() => navigate('/captain-request')}
+            right={<ChevRight />}
+            bold
+          />
         </Section>
 
         {/* 4. Cuenta */}

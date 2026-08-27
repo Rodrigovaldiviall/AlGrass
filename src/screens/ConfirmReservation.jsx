@@ -1338,7 +1338,7 @@ export default function ConfirmReservation() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0' }}>
               <Avatar name={canonicalName} hue={selfAvatar.hue ?? 210} size={44} avatarPath={selfAvatar.path} avatarVersion={selfAvatar.version} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 15.5, fontWeight: 700, color: TEXT, letterSpacing: -0.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{canonicalName}</div>
+                <div style={{ fontSize: 15.5, fontWeight: 700, color: TEXT, letterSpacing: -0.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{canonicalName} <span style={{ color: SUB, fontWeight: 600 }}>(Tú)</span></div>
                 <div style={{ fontSize: 12.5, color: SUB, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</div>
               </div>
               <div style={{ fontSize: 14, fontWeight: 600, color: SUB, flexShrink: 0 }}>{unitStr}</div>

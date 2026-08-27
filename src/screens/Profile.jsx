@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, RED, DANGER } from '../constants';
+import { POSITIONS, detectPrefix, MONTH_LABELS, calcAge } from '../utils/profileData';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faHeadset, faCoins, faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';
 import { SupportMenu } from '../components/SupportMenu';
@@ -38,7 +39,6 @@ const USER = {
 
 
 
-const POSITIONS = ['DEL', 'MED', 'DEF', 'ARQ'];
 
 const DEFAULT_COUNTRIES = [
   'Perú', 'Venezuela', 'Colombia', 'Ecuador', 'Argentina', 'Bolivia',
@@ -88,32 +88,6 @@ const COUNTRIES = [
   'Yemen', 'Zimbabue',
 ];
 
-const PREFIX_DATA = [
-  { code: '+51',  digits: '51',  label: 'Perú',          exact: 9 },
-  { code: '+54',  digits: '54',  label: 'Argentina' },
-  { code: '+591', digits: '591', label: 'Bolivia' },
-  { code: '+55',  digits: '55',  label: 'Brasil' },
-  { code: '+56',  digits: '56',  label: 'Chile' },
-  { code: '+86',  digits: '86',  label: 'China' },
-  { code: '+57',  digits: '57',  label: 'Colombia' },
-  { code: '+593', digits: '593', label: 'Ecuador' },
-  { code: '+34',  digits: '34',  label: 'España' },
-  { code: '+1',   digits: '1',   label: 'Estados Unidos' },
-  { code: '+595', digits: '595', label: 'Paraguay' },
-  { code: '+598', digits: '598', label: 'Uruguay' },
-  { code: '+58',  digits: '58',  label: 'Venezuela' },
-];
-
-function detectPrefix(input) {
-  const d = input.replace(/[^\d]/g, '');
-  for (const len of [3, 2, 1]) {
-    const found = PREFIX_DATA.find(p => p.digits === d.slice(0, len));
-    if (found) return found;
-  }
-  return null;
-}
-
-const MONTH_LABELS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
 const PROFILE_KEY      = 'pichanga_profile';
 const STORAGE_KEY      = 'pichanga_reservations';
@@ -276,16 +250,6 @@ function deriveMatchCards(myPlayerRows, payerNames, userId) {
     }
   }
   return result;
-}
-
-function calcAge(day, month, year) {
-  if (!day || !month || !year) return null;
-  const today = new Date();
-  const born  = new Date(year, month - 1, day);
-  let age = today.getFullYear() - born.getFullYear();
-  const m = today.getMonth() - born.getMonth();
-  if (m < 0 || (m === 0 && today.getDate() < born.getDate())) age--;
-  return age >= 0 ? age : null;
 }
 
 function isPast(g)    { return isGamePast(g.dateKey, g.time24, g.durationMin); }
@@ -702,7 +666,7 @@ function ProfileCard({ user, gamesPlayedCount, onEdit, onEditEmail, onConfirmEma
 
 // ── Edit modal helpers (must be outside EditProfileModal to keep stable identity) ──
 
-function FieldRow({ label, children }) {
+export function FieldRow({ label, children }) {
   return (
     <div style={{ marginBottom: 9 }}>
       <div style={{ fontSize: 11, color: SUB, marginBottom: 3, letterSpacing: 0.1 }}>{label}</div>
@@ -724,7 +688,7 @@ function smoothScrollTo(el, target, ms = 250) {
   requestAnimationFrame(tick);
 }
 
-function NationalityPicker({ value, onChange }) {
+export function NationalityPicker({ value, onChange }) {
   const [open,    setOpen]    = useState(false);
   const [search,  setSearch]  = useState('');
   const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
@@ -887,7 +851,7 @@ function NationalityPicker({ value, onChange }) {
   );
 }
 
-function CityPicker({ value, onChange }) {
+export function CityPicker({ value, onChange }) {
   const [open,    setOpen]    = useState(false);
   const [search,  setSearch]  = useState('');
   const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });

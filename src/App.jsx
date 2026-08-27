@@ -104,6 +104,7 @@ const VenueDetail   = lazy(() => import('./screens/VenueDetail'));
 const Notifications = lazy(() => import('./screens/Notifications'));
 const LegalPage     = lazy(() => import('./screens/LegalPage'));
 const EmailChanged  = lazy(() => import('./screens/EmailChanged'));
+const CaptainRequest = lazy(() => import('./screens/CaptainRequest'));
 
 const WELCOME_KEY = 'pichanga_welcome_seen';
 
@@ -200,6 +201,7 @@ export default function App() {
               <Route path="/venue" element={<VenueDetail />} />
               <Route path="/notifications" element={<Notifications />} />
               <Route path="/email-changed" element={<EmailChanged />} />
+              <Route path="/captain-request" element={<CaptainRequest />} />
               <Route path="/privacy" element={<LegalPage type="privacy" />} />
               <Route path="/terms" element={<LegalPage type="terms" />} />
               <Route path="/organizer" element={<Placeholder title="Organizador" />} />
