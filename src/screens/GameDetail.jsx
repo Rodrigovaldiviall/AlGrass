@@ -1991,7 +1991,7 @@ export default function GameDetail() {
           {_slotsBadge && (
             <div style={{ padding: '7px 16px 0', display: 'flex', justifyContent: 'center' }}>
               <span style={{ padding: '6px 14px', borderRadius: 12, background: '#EEF2FF', fontSize: 12, fontWeight: 500, color: TEXT, lineHeight: 1.4, textAlign: 'center' }}>
-                Tienes una <button onClick={() => openReserveSlots(false)} style={{ display: 'inline', padding: 0, margin: 0, background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', fontWeight: 700, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Reserva de Cupos</button> activa.
+                Tienes una <button onClick={handleAddGuests} style={{ display: 'inline', padding: 0, margin: 0, background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit', fontWeight: 700, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>lista</button> activa.
               </span>
             </div>
           )}

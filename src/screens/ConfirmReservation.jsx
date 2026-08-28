@@ -787,6 +787,12 @@ export default function ConfirmReservation() {
   const [promoError, setPromoError]     = useState('');
   const [promoLoading, setPromoLoading] = useState(false);
   const [freeConfirming, setFreeConfirming] = useState(false);
+  // Compartir/copiar el link del partido (icono del TopBar + cupo reservado en "Gestionar mi lista").
+  const [linkCopied, setLinkCopied] = useState(false);
+  const _flashCopied = () => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); };
+  const _gameLink = () => buildGameShareUrl(game?.id, { sharedByUserId: authUser?.id });
+  const shareGameLink = () => shareOrCopy({ url: _gameLink(), onCopied: _flashCopied });
+  const copyGameLink = () => { try { navigator.clipboard?.writeText(_gameLink()).then(_flashCopied).catch(() => {}); } catch { /* sin portapapeles */ } };
   const [capacityError, setCapacityError]   = useState(null);
   // Confirmación de la Order: un ÚNICO timer de polling (pollTimerRef), un guard de
   // "ya resuelto" (evita navegación/terminal duplicados) y un guard de montaje (evita
@@ -919,6 +925,10 @@ export default function ConfirmReservation() {
   const maxSelectable = (otherCount) => spotBudget == null ? undefined : Math.max(0, spotBudget - otherCount);
   // piso de N: titular + invitados directos (existentes de mi lista + los nuevos de esta edición).
   const listFloor     = 1 + (armaListaMode ? directosLista.length : 0) + guests.length;
+  // Piso MÍNIMO del contador: al armar la lista se reservan al menos 2 (titular + 1 cupo), aunque
+  // estés solo. Con invitados el piso real ya es ≥2. No afecta al conteo de "pre-inscritos" ni a
+  // los cupos vacíos (esos siguen usando listFloor real).
+  const listFloorMin  = Math.max(listFloor, 2);
   // Con Arma la lista ON, N (reservedSlots) YA incluye titular+invitados; el cap de invitados
   // no debe descontar N (los invitados llenan cupos de N o suben N). OFF: comportamiento actual.
   const guestSlots    = maxSelectable(armaLista ? 0 : reservedSlots);   // máx invitados
@@ -980,13 +990,13 @@ export default function ConfirmReservation() {
   // Arma la lista: ON pone N = max(piso, último N); OFF apaga la reserva (reservedSlots=0) y recuerda N.
   function toggleArmaLista() {
     if (armaLista) { setLastN(reservedSlots); setReservedSlots(0); setArmaLista(false); }
-    else { setReservedSlots(Math.max(listFloor, lastN)); setArmaLista(true); }
+    else { setReservedSlots(Math.max(listFloorMin, lastN)); setArmaLista(true); }
   }
   // Agregar un invitado sube N automáticamente si el nuevo piso lo supera; quitar NO baja N.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (armaLista && reservedSlots < listFloor) setReservedSlots(listFloor);
-  }, [armaLista, reservedSlots, listFloor]);
+    if (armaLista && reservedSlots < listFloorMin) setReservedSlots(listFloorMin);
+  }, [armaLista, reservedSlots, listFloorMin]);
   const emptySlots = armaLista ? Math.max(0, reservedSlots - listFloor) : 0; // cupos vacíos de la Lista
   const stepBtn = (onClick, disabled, plus) => (
     <button onClick={onClick} disabled={disabled}
@@ -1452,7 +1462,15 @@ export default function ConfirmReservation() {
         </div>
       )}
       <TopBar
-        title={invitedMode ? 'Agregar jugadores' : addGuestsMode ? 'Agregar invitados' : isRental ? 'Reservar cancha' : 'Confirmación de reserva'}
+        title={invitedMode ? 'Agregar jugadores' : armaListaMode ? 'Gestionar mi lista' : addGuestsMode ? 'Agregar invitados' : isRental ? 'Reservar cancha' : 'Confirmación de reserva'}
+        rightNode={armaListaMode ? (
+          <button onClick={shareGameLink} aria-label="Compartir" style={{ width: 34, height: 34, borderRadius: '50%', background: SOFT, border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M12 3v11M12 3L8 7M12 3l4 4" stroke={TEXT} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M6 11v8a1 1 0 001 1h10a1 1 0 001-1v-8" stroke={TEXT} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+        ) : undefined}
         onCancel={() => {
           if (addGuestsMode || invitedMode) { navigate(-1); return; }
           const dest = game?.backPath ?? (isRental || game?.source === 'campo' ? '/fields' : '/games');
@@ -1531,7 +1549,7 @@ export default function ConfirmReservation() {
           <div style={{ padding: '0 16px' }}>
             {/* Contador N (total de la lista). Piso = titular + invitados. */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, padding: '6px 0' }}>
-              {stepBtn(() => setReservedSlots(n => Math.max(listFloor, n - 1)), reservedSlots <= listFloor || slotReservationClosed || onlyTitularSpot, false)}
+              {stepBtn(() => setReservedSlots(n => Math.max(listFloorMin, n - 1)), reservedSlots <= listFloorMin || slotReservationClosed || onlyTitularSpot, false)}
               <span style={{ minWidth: 30, textAlign: 'center', fontSize: 22, fontWeight: 800, color: TEXT }}>{reservedSlots}</span>
               {stepBtn(() => setReservedSlots(n => n + 1), slotReservationClosed || onlyTitularSpot || _refPending || (reservedMax != null && (reservedSlots - listFloor) >= reservedMax), true)}
             </div>
@@ -1571,16 +1589,16 @@ export default function ConfirmReservation() {
             ))}
             {/* cupos reservados vacíos hasta N */}
             {Array.from({ length: emptySlots }).map((_, i) => (
-              <div key={`empty-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0' }}>
+              <button key={`empty-${i}`} onClick={copyGameLink} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                 <div style={{ width: 20, textAlign: 'center', fontSize: 14, fontWeight: 700, color: SUB, flexShrink: 0 }}>{listFloor + i + 1}</div>
                 <div style={{ width: 44, height: 44, borderRadius: '50%', background: SOFT, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#C7C7CC" strokeWidth="1.5" strokeDasharray="3 3"/><path d="M12 8.5v7M8.5 12h7" stroke="#C7C7CC" strokeWidth="1.6" strokeLinecap="round"/></svg>
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: SUB }}>cupo disponible</div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: SUB }}>cupo reservado</div>
                   <div style={{ fontSize: 12, color: SUB, marginTop: 1 }}>comparte tu link</div>
                 </div>
-              </div>
+              </button>
             ))}
             {/* Agregar jugadores (mismo flujo/estilo, ubicado bajo la Lista) */}
             <div style={{ padding: '14px 0 6px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
@@ -1605,7 +1623,7 @@ export default function ConfirmReservation() {
           <div style={{ padding: '0 16px' }}>
             {/* Contador N. Piso = titular + directos existentes de mi lista + nuevos de esta edición. */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, padding: '6px 0' }}>
-              {stepBtn(() => setReservedSlots(n => Math.max(listFloor, n - 1)), reservedSlots <= listFloor || slotReservationClosed, false)}
+              {stepBtn(() => setReservedSlots(n => Math.max(listFloorMin, n - 1)), reservedSlots <= listFloorMin || slotReservationClosed, false)}
               <span style={{ minWidth: 30, textAlign: 'center', fontSize: 22, fontWeight: 800, color: TEXT }}>{reservedSlots}</span>
               {stepBtn(() => setReservedSlots(n => n + 1), slotReservationClosed || (reservedMax != null && (reservedSlots - listFloor) >= reservedMax), true)}
             </div>
@@ -1680,16 +1698,16 @@ export default function ConfirmReservation() {
                   </div>
                   {inLista.map((it, i) => row(it, `l-${i}`, i + 1))}
                   {Array.from({ length: empties }).map((_, i) => (
-                    <div key={`empty-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0' }}>
+                    <button key={`empty-${i}`} onClick={copyGameLink} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                       {NUM(inLista.length + i + 1)}
                       <div style={{ width: 44, height: 44, borderRadius: '50%', background: SOFT, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#C7C7CC" strokeWidth="1.5" strokeDasharray="3 3"/><path d="M12 8.5v7M8.5 12h7" stroke="#C7C7CC" strokeWidth="1.6" strokeLinecap="round"/></svg>
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 15, fontWeight: 600, color: SUB }}>cupo disponible</div>
+                        <div style={{ fontSize: 15, fontWeight: 600, color: SUB }}>cupo reservado</div>
                         <div style={{ fontSize: 12, color: SUB, marginTop: 1 }}>comparte tu link</div>
                       </div>
-                    </div>
+                    </button>
                   ))}
                   {/* Agregar jugadores — bajo la Lista, antes de "Amigos fuera de lista" */}
                   <div style={{ padding: '14px 0 6px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
@@ -1937,6 +1955,12 @@ export default function ConfirmReservation() {
           <div style={{ marginTop: 10, fontSize: 14, color: 'rgba(255,255,255,0.6)', textAlign: 'center' }}>
             No cierres esta pantalla.
           </div>
+        </div>
+      )}
+
+      {linkCopied && (
+        <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.75)', color: '#fff', padding: '8px 18px', borderRadius: 20, fontSize: 14, fontWeight: 500, zIndex: 9999, pointerEvents: 'none', whiteSpace: 'nowrap' }}>
+          ¡Link copiado!
         </div>
       )}
 
