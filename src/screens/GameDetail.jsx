@@ -1460,7 +1460,19 @@ export default function GameDetail() {
     return false;
   });
   const [reserveSlotsOpen, setReserveSlotsOpen] = useState(false);
-  const [reserveConfirm, setReserveConfirm] = useState(null); // outcome tras guardar (ver ReserveSlotsSheet.onConfirmed)
+  const [reserveConfirm, setReserveConfirm] = useState(() => {
+    // Confirmación de cupos tras "Gestionar mi lista → Guardar cambios" (GameDetail remonta vía
+    // navigate(-1)). Reutiliza el MISMO ConfirmedOverlay de cupos. Se consume UNA sola vez y solo
+    // si el marcador es de ESTE partido; si es de otro gameId, no se toca.
+    try {
+      const raw = sessionStorage.getItem('gd_slot_confirm');
+      if (raw) {
+        const o = JSON.parse(raw);
+        if (o?.gameId === gameId) { sessionStorage.removeItem('gd_slot_confirm'); return { total: o.total, created: o.created }; }
+      }
+    } catch { /* sessionStorage no disponible */ }
+    return null;
+  }); // outcome tras guardar (ver ReserveSlotsSheet.onConfirmed)
   // Al descartar una sub-opción de "Gestionar mi reserva" se reabre el sheet (no se pierde el flujo).
   // ReserveSlots se abre TAMBIÉN desde el enlace "Reserva de Cupos activa": solo se reabre modify
   // si vino DE modify (fromModify) y NO se guardó (saved).

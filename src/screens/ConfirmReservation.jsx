@@ -1261,18 +1261,29 @@ export default function ConfirmReservation() {
       // "Gestionar mi lista": persistir N (ON → crea/reactiva R1 + adopta directos) o LIBERAR
       // (OFF → reserve_slots(0), solo si al entrar había R1 activa) ANTES de crear invitados: así
       // los nuevos NO quedan asociados a una R1 que se libera (el flujo posterior recarga snapshot).
+      // _slotTotal = N REAL persistido (reserve_slots devuelve la R1 con reserved_slots_total, ya
+      // con el clamp de piso aplicado); 0 al liberar. Se usa para la confirmación de cupos.
+      let _slotTotal = armaLista ? reservedSlots : 0;
       if (armaListaMode && gameId && (game?.type === 'match' || !game?.type)) {
         if (armaLista) {
-          const { error: _rsErr } = await supabase.rpc('reserve_slots', { p_game_id: gameId, p_reserved_slots_total: reservedSlots, p_actor: authUser?.id });
+          const { data: _rsData, error: _rsErr } = await supabase.rpc('reserve_slots', { p_game_id: gameId, p_reserved_slots_total: reservedSlots, p_actor: authUser?.id });
           if (_rsErr) { setFreeConfirming(false); setCapacityError('GAME_FULL'); return; }
+          const _rsRow = Array.isArray(_rsData) ? _rsData[0] : _rsData;
+          if (_rsRow?.reserved_slots_total != null) _slotTotal = _rsRow.reserved_slots_total;
         } else if (_entryR1Active) {
           const { error: _rsErr } = await supabase.rpc('reserve_slots', { p_game_id: gameId, p_reserved_slots_total: 0, p_actor: authUser?.id });
           if (_rsErr) { setFreeConfirming(false); return; }
+          _slotTotal = 0;
         }
       }
       // Guardar sin invitados nuevos: no hay pago; volver a GameDetail (los datos se refrescan al remontar).
+      // Se retira el marcador de reapertura para volver al detalle LIMPIO (sin reabrir "Gestionar mi
+      // reserva"). El marcador solo debe reabrir al CANCELAR desde Add Guests, no tras un guardado exitoso.
+      // gd_slot_confirm → GameDetail muestra UNA VEZ el ConfirmedOverlay de cupos existente.
       if (armaListaMode && guests.length === 0) {
         setFreeConfirming(false);
+        try { sessionStorage.setItem('gd_slot_confirm', JSON.stringify({ gameId, total: _slotTotal, created: !_entryR1Active })); } catch { /* sessionStorage no disponible */ }
+        try { sessionStorage.removeItem('gd_reopen_modify'); } catch { /* sessionStorage no disponible */ }
         try { sessionStorage.setItem('profile_dirty', '1'); } catch { /* sessionStorage no disponible */ }
         navigate(-1);
         return;
