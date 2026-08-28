@@ -778,7 +778,7 @@ function PlayerModal({ player, onClose, isHost = false }) {
 }
 
 // ── ModifySheet
-function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, onReserveSlots, reserveSlotsDisabled = false, releaseHours = 48, reservedUsed = 0, reservedTotal = 0, slotCanceled = false, windowClosed = false, noSlots = false, within24h = false }) {
+function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, within24h = false }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
@@ -809,7 +809,7 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
           onClick={canAdd ? onAddGuests : undefined}
           style={{ ...rowStyle, cursor: canAdd ? 'pointer' : 'default', opacity: canAdd ? 1 : 0.45 }}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Agregar jugadores</span>
+            <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>{showReserveSlots ? 'Gestionar mi lista' : 'Agregar jugadores'}</span>
             <span style={{ fontSize: 13, color: canAdd ? SUB : '#BEBEC8' }}>
               {isHost && !canAddPlayers
                 ? '· Solo desde 1h antes'
@@ -820,29 +820,6 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
           </div>
           {canAdd && chevron()}
         </button>
-        {showReserveSlots && (
-          <button onClick={onReserveSlots} disabled={reserveSlotsDisabled}
-            style={{ ...rowStyle, cursor: reserveSlotsDisabled ? 'default' : 'pointer', opacity: reserveSlotsDisabled ? 0.45 : 1 }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
-              <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Reservar cupos</span>
-              {/* Solo PRESENTACIÓN: el texto refleja el estado que GameDetail ya calcula.
-                  Cancelado → "Debes estar inscrito"; dentro de la ventana → "Hasta Xh antes
-                  del partido"; fuera de la ventana (reservable) → "Se libera Xh antes". */}
-              <span style={{ fontSize: noSlots ? 13 : 12.5, fontWeight: noSlots ? 400 : 600, color: noSlots ? '#BEBEC8' : SUB, whiteSpace: 'nowrap' }}>
-                · {slotCanceled ? 'Debes estar inscrito'
-                   : windowClosed ? `Hasta ${releaseHours} h antes del partido`
-                   : noSlots ? 'Sin cupos'
-                   : `Se libera ${releaseHours} h antes`}
-              </span>
-            </div>
-            <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
-              {reservedTotal > 0 && (
-                <span style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{reservedUsed}/{reservedTotal}</span>
-              )}
-            </div>
-            {chevron()}
-          </button>
-        )}
         {isHost ? (
           invitedCount > 0 && (
             <button onClick={onCancel} style={{ ...rowStyle, marginBottom: 0 }}>

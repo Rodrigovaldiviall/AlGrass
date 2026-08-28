@@ -833,6 +833,82 @@ export default function ConfirmReservation() {
   const isRental      = game?.type === 'rental';
   const addGuestsMode = game?.addGuestsMode ?? false;
   const invitedMode   = game?.invitedMode   ?? false;
+
+  // ── "Gestionar mi lista" — el capitán entra por el MISMO addGuestsMode y, encima del
+  // selector de invitados, aparece el bloque "Arma la lista" (mismo diseño del checkout).
+  // Toda la interacción (switch / N / lista) es estado LOCAL: no escribe en Supabase hasta
+  // Guardar/confirmar. NO es un modo nuevo: es addGuestsMode + rol capitán.
+  const armaListaMode = (isCaptain || isCaptainGold) && addGuestsMode && !isCampo && !isRental;
+  const _capId = authUser?.id;
+  const [listRoster, setListRoster] = useState([]);        // confirmed del partido (clasificación)
+  const [listR1, setListR1] = useState(null);              // snapshot get_slot_reservation (R1 propia)
+  const [listLoaded, setListLoaded] = useState(false);     // roster+snapshot listos (evita flip visible)
+  const [promotedLinkIds, setPromotedLinkIds] = useState([]); // links subidos a Lista con la flecha ↑
+  const _listSeeded = useRef(false);
+  useEffect(() => {
+    const gid = game?.id;
+    if (!supabase || !gid || !armaListaMode) return;
+    (async () => {
+      try {
+        const snap = await loadSlotSnapshot(gid, referral);
+        const r1 = Array.isArray(snap) ? snap[0] : snap;
+        const { data: players } = await supabase.from('game_players')
+          .select('id, user_id, payer_id, status, joined_at, game_slot_reservation_id, counts_reserved_slot')
+          .eq('game_id', gid).eq('status', 'confirmed');
+        const rows = players || [];
+        const ids = [...new Set(rows.map(r => r.user_id).filter(Boolean))];
+        const byId = {};
+        if (ids.length) {
+          const { data: us } = await supabase.from('users_public')
+            .select('id, full_name, user_code, avatar_hue, avatar_path, avatar_updated_at').in('id', ids);
+          (us || []).forEach(u => { byId[u.id] = u; });
+        }
+        setListRoster(rows.map(r => { const u = byId[r.user_id] || {}; return { ...r, ...u, _av: u.avatar_updated_at ? new Date(u.avatar_updated_at).getTime() : null }; }));
+        setListR1(r1 || null);
+        // Semilla ÚNICA: R1 propia activa → ON con N = reserved_slots_total (no recalcula).
+        if (!_listSeeded.current) {
+          _listSeeded.current = true;
+          if (r1?.has_reservation && r1?.status === 'active' && (r1?.reserved_slots_total ?? 0) > 0) {
+            setReservedSlots(r1.reserved_slots_total);
+            setArmaLista(true);
+          }
+        }
+      } finally {
+        setListLoaded(true); // recién aquí se muestra la pantalla (ya sembrada y clasificada)
+      }
+    })();
+  }, [game?.id, armaListaMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Clasificación (solo confirmed). myR1Id = gsr de mi propia fila (V14 lo fija al crear la R1).
+  const _myR1Id = listRoster.find(p => p.user_id === _capId)?.game_slot_reservation_id ?? null;
+  const _directosAll = listRoster.filter(p => p.payer_id === _capId && p.user_id !== _capId);
+  // Directos EXISTENTES que van/están en mi lista: gsr NULL (se adoptarán) o ya en mi R1.
+  const directosLista = _directosAll
+    .filter(p => p.game_slot_reservation_id == null || p.game_slot_reservation_id === _myR1Id)
+    .sort((a, b) => (a.joined_at || '').localeCompare(b.joined_at || ''));
+  // Miembros que entraron por link (gsr = mi R1, no titular, no directo). Orden: los subidos con
+  // la flecha ↑ primero (en orden de promoción), luego el resto por joined_at.
+  const _linkAll = listRoster
+    .filter(p => _myR1Id && p.game_slot_reservation_id === _myR1Id && p.user_id !== _capId && p.payer_id !== _capId);
+  const _linkPromoted = promotedLinkIds.map(id => _linkAll.find(p => p.id === id)).filter(Boolean);
+  const linkMembers = [
+    ..._linkPromoted,
+    ..._linkAll.filter(p => !promotedLinkIds.includes(p.id)).sort((a, b) => (a.joined_at || '').localeCompare(b.joined_at || '')),
+  ];
+  // Otros inscritos: confirmed que no son titular, ni mis directos-de-lista, ni miembros de mi R1.
+  // Incluye a un directo mío que ya está en OTRA R1 (payer=yo, gsr≠mi R1) → etiqueta "Otro grupo".
+  const otrosInscritos = listRoster.filter(p => p.user_id !== _capId
+    && !(p.payer_id === _capId && (p.game_slot_reservation_id == null || p.game_slot_reservation_id === _myR1Id))
+    && !(_myR1Id && p.game_slot_reservation_id === _myR1Id));
+  // R1 propia activa al ENTRAR (para saber si OFF+Guardar debe liberar).
+  const _entryR1Active = !!(listR1?.has_reservation && listR1?.status === 'active');
+  // "Sucio" (habilita Guardar cambios sin invitados) = cambió N estando ON, o pasé ON→OFF
+  // teniendo una R1 activa al entrar (liberar).
+  const _listDirty = armaListaMode && guests.length === 0 && (
+    (armaLista && reservedSlots !== (listR1?.reserved_slots_total ?? 0))
+    || (!armaLista && _entryR1Active)
+  );
+
   const maxNewGuests  = game?.maxNewGuests  ?? 99;
   const rawSpots      = game?.openSpots;
   // Presupuesto de disponibilidad pública compartido entre invitados y reserva de cupos.
@@ -841,7 +917,8 @@ export default function ConfirmReservation() {
   const spotBudget    = (addGuestsMode || invitedMode) ? maxNewGuests : (rawSpots != null ? Math.max(0, rawSpots - 1) : undefined);
   // FUENTE ÚNICA del máximo: presupuesto − lo que consume el OTRO selector.
   const maxSelectable = (otherCount) => spotBudget == null ? undefined : Math.max(0, spotBudget - otherCount);
-  const listFloor     = 1 + guests.length;              // piso de N: titular + invitados actuales
+  // piso de N: titular + invitados directos (existentes de mi lista + los nuevos de esta edición).
+  const listFloor     = 1 + (armaListaMode ? directosLista.length : 0) + guests.length;
   // Con Arma la lista ON, N (reservedSlots) YA incluye titular+invitados; el cap de invitados
   // no debe descontar N (los invitados llenan cupos de N o suben N). OFF: comportamiento actual.
   const guestSlots    = maxSelectable(armaLista ? 0 : reservedSlots);   // máx invitados
@@ -1181,6 +1258,25 @@ export default function ConfirmReservation() {
     }
     if (addGuestsMode) {
       const gameId = game?.id;
+      // "Gestionar mi lista": persistir N (ON → crea/reactiva R1 + adopta directos) o LIBERAR
+      // (OFF → reserve_slots(0), solo si al entrar había R1 activa) ANTES de crear invitados: así
+      // los nuevos NO quedan asociados a una R1 que se libera (el flujo posterior recarga snapshot).
+      if (armaListaMode && gameId && (game?.type === 'match' || !game?.type)) {
+        if (armaLista) {
+          const { error: _rsErr } = await supabase.rpc('reserve_slots', { p_game_id: gameId, p_reserved_slots_total: reservedSlots, p_actor: authUser?.id });
+          if (_rsErr) { setFreeConfirming(false); setCapacityError('GAME_FULL'); return; }
+        } else if (_entryR1Active) {
+          const { error: _rsErr } = await supabase.rpc('reserve_slots', { p_game_id: gameId, p_reserved_slots_total: 0, p_actor: authUser?.id });
+          if (_rsErr) { setFreeConfirming(false); return; }
+        }
+      }
+      // Guardar sin invitados nuevos: no hay pago; volver a GameDetail (los datos se refrescan al remontar).
+      if (armaListaMode && guests.length === 0) {
+        setFreeConfirming(false);
+        try { sessionStorage.setItem('profile_dirty', '1'); } catch { /* sessionStorage no disponible */ }
+        navigate(-1);
+        return;
+      }
       if (gameId && guests.length > 0) {
         const _adderCode = (() => { try { return (JSON.parse(localStorage.getItem('pichanga_profile') || '{}').userCode || '').trim().toUpperCase(); } catch { return ''; } })();
         addPlayersToRoster(gameId, guests, _adderCode);
@@ -1311,7 +1407,18 @@ export default function ConfirmReservation() {
         <AddPlayersScreen
           alreadySelected={guests}
           onCancel={() => setSubView('confirm')}
-          onConfirm={selected => { setGuests(selected); setSubView('confirm'); }}
+          onConfirm={selected => {
+            // "Gestionar mi lista": al agregar invitados, crecer N lo justo para NO desplazar a los
+            // links que YA estaban en la Lista (se preserva su cantidad). Los links que estaban FUERA
+            // siguen fuera (solo suben con la flecha ↑ o subiendo N a mano). reserve_slots valida al guardar.
+            if (armaListaMode && armaLista) {
+              const floorOld = 1 + directosLista.length + guests.length;
+              const linksInListaOld = Math.min(Math.max(reservedSlots - floorOld, 0), linkMembers.length);
+              const floorNew = 1 + directosLista.length + selected.length;
+              setReservedSlots(Math.max(reservedSlots, floorNew + linksInListaOld));
+            }
+            setGuests(selected); setSubView('confirm');
+          }}
           paidPlayers={paidPlayers}
           maxGuests={guestSlots ?? 99}
           spotsCount={(addGuestsMode || invitedMode) ? (maxNewGuests < 99 ? maxNewGuests : undefined) : rawSpots}
@@ -1326,6 +1433,13 @@ export default function ConfirmReservation() {
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden', position: 'relative' }}>
+      {/* "Gestionar mi lista": no mostrar la pantalla hasta tener roster+snapshot listos y sembrados
+          (evita ver el flip OFF→ON). Solo aplica al capitán en addGuestsMode. */}
+      {armaListaMode && !listLoaded && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 210, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: 34, height: 34, borderRadius: '50%', border: '3px solid rgba(27,27,31,0.15)', borderTop: '3px solid #1B1B1F', animation: 'spin 0.8s linear infinite' }} />
+        </div>
+      )}
       <TopBar
         title={invitedMode ? 'Agregar jugadores' : addGuestsMode ? 'Agregar invitados' : isRental ? 'Reservar cancha' : 'Confirmación de reserva'}
         onCancel={() => {
@@ -1363,7 +1477,7 @@ export default function ConfirmReservation() {
           </>
         )}
 
-        {(isCaptain || isCaptainGold) && !isCampo && !isRental && !addGuestsMode && !invitedMode && (
+        {(isCaptain || isCaptainGold) && !isCampo && !isRental && ((!addGuestsMode && !invitedMode) || armaListaMode) && (
           <div style={{ padding: '16px 16px 0', display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{ width: 40, height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
@@ -1473,6 +1587,150 @@ export default function ConfirmReservation() {
                 );
               })()}
             </div>
+          </div>
+        )}
+
+        {armaLista && armaListaMode && (
+          <div style={{ padding: '0 16px' }}>
+            {/* Contador N. Piso = titular + directos existentes de mi lista + nuevos de esta edición. */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, padding: '6px 0' }}>
+              {stepBtn(() => setReservedSlots(n => Math.max(listFloor, n - 1)), reservedSlots <= listFloor || slotReservationClosed, false)}
+              <span style={{ minWidth: 30, textAlign: 'center', fontSize: 22, fontWeight: 800, color: TEXT }}>{reservedSlots}</span>
+              {stepBtn(() => setReservedSlots(n => n + 1), slotReservationClosed || (reservedMax != null && (reservedSlots - listFloor) >= reservedMax), true)}
+            </div>
+            {(() => {
+              // Secuencia priorizada: titular → directos existentes → nuevos → link. Los primeros N = Lista.
+              const seq = [
+                { t: 'titular' },
+                ...directosLista.map(p => ({ t: 'direct', p })),
+                ...guests.map(g => ({ t: 'new', g })),
+                ...linkMembers.map(p => ({ t: 'link', p })),
+              ];
+              const N = reservedSlots;
+              const inLista = seq.slice(0, N);
+              const fuera   = seq.slice(N);                 // solo UX; NO cambia gsr/counts
+              const empties = Math.max(0, N - seq.length);
+              const publicLeft = reservedMax != null ? Math.max(0, reservedMax - empties) : null;
+              const av = (p) => <Avatar name={p.full_name || 'Jugador'} hue={p.avatar_hue ?? 210} size={44} avatarPath={p.avatar_path ?? null} avatarVersion={p._av ?? null} />;
+              const NUM = (n) => <div style={{ width: 20, textAlign: 'center', fontSize: 14, fontWeight: 700, color: SUB, flexShrink: 0 }}>{n}</div>;
+              const tag = (txt) => <span style={{ fontSize: 12, fontWeight: 700, color: SUB, flexShrink: 0 }}>{txt}</span>;
+              // Flecha ↑: sube un link (ya reservado / counts=true) a la Lista aumentando N en 1.
+              // No consume capacidad nueva (el jugador ya ocupa su cupo); reserve_slots la persiste al guardar.
+              const upArrow = (p) => (
+                <button onClick={() => { setPromotedLinkIds(ids => ids.includes(p.id) ? ids : [...ids, p.id]); setReservedSlots(n => n + 1); }}
+                  aria-label="Subir a la lista"
+                  style={{ width: 34, height: 34, borderRadius: '50%', border: 'none', background: SOFT, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M7 14l5-5 5 5" stroke={SUB} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                </button>
+              );
+              const row = (item, key, num, rightOverride) => {
+                const wrap = (avatar, name, sub, right) => (
+                  <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0' }}>
+                    {num != null && NUM(num)}
+                    {avatar}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 15.5, fontWeight: 700, color: TEXT, letterSpacing: -0.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+                      {sub && <div style={{ fontSize: 12, color: SUB, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</div>}
+                    </div>
+                    {right}
+                  </div>
+                );
+                if (item.t === 'titular') return wrap(
+                  <Avatar name={canonicalName} hue={selfAvatar.hue ?? 210} size={44} avatarPath={selfAvatar.path} avatarVersion={selfAvatar.version} />,
+                  <>{canonicalName} <span style={{ color: SUB, fontWeight: 600 }}>(Tú)</span></>, user.email, rightOverride ?? tag('Tú'));
+                if (item.t === 'direct') return wrap(av(item.p), item.p.full_name || 'Invitado', item.p.user_code ? `@${item.p.user_code}` : null, rightOverride ?? tag('Tu invitado'));
+                if (item.t === 'link')   return wrap(av(item.p), item.p.full_name || 'Jugador', item.p.user_code ? `@${item.p.user_code}` : null, rightOverride ?? null);
+                // nuevo invitado de esta edición: precio + X (flujo actual)
+                const g = item.g;
+                return (
+                  <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0' }}>
+                    {num != null && NUM(num)}
+                    <Avatar name={g.name} hue={g.hue} size={44} avatarPath={g.avatarPath ?? null} avatarVersion={g.avatarVersion ?? null} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 15.5, fontWeight: 700, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</div>
+                      {g.code && <div style={{ fontSize: 12, color: SUB, marginTop: 1 }}>{g.code}</div>}
+                    </div>
+                    <button onClick={() => setGuests(gs => gs.filter(x => x.id !== g.id))} style={{ width: 32, height: 32, padding: 0, borderRadius: '50%', background: 'transparent', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="9" fill="#FCEAEB"/><path d="M7 7l6 6M13 7l-6 6" stroke={DANGER} strokeWidth="1.8" strokeLinecap="round"/></svg>
+                    </button>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: SUB, flexShrink: 0 }}>{fmt(unitPrice)}</div>
+                  </div>
+                );
+              };
+              return (
+                <>
+                  <div style={{ fontSize: 12.5, color: SUB, textAlign: 'center', paddingBottom: 8, whiteSpace: 'nowrap' }}>
+                    {reservedSlots} {reservedSlots === 1 ? 'cupo reservado' : 'cupos reservados'}{publicLeft != null ? ` · solo quedan ${publicLeft} disponibles` : ''}
+                  </div>
+                  <div style={{ height: 1, background: HAIR }} />
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, padding: '12px 0 2px' }}>
+                    <span style={{ fontSize: 16, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>Lista</span>
+                    <span style={{ fontSize: 12.5, color: SUB, whiteSpace: 'nowrap' }}>{inLista.length}/{N}</span>
+                  </div>
+                  {inLista.map((it, i) => row(it, `l-${i}`, i + 1))}
+                  {Array.from({ length: empties }).map((_, i) => (
+                    <div key={`empty-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0' }}>
+                      {NUM(inLista.length + i + 1)}
+                      <div style={{ width: 44, height: 44, borderRadius: '50%', background: SOFT, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#C7C7CC" strokeWidth="1.5" strokeDasharray="3 3"/><path d="M12 8.5v7M8.5 12h7" stroke="#C7C7CC" strokeWidth="1.6" strokeLinecap="round"/></svg>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 15, fontWeight: 600, color: SUB }}>cupo disponible</div>
+                        <div style={{ fontSize: 12, color: SUB, marginTop: 1 }}>comparte tu link</div>
+                      </div>
+                    </div>
+                  ))}
+                  {/* Agregar jugadores — bajo la Lista, antes de "Amigos fuera de lista" */}
+                  <div style={{ padding: '14px 0 6px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                    {(() => {
+                      const noSlots = displaySpots === 0;
+                      const btnColor = noSlots ? '#C4C4CC' : ORANGE;
+                      return (
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <button onClick={noSlots ? undefined : () => setSubView('addplayers')} style={{ padding: '10px 4px 10px 14px', background: 'transparent', border: 'none', cursor: noSlots ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, color: btnColor, letterSpacing: -0.1, display: 'inline-flex', alignItems: 'center', gap: 8, WebkitTapHighlightColor: 'transparent', outline: 'none', opacity: noSlots ? 0.5 : 1 }}>
+                            <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="9" stroke={btnColor} strokeWidth="1.6"/><path d="M10 6v8M6 10h8" stroke={btnColor} strokeWidth="1.7" strokeLinecap="round"/></svg>
+                            Agregar jugadores
+                          </button>
+                          <span style={{ fontSize: 12, color: SUB, whiteSpace: 'nowrap' }}>Pagas tú</span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  {fuera.length > 0 && (
+                    <>
+                      <div style={{ padding: '8px 0 2px', paddingLeft: 30 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: SUB, letterSpacing: -0.1 }}>Amigos sin cupos asegurados</div>
+                        <div style={{ fontSize: 11.5, color: '#9A9AA0', marginTop: 1 }}>Ingresaron también con tu link</div>
+                      </div>
+                      {fuera.map((it, i) => row(it, `f-${i}`, '–', it.t === 'link' ? upArrow(it.p) : undefined))}
+                    </>
+                  )}
+                  {otrosInscritos.length > 0 && (
+                    <>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: TEXT, letterSpacing: -0.2, padding: '12px 0 2px', borderTop: `1px solid ${HAIR}`, marginTop: 2 }}>Otros jugadores inscritos</div>
+                      {otrosInscritos.map((p, i) => {
+                        const miInvitadoOtroGrupo = p.payer_id === _capId && p.game_slot_reservation_id != null && p.game_slot_reservation_id !== _myR1Id;
+                        const otroGrupo = p.game_slot_reservation_id != null && p.game_slot_reservation_id !== _myR1Id && p.counts_reserved_slot === true;
+                        return (
+                          <div key={`o-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', opacity: otroGrupo ? 0.6 : 1 }}>
+                            {av(p)}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 15.5, fontWeight: 700, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.full_name || 'Jugador'}</div>
+                              {p.user_code && <div style={{ fontSize: 12, color: SUB, marginTop: 1 }}>@{p.user_code}</div>}
+                            </div>
+                            {(miInvitadoOtroGrupo || otroGrupo) && (
+                              <span style={{ fontSize: 11, fontWeight: 700, color: SUB, textAlign: 'right', flexShrink: 0, lineHeight: 1.35 }}>
+                                {miInvitadoOtroGrupo && <>Tu invitado<br/></>}Otro grupo
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
 
@@ -1632,13 +1890,13 @@ export default function ConfirmReservation() {
           </div>
         </div>
 
-        <CtaButton onPress={handleConfirm} disabled={((addGuestsMode || invitedMode) && guests.length === 0) || creditLoading || freeConfirming}>
+        <CtaButton onPress={handleConfirm} disabled={((addGuestsMode || invitedMode) && guests.length === 0 && !_listDirty) || creditLoading || freeConfirming}>
           {creditLoading ? (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
               <span style={{ width: 16, height: 16, borderRadius: '50%', border: '2.5px solid rgba(27,27,31,0.2)', borderTop: '2.5px solid #1B1B1F', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
               Procesando...
             </span>
-          ) : 'Confirmar'}
+          ) : (armaListaMode && guests.length === 0 ? 'Guardar cambios' : 'Confirmar')}
         </CtaButton>
       </div>
 
