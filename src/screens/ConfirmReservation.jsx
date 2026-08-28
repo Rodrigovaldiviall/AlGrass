@@ -805,6 +805,8 @@ export default function ConfirmReservation() {
   const [creditLoading, setCreditLoading]   = useState(true);
   const { isCaptain, isCaptainGold } = useGlobalRoles();
   const [reservedSlots, setReservedSlots] = useState(0);
+  const [armaLista, setArmaLista] = useState(false); // "Arma la lista" ON/OFF (reservedSlots = N total)
+  const [lastN, setLastN] = useState(0);             // N recordado al apagar el toggle (misma sesión)
 
   const [confirmedPlayerIds, setConfirmedPlayerIds] = useState(new Set());
   useEffect(() => {
@@ -839,7 +841,10 @@ export default function ConfirmReservation() {
   const spotBudget    = (addGuestsMode || invitedMode) ? maxNewGuests : (rawSpots != null ? Math.max(0, rawSpots - 1) : undefined);
   // FUENTE ÚNICA del máximo: presupuesto − lo que consume el OTRO selector.
   const maxSelectable = (otherCount) => spotBudget == null ? undefined : Math.max(0, spotBudget - otherCount);
-  const guestSlots    = maxSelectable(reservedSlots);   // máx invitados (descuenta cupos)
+  const listFloor     = 1 + guests.length;              // piso de N: titular + invitados actuales
+  // Con Arma la lista ON, N (reservedSlots) YA incluye titular+invitados; el cap de invitados
+  // no debe descontar N (los invitados llenan cupos de N o suben N). OFF: comportamiento actual.
+  const guestSlots    = maxSelectable(armaLista ? 0 : reservedSlots);   // máx invitados
   // Reserva de cupos (nueva R1): SOLO consume cupos PÚBLICOS libres. Al llegar por Shared
   // Link de otro usuario, rawSpots incluye el remaining del capitán (válido para titular +
   // invitados); el stepper de cupos se acota ADEMÁS al pool público (refSlot.pool = la X del
@@ -895,6 +900,17 @@ export default function ConfirmReservation() {
   const _slotGameStart = gameStartDate(game?.dateKey, game?.time24);
   const slotReservationClosed = !!_slotGameStart && Date.now() >= _slotGameStart.getTime() - releaseHours * 3600_000;
   const captainColor = isCaptainGold ? '#F5B301' : '#E5383B';
+  // Arma la lista: ON pone N = max(piso, último N); OFF apaga la reserva (reservedSlots=0) y recuerda N.
+  function toggleArmaLista() {
+    if (armaLista) { setLastN(reservedSlots); setReservedSlots(0); setArmaLista(false); }
+    else { setReservedSlots(Math.max(listFloor, lastN)); setArmaLista(true); }
+  }
+  // Agregar un invitado sube N automáticamente si el nuevo piso lo supera; quitar NO baja N.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (armaLista && reservedSlots < listFloor) setReservedSlots(listFloor);
+  }, [armaLista, reservedSlots, listFloor]);
+  const emptySlots = armaLista ? Math.max(0, reservedSlots - listFloor) : 0; // cupos vacíos de la Lista
   const stepBtn = (onClick, disabled, plus) => (
     <button onClick={onClick} disabled={disabled}
       style={{ width: 32, height: 32, borderRadius: '50%', border: `1.6px solid ${disabled ? '#D6D6DC' : BLUE}`, background: 'transparent', cursor: disabled ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, opacity: disabled ? 0.5 : 1, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
@@ -1190,6 +1206,28 @@ export default function ConfirmReservation() {
           const reservationId = resData?.id ?? null;
           if (game?.type === 'match' || !game?.type) {
             const _slotRes = await loadSlotSnapshot(gameId, referral);
+            const _r1 = Array.isArray(_slotRes) ? _slotRes[0] : _slotRes;
+            // BUMP-THEN-CREATE (regla definitiva): si el capitán tiene R1 activa y los invitados NO
+            // caben en las N posiciones actuales, PRIMERO se amplía N con reserve_slots (atómico y
+            // con su propia guarda de capacidad). Si used < N (hay hueco) NO se amplía: el invitado
+            // ocupa el hueco con el flujo normal. NUNCA create → bump: si reserve_slots da GAME_FULL
+            // no se crea ningún invitado. Entrada por link NO pasa por aquí, así que nunca sube N.
+            if (_r1?.has_reservation && _r1?.status === 'active') {
+              const _N = _r1.reserved_slots_total ?? 0;
+              // PISO (no `used`): titular + invitados directos confirmed. `payer_id = actor`
+              // captura al titular (paga a sí mismo) y a los invitados directos (los paga el
+              // capitán); los que entraron por link pagan a sí mismos y NO cuentan. Los link
+              // members ocupan hueco dentro de N sin exigir crecer N (solo se desplazan a
+              // "fuera" en la UI). Por eso el bump se basa en newFloor = piso + nuevos.
+              const { count: _floor } = await supabase.from('game_players')
+                .select('id', { count: 'exact', head: true })
+                .eq('game_id', gameId).eq('payer_id', authUser?.id).eq('status', 'confirmed');
+              const _target = (_floor ?? 0) + guests.length; // newFloor
+              if (_target > _N) {
+                const { error: _rsErr } = await supabase.rpc('reserve_slots', { p_game_id: gameId, p_reserved_slots_total: _target, p_actor: authUser?.id });
+                if (_rsErr) { setFreeConfirming(false); setCapacityError('GAME_FULL'); return; } // sin invitados creados
+              }
+            }
             const gpResults = await Promise.all(guests.map(guest => {
               const _assign = resolveCaptainGroupAssignment(_slotRes, { actorUserId: authUser?.id, enrolleeUserId: guest.id, linkOwnerUserId: null });
               return createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice, hostUserId: game?.hostUserId ?? null, gameSlotReservationId: _assign.gameSlotReservationId, countsReservedSlot: _assign.countsReservedSlot, referredByUserId: _assign.referredByUserId });
@@ -1325,7 +1363,25 @@ export default function ConfirmReservation() {
           </>
         )}
 
-        {!isCampo && !isRental && !addGuestsMode && !invitedMode && (
+        {(isCaptain || isCaptainGold) && !isCampo && !isRental && !addGuestsMode && !invitedMode && (
+          <div style={{ padding: '16px 16px 0', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 40, height: 40, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
+                <path d="M12 3l7 3v5c0 4.2-2.9 7.6-7 8.8-4.1-1.2-7-4.6-7-8.8V6l7-3z" fill={slotReservationClosed ? '#C7C7CC' : captainColor} stroke={slotReservationClosed ? '#C7C7CC' : captainColor} strokeWidth="1.2" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: slotReservationClosed ? '#9A9AA0' : TEXT, letterSpacing: -0.2 }}>Arma la lista</div>
+              <div style={{ fontSize: 12.5, color: slotReservationClosed ? '#C7C7CC' : SUB, marginTop: 1 }}>Hasta {releaseHours}h antes del partido</div>
+            </div>
+            <button onClick={toggleArmaLista} role="switch" aria-checked={armaLista} disabled={slotReservationClosed || onlyTitularSpot}
+              style={{ width: 44, height: 26, borderRadius: 999, border: 'none', background: armaLista ? BLUE : '#E5E5EA', cursor: (slotReservationClosed || onlyTitularSpot) ? 'default' : 'pointer', padding: 0, position: 'relative', transition: 'background .2s ease', WebkitTapHighlightColor: 'transparent', outline: 'none', flexShrink: 0, opacity: (slotReservationClosed || onlyTitularSpot) ? 0.5 : 1 }}>
+              <div style={{ position: 'absolute', top: 2, left: armaLista ? 20 : 2, width: 22, height: 22, borderRadius: '50%', background: '#fff', transition: 'left .2s ease', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+            </button>
+          </div>
+        )}
+
+        {!armaLista && !isCampo && !isRental && !addGuestsMode && !invitedMode && (
           <div style={{ padding: '24px 16px 0' }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, letterSpacing: -0.1 }}>
               Reservando {seats} {seats === 1 ? 'lugar' : 'lugares'} para
@@ -1333,7 +1389,7 @@ export default function ConfirmReservation() {
           </div>
         )}
 
-        {!isCampo && !isRental && !addGuestsMode && !invitedMode && (
+        {!armaLista && !isCampo && !isRental && !addGuestsMode && !invitedMode && (
           <div style={{ padding: '12px 16px 0' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0' }}>
               <Avatar name={canonicalName} hue={selfAvatar.hue ?? 210} size={44} avatarPath={selfAvatar.path} avatarVersion={selfAvatar.version} />
@@ -1346,31 +1402,81 @@ export default function ConfirmReservation() {
           </div>
         )}
 
-        {(isCaptain || isCaptainGold) && !isCampo && !isRental && !addGuestsMode && !invitedMode && (
+        {armaLista && (isCaptain || isCaptainGold) && !isCampo && !isRental && !addGuestsMode && !invitedMode && (
           <div style={{ padding: '0 16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0' }}>
-              <div style={{ width: 46, height: 46, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <svg width="46" height="46" viewBox="0 0 24 24" fill="none">
-                  <path d="M12 3l7 3v5c0 4.2-2.9 7.6-7 8.8-4.1-1.2-7-4.6-7-8.8V6l7-3z" fill={(slotReservationClosed || onlyTitularSpot) ? '#C7C7CC' : captainColor} stroke={(slotReservationClosed || onlyTitularSpot) ? '#C7C7CC' : captainColor} strokeWidth="1.2" strokeLinejoin="round"/>
-                </svg>
-              </div>
+            {/* Contador N (total de la lista). Piso = titular + invitados. */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, padding: '6px 0' }}>
+              {stepBtn(() => setReservedSlots(n => Math.max(listFloor, n - 1)), reservedSlots <= listFloor || slotReservationClosed || onlyTitularSpot, false)}
+              <span style={{ minWidth: 30, textAlign: 'center', fontSize: 22, fontWeight: 800, color: TEXT }}>{reservedSlots}</span>
+              {stepBtn(() => setReservedSlots(n => n + 1), slotReservationClosed || onlyTitularSpot || _refPending || (reservedMax != null && (reservedSlots - listFloor) >= reservedMax), true)}
+            </div>
+            {/* Disponibilidad — reutiliza reservedMax (misma capacidad existente). Una sola línea. */}
+            <div style={{ fontSize: 12.5, color: SUB, textAlign: 'center', paddingBottom: 8, whiteSpace: 'nowrap' }}>
+              {reservedSlots} {reservedSlots === 1 ? 'cupo reservado' : 'cupos reservados'}{reservedMax != null ? ` · solo quedan ${Math.max(0, reservedMax - emptySlots)} disponibles` : ''}
+            </div>
+            <div style={{ height: 1, background: HAIR }} />
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, padding: '12px 0 2px' }}>
+              <span style={{ fontSize: 16, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>Lista</span>
+              <span style={{ fontSize: 12.5, color: SUB, whiteSpace: 'nowrap' }}>{listFloor} {listFloor === 1 ? 'jugador pre-inscrito' : 'jugadores pre-inscritos'}</span>
+            </div>
+            {/* 1 · titular (mismo diseño de fila) */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0' }}>
+              <div style={{ width: 20, textAlign: 'center', fontSize: 14, fontWeight: 700, color: SUB, flexShrink: 0 }}>1</div>
+              <Avatar name={canonicalName} hue={selfAvatar.hue ?? 210} size={44} avatarPath={selfAvatar.path} avatarVersion={selfAvatar.version} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-                  <span style={{ fontSize: 15.5, fontWeight: 700, color: (slotReservationClosed || onlyTitularSpot) ? '#9A9AA0' : TEXT, letterSpacing: -0.2, whiteSpace: 'nowrap' }}>Reserva cupos</span>
-                  <span style={{ fontSize: 12, color: (slotReservationClosed || onlyTitularSpot) ? '#C7C7CC' : SUB, whiteSpace: 'nowrap', flexShrink: 0 }}>Pagan ellos</span>
+                <div style={{ fontSize: 15.5, fontWeight: 700, color: TEXT, letterSpacing: -0.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{canonicalName} <span style={{ color: SUB, fontWeight: 600 }}>(Tú)</span></div>
+                <div style={{ fontSize: 12.5, color: SUB, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</div>
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: SUB, flexShrink: 0 }}>{unitStr}</div>
+            </div>
+            {/* invitados (mismo diseño de fila) */}
+            {guests.map((g, i) => (
+              <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0' }}>
+                <div style={{ width: 20, textAlign: 'center', fontSize: 14, fontWeight: 700, color: SUB, flexShrink: 0 }}>{i + 2}</div>
+                <Avatar name={g.name} hue={g.hue} size={44} avatarPath={g.avatarPath ?? null} avatarVersion={g.avatarVersion ?? null} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 15.5, fontWeight: 700, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</div>
+                  {g.code && <div style={{ fontSize: 12, color: SUB, marginTop: 1 }}>{g.code}</div>}
                 </div>
-                <div style={{ fontSize: 12.5, color: (slotReservationClosed || onlyTitularSpot) ? '#C7C7CC' : SUB, marginTop: 1 }}>Hasta {releaseHours}h antes del partido</div>
+                <button onClick={() => setGuests(gs => gs.filter(x => x.id !== g.id))} style={{ width: 32, height: 32, padding: 0, borderRadius: '50%', background: 'transparent', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                  <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="9" fill="#FCEAEB"/><path d="M7 7l6 6M13 7l-6 6" stroke={DANGER} strokeWidth="1.8" strokeLinecap="round"/></svg>
+                </button>
+                <div style={{ fontSize: 14, fontWeight: 600, color: SUB, flexShrink: 0 }}>{fmt(unitPrice)}</div>
               </div>
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                {stepBtn(() => setReservedSlots(n => (n > 0 ? n - 1 : n)), slotReservationClosed || onlyTitularSpot || reservedSlots <= 0, false)}
-                <span style={{ minWidth: 22, textAlign: 'center', fontSize: 16, fontWeight: 700, color: (slotReservationClosed || onlyTitularSpot) ? '#9A9AA0' : TEXT }}>{reservedSlots}</span>
-                {stepBtn(() => setReservedSlots(n => n + 1), slotReservationClosed || onlyTitularSpot || _refPending || (reservedMax != null && reservedSlots >= reservedMax), true)}
+            ))}
+            {/* cupos reservados vacíos hasta N */}
+            {Array.from({ length: emptySlots }).map((_, i) => (
+              <div key={`empty-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0' }}>
+                <div style={{ width: 20, textAlign: 'center', fontSize: 14, fontWeight: 700, color: SUB, flexShrink: 0 }}>{listFloor + i + 1}</div>
+                <div style={{ width: 44, height: 44, borderRadius: '50%', background: SOFT, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#C7C7CC" strokeWidth="1.5" strokeDasharray="3 3"/><path d="M12 8.5v7M8.5 12h7" stroke="#C7C7CC" strokeWidth="1.6" strokeLinecap="round"/></svg>
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: SUB }}>cupo disponible</div>
+                  <div style={{ fontSize: 12, color: SUB, marginTop: 1 }}>comparte tu link</div>
+                </div>
               </div>
+            ))}
+            {/* Agregar jugadores (mismo flujo/estilo, ubicado bajo la Lista) */}
+            <div style={{ padding: '14px 0 6px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              {(() => {
+                const noSlots = displaySpots === 0;
+                const btnColor = noSlots ? '#C4C4CC' : ORANGE;
+                return (
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <button onClick={noSlots ? undefined : () => setSubView('addplayers')} style={{ padding: '10px 4px 10px 14px', background: 'transparent', border: 'none', cursor: noSlots ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, color: btnColor, letterSpacing: -0.1, display: 'inline-flex', alignItems: 'center', gap: 8, WebkitTapHighlightColor: 'transparent', outline: 'none', opacity: noSlots ? 0.5 : 1 }}>
+                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="9" stroke={btnColor} strokeWidth="1.6"/><path d="M10 6v8M6 10h8" stroke={btnColor} strokeWidth="1.7" strokeLinecap="round"/></svg>
+                      Agregar jugadores
+                    </button>
+                    <span style={{ fontSize: 12, color: SUB, whiteSpace: 'nowrap' }}>Pagas tú</span>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         )}
 
-        {!isCampo && !isRental && guests.length > 0 && (
+        {!armaLista && !isCampo && !isRental && guests.length > 0 && (
           <div style={{ padding: '8px 16px 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
             {guests.map(g => (
               <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0' }}>
@@ -1391,7 +1497,7 @@ export default function ConfirmReservation() {
           </div>
         )}
 
-        {!isCampo && !isRental && (
+        {!armaLista && !isCampo && !isRental && (
           <div style={{ padding: '18px 16px 8px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
             {(() => {
               const noSlots = displaySpots === 0;

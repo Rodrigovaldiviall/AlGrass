@@ -1663,7 +1663,7 @@ export default function GameDetail() {
     if (!supabase || !gameId) return;
     supabase
       .from('game_players')
-      .select('user_id, payer_id, status, joined_at, checked_in_at, reservation_type, invited_by_user_id, referred_by_user_id')
+      .select('id, user_id, payer_id, status, joined_at, checked_in_at, reservation_type, invited_by_user_id, referred_by_user_id, reservation_id, game_slot_reservation_id, counts_reserved_slot')
       .eq('game_id', gameId)
       .then(async ({ data, error }) => {
         if (error) { console.error('[GameDetail] game_players fetch error:', error); return; }
