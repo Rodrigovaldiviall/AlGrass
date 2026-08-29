@@ -6,6 +6,7 @@ import StaffInviteModal from './components/StaffInviteModal';
 import Sidebar from './components/Sidebar';
 import SharedLinkBootstrap from './components/SharedLinkBootstrap';
 import IntroScreen from './screens/IntroScreen';
+import { PRIVATE_MODE, hasPrivateAccess } from './lib/privateAccess';
 import { supabase } from './lib/supabase';
 import { setNotifBadge } from './utils/notifBadge';
 import { setWaitlistBadge } from './utils/waitlistBadge';
@@ -194,6 +195,22 @@ function AppBody() {
           </Routes>
         </Suspense>
       </div>
+    );
+  }
+
+  // Homepage pública: mientras PRIVATE_MODE siga activo y el visitante no haya
+  // desbloqueado el acceso privado, "/" muestra SIEMPRE el Intro público — sin
+  // depender de la lógica localStorage de "ya conoce AlGrass" (INTRO_KEY/
+  // WELCOME_KEY) ni de IntroGate/RootRedirect. El CTA entra al flujo real con una
+  // navegación DURA a /games, de modo que PrivateAccessGate lo intercepte con la
+  // clave; no desbloquea ni escribe algr_private_access. Una vez con acceso
+  // privado, "/" vuelve al comportamiento normal (rama de abajo).
+  if (PRIVATE_MODE && pathname === '/' && !hasPrivateAccess()) {
+    return (
+      <IntroScreen
+        onStart={() => {}}
+        onDone={() => { window.location.href = '/games'; }}
+      />
     );
   }
 

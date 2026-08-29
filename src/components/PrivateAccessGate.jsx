@@ -1,27 +1,26 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { BLUE, TEXT, SUB, ORANGE, GREEN } from '../constants';
+import { PRIVATE_MODE, PRIVATE_ACCESS_KEY, hasPrivateAccess } from '../lib/privateAccess';
 
 // ── Acceso privado TEMPORAL (hasta el lanzamiento) ──────────────────────────
-// Toda la lógica vive aquí. Envuelve la app en main.jsx: <PrivateAccessGate><App/></...>.
+// La config (PRIVATE_MODE, clave de desbloqueo) vive en ../lib/privateAccess y la
+// comparte App para la homepage pública. Envuelve la app en main.jsx.
 // El día del lanzamiento: cambiar PRIVATE_MODE a false y hacer deploy. No borrar nada.
-const PRIVATE_MODE = true;
-
-const STORAGE_KEY = 'algr_private_access';
 
 export default function PrivateAccessGate({ children }) {
   // Desbloqueo persistido por origen (algrass.com y admin.algrass.com son independientes).
-  const [unlocked, setUnlocked] = useState(() => {
-    try { return localStorage.getItem(STORAGE_KEY) === 'true'; } catch { return false; }
-  });
+  const [unlocked, setUnlocked] = useState(hasPrivateAccess);
   const [password, setPassword] = useState('');
   const [error, setError]       = useState(false);
   const [loading, setLoading]   = useState(false);
 
-  // Rutas legales públicas: deben cargar sin clave para que Google OAuth pueda
-  // acceder a ellas (entrando incluso directo por URL). El gate vive fuera del
-  // router, así que se lee la ruta desde window.location.
-  const PUBLIC_PATHS = ['/privacy', '/terms'];
+  // Superficie pública mientras PRIVATE_MODE está activo: la homepage "/" (que
+  // muestra el Intro público) y las páginas legales /privacy y /terms — para que
+  // Google pueda revisarlas sin clave, incluso entrando directo por URL. El resto
+  // de rutas sigue exigiendo clave. El gate vive fuera del router, así que se lee
+  // la ruta desde window.location.
+  const PUBLIC_PATHS = ['/', '/privacy', '/terms'];
   let pathname = '';
   try { pathname = window.location.pathname; } catch { /* no window */ }
 
@@ -39,7 +38,7 @@ export default function PrivateAccessGate({ children }) {
       : { data: false, error: new Error('no supabase') };
     setLoading(false);
     if (rpcErr || data !== true) { setError(true); return; }
-    try { localStorage.setItem(STORAGE_KEY, 'true'); } catch {}
+    try { localStorage.setItem(PRIVATE_ACCESS_KEY, 'true'); } catch {}
     setUnlocked(true); // cierra la pantalla; App se monta desde su estado inicial normal
   }
 
