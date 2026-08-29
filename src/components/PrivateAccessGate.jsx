@@ -18,8 +18,16 @@ export default function PrivateAccessGate({ children }) {
   const [error, setError]       = useState(false);
   const [loading, setLoading]   = useState(false);
 
-  // Modo público o ya desbloqueado → la app continúa EXACTAMENTE igual que hoy.
-  if (!PRIVATE_MODE || unlocked) return children;
+  // Rutas legales públicas: deben cargar sin clave para que Google OAuth pueda
+  // acceder a ellas (entrando incluso directo por URL). El gate vive fuera del
+  // router, así que se lee la ruta desde window.location.
+  const PUBLIC_PATHS = ['/privacy', '/terms'];
+  let pathname = '';
+  try { pathname = window.location.pathname; } catch { /* no window */ }
+
+  // Modo público, ya desbloqueado, o ruta legal pública → la app continúa
+  // EXACTAMENTE igual que hoy.
+  if (!PRIVATE_MODE || unlocked || PUBLIC_PATHS.includes(pathname)) return children;
 
   async function submit(e) {
     e?.preventDefault();
