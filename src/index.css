@@ -108,11 +108,23 @@ input:-webkit-autofill:hover {
 .app-main   { display: contents; }
 .sidebar    { display: none; }
 
+/* Páginas legales standalone (/privacy, /terms): mismo comportamiento
+   responsive que .app-main pero SIN sidebar ni margen. En móvil transparente
+   (la screen-shell llena el viewport); en desktop centra el documento. */
+.legal-standalone { display: contents; }
+
 /* Screen fills full viewport on mobile */
 .screen-shell { height: 100dvh; }
 
 /* ── Desktop ≥ 1024 px ─────────────────────────────────── */
 @media (min-width: 1024px) {
+  .legal-standalone {
+    display: flex;
+    justify-content: center;
+    min-height: 100dvh;
+    background: #ECEDF0;
+  }
+
   .app-layout {
     display: block;
     min-height: 100dvh;

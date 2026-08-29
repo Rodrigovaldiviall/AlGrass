@@ -176,41 +176,67 @@ function IntroGate({ children }) {
   return children;
 }
 
+// Cuerpo de la app: decide entre el layout normal (con Sidebar) y las páginas
+// legales public standalone. Vive dentro de BrowserRouter para leer la ruta.
+function AppBody() {
+  const { pathname } = useLocation();
+
+  // /privacy y /terms son páginas públicas independientes: se renderizan FUERA
+  // del app-layout — sin Sidebar, sin IntroGate y sin barra de partidos —, como
+  // su propia página completa. (El contenido de LegalPage no cambia.)
+  if (pathname === '/privacy' || pathname === '/terms') {
+    return (
+      <div className="legal-standalone">
+        <Suspense fallback={<RouteShell />}>
+          <Routes>
+            <Route path="/privacy" element={<LegalPage type="privacy" />} />
+            <Route path="/terms" element={<LegalPage type="terms" />} />
+          </Routes>
+        </Suspense>
+      </div>
+    );
+  }
+
+  return (
+    <div className="app-layout">
+      <Sidebar />
+      <div className="app-main">
+        <Suspense fallback={<RouteShell />}>
+          <IntroGate>
+          <Routes>
+            <Route path="/" element={<RootRedirect />} />
+            <Route path="/welcome" element={<Welcome />} />
+            <Route path="/games" element={<PickupGames />} />
+            <Route path="/game/:id" element={<GameDetail />} />
+            <Route path="/auth" element={<AuthScreen />} />
+            <Route path="/checkout" element={<AuthGate />} />
+            <Route path="/profile" element={<Profile />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/fields" element={<Fields />} />
+            <Route path="/field/:id" element={<FieldDetail />} />
+            <Route path="/rental/:id" element={<RentalDetail />} />
+            <Route path="/venue" element={<VenueDetail />} />
+            <Route path="/notifications" element={<Notifications />} />
+            <Route path="/email-changed" element={<EmailChanged />} />
+            <Route path="/captain-request" element={<CaptainRequest />} />
+            <Route path="/privacy" element={<LegalPage type="privacy" />} />
+            <Route path="/terms" element={<LegalPage type="terms" />} />
+            <Route path="/organizer" element={<Placeholder title="Organizador" />} />
+            <Route path="/admin" element={<Placeholder title="Admin" />} />
+          </Routes>
+          </IntroGate>
+        </Suspense>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <AuthProvider>
     <StaffProvider>
     <BrowserRouter>
-      <div className="app-layout">
-        <Sidebar />
-        <div className="app-main">
-          <Suspense fallback={<RouteShell />}>
-            <IntroGate>
-            <Routes>
-              <Route path="/" element={<RootRedirect />} />
-              <Route path="/welcome" element={<Welcome />} />
-              <Route path="/games" element={<PickupGames />} />
-              <Route path="/game/:id" element={<GameDetail />} />
-              <Route path="/auth" element={<AuthScreen />} />
-              <Route path="/checkout" element={<AuthGate />} />
-              <Route path="/profile" element={<Profile />} />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="/fields" element={<Fields />} />
-              <Route path="/field/:id" element={<FieldDetail />} />
-              <Route path="/rental/:id" element={<RentalDetail />} />
-              <Route path="/venue" element={<VenueDetail />} />
-              <Route path="/notifications" element={<Notifications />} />
-              <Route path="/email-changed" element={<EmailChanged />} />
-              <Route path="/captain-request" element={<CaptainRequest />} />
-              <Route path="/privacy" element={<LegalPage type="privacy" />} />
-              <Route path="/terms" element={<LegalPage type="terms" />} />
-              <Route path="/organizer" element={<Placeholder title="Organizador" />} />
-              <Route path="/admin" element={<Placeholder title="Admin" />} />
-            </Routes>
-            </IntroGate>
-          </Suspense>
-        </div>
-      </div>
+      <AppBody />
       <SharedLinkBootstrap />
       <NotifBadgeSync />
       <WaitlistBadgeSync />

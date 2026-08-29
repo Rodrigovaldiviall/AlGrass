@@ -1,4 +1,3 @@
-import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB } from '../constants';
 import I from '../icons';
 
@@ -360,14 +359,14 @@ const TERMS_BLOCKS = [
 // entrega index.html y React Router renderiza esta misma ruta.
 // Privacy: contenido completo (arriba). Terms: placeholder por ahora (se rellenará después).
 export default function LegalPage({ type }) {
-  const navigate = useNavigate();
-  const location = useLocation();
   const isTerms = type === 'terms';
   const title = isTerms ? 'Términos del Servicio' : 'Política de Privacidad';
 
-  // Desde la app hubo navegación SPA (key ≠ 'default') → volver atrás (a Configuración).
-  // Abierta directamente desde la web pública (carga inicial, key 'default') → volver a la home.
-  const goBack = () => { if (location.key !== 'default') navigate(-1); else navigate('/'); };
+  // "Atrás" navega SIEMPRE a "/" con navegación dura (no history.back hacia una
+  // ruta interna). Así PrivateAccessGate se re-evalúa en la carga: si se llegó
+  // sin clave, "/" muestra la pantalla de clave; si ya había acceso válido,
+  // carga normal. No desbloquea ni escribe algr_private_access en localStorage.
+  const goBack = () => { window.location.href = '/'; };
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff' }}>
