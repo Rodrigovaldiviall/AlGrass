@@ -27,7 +27,7 @@ export async function materializeReservation(ctx, snapshot) {
   const {
     gameId, gameType, unitPrice, promoCode, promoCodeId, promoDiscount, totalAmount, subtotalAmount,
     playersCount, guestTotal, paymentMethod, creditApplied, source,
-    guests = [], reservedSlots = 0, referral = null, titularNet,
+    guests = [], reservedSlots = 0, referral = null, titularNet, titular, invited = false,
     hostUserId = null, venueId = null, releaseHours, payerName,
   } = snapshot;
   const db = ctx.db;
@@ -37,7 +37,7 @@ export async function materializeReservation(ctx, snapshot) {
   const { data: resData, error, skipped, rentalTaken } = await createReservation({
     gameId, unitPrice, promoCode, promoCodeId, promoDiscount,
     totalAmount, subtotalAmount, playersCount, guestTotal,
-    paymentMethod, creditApplied, source,
+    paymentMethod, creditApplied, source, invited,   // invited → sin applySpend (sin wallet)
   }, ctx);
   if (rentalTaken) return { code: 'RENTAL_TAKEN' };
   if (skipped || error) return { error, skipped };
@@ -48,10 +48,16 @@ export async function materializeReservation(ctx, snapshot) {
   // 2) Roster + R1 (solo match). Misma derivación de grupo de capitán.
   if (gameType === 'match' || !gameType) {
     const slotRes = await loadSlotSnapshot(db, gameId, referral);
-    const aTit = resolveCaptainGroupAssignment(slotRes, { actorUserId: actor, enrolleeUserId: actor, linkOwnerUserId: referral });
-    const { error: gpErr } = await createGamePlayer({ gameId, reservationId, amount: titularNet, hostUserId, gameSlotReservationId: aTit.gameSlotReservationId, countsReservedSlot: aTit.countsReservedSlot, referredByUserId: aTit.referredByUserId }, ctx);
-    if (gpErr?.message?.startsWith('GAME_FULL')) return { code: 'GAME_FULL' };
-    if (!gpErr) referralConsumed = true;
+    let gpErr = null;
+    // titular === false: operación SIN titular (p.ej. agregar jugadores a una
+    // inscripción existente). NO se inserta/upserta al titular (ya confirmado); el
+    // resto (reserve_slots, invitados, R1, spend, setMatchReserved) sigue idéntico.
+    if (titular !== false) {
+      const aTit = resolveCaptainGroupAssignment(slotRes, { actorUserId: actor, enrolleeUserId: actor, linkOwnerUserId: referral });
+      ({ error: gpErr } = await createGamePlayer({ gameId, reservationId, amount: titularNet, hostUserId, gameSlotReservationId: aTit.gameSlotReservationId, countsReservedSlot: aTit.countsReservedSlot, referredByUserId: aTit.referredByUserId }, ctx));
+      if (gpErr?.message?.startsWith('GAME_FULL')) return { code: 'GAME_FULL' };
+      if (!gpErr) referralConsumed = true;
+    }
     // reserve_slots (server, V13) reasigna al TITULAR/propietario a SU propia R1 (counts=true) de
     // forma atómica, así que aquí NO se toca al titular. Solo capturamos el id de la R1 nacida en
     // ESTE checkout para los INVITADOS directos que quedaron sin R1 (rellenar NULL; herencia
@@ -68,7 +74,14 @@ export async function materializeReservation(ctx, snapshot) {
       // Invitados de ESTE checkout: si no heredaron R1 y aquí nació una, entran a ella (counts=true);
       // si heredaron (link/grupo), su assignment queda intacto. referred_by_user_id NO se altera.
       const fillNewR1 = newR1Id && aG.gameSlotReservationId == null;
-      return createGamePlayer({ gameId, userId: guest.id, reservationId, amount: unitPrice, hostUserId,
+      // invited (host invita gratis): amount=0, reservation_type='invited', invited_by=host
+      // (=actor) → preserva la gestión de HostCancelInvitedSheet y la tarjeta "Invitado por".
+      // Order normal: reservationType='normal' / invitedByUserId=null = comportamiento actual.
+      return createGamePlayer({ gameId, userId: guest.id, reservationId,
+        amount:             invited ? 0 : unitPrice,
+        reservationType:    invited ? 'invited' : 'normal',
+        invitedByUserId:    invited ? actor : null,
+        hostUserId,
         gameSlotReservationId: fillNewR1 ? newR1Id : aG.gameSlotReservationId,
         countsReservedSlot:    fillNewR1 ? true    : aG.countsReservedSlot,
         referredByUserId:      aG.referredByUserId }, ctx);

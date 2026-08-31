@@ -195,13 +195,17 @@ async function setMatchPublishedIfEmpty(gameId) {
 // ── reserve ───────────────────────────────────────────────────────────────────
 
 // Appends a spend record to reservations (append-only ledger).
-export async function createReservation({ gameId, unitPrice, promoCode, promoCodeId, promoDiscount, totalAmount, subtotalAmount, playersCount, guestTotal, paymentMethod, creditApplied, source }, ctx) {
+export async function createReservation({ gameId, unitPrice, promoCode, promoCodeId, promoDiscount, totalAmount, subtotalAmount, playersCount, guestTotal, paymentMethod, creditApplied, source, invited = false }, ctx) {
   const db = ctx?.db ?? supabase;
   if (!db) return { skipped: true };
   const actor = ctx?.actor ?? (await getSession())?.user?.id;
   if (!actor) return { skipped: true };
 
-  await applySpend(actor, { totalAmount, subtotalAmount: subtotalAmount || totalAmount, creditApplied: creditApplied || 0 }, ctx);
+  // invited (invitación gratis del host): registro operativo SIN movimiento económico.
+  // NO se ejecuta applySpend (no toca credit_balance ni reserved_balance).
+  if (!invited) {
+    await applySpend(actor, { totalAmount, subtotalAmount: subtotalAmount || totalAmount, creditApplied: creditApplied || 0 }, ctx);
+  }
 
   const { data, error } = await db
     .from('reservations')
@@ -221,8 +225,10 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoCod
       payment_method:      totalAmount > 0 ? paymentMethod : null,
       source:              source || 'match',
       reserved_at:         new Date().toISOString(),
-      reservation_type:    'normal',
-      invited_by_user_id:  null,
+      // invited (invitación gratis del host): el ledger se identifica como 'invited'
+      // desde el origen, con economía 0 (importes ya vienen en 0 en el snapshot).
+      reservation_type:    invited ? 'invited' : 'normal',
+      invited_by_user_id:  invited ? actor : null,
       // Proveniencia (Etapa 4): solo cuando se materializa desde una Order (camino externo).
       // El camino interno NO pasa ctx.orderId → la columna ni se referencia (queda NULL por
       // default), así que esta línea no depende de reservations.order_id hasta usarse en externo.
@@ -691,18 +697,18 @@ export async function cancelInvitedPlayers(gameId, invitedUserIds, unitPrice = 0
   if (error) { console.error('[cancelInvitedPlayers]', error); return { error }; }
   await setMatchPublishedIfEmpty(gameId);
 
-  const grossTotal = unitPrice * rows.length;
+  // Invitación gratis: economía 0 en el refund (sin descuento ficticio). No toca wallet.
   const { error: ledgerErr } = await supabase.from('reservations').insert({
     game_id:            gameId,
     user_id:            session.user.id,
     canceled_by:        session.user.id,
     status:             'refund',
-    unit_price:         unitPrice,
-    promo_discount:     grossTotal,
-    subtotal_amount:    grossTotal,
+    unit_price:         0,
+    promo_discount:     0,
+    subtotal_amount:    0,
     total_amount:       0,
     players_count:      rows.length,
-    guest_total:        grossTotal,
+    guest_total:        0,
     canceled_at:        new Date().toISOString(),
     reservation_type:   'invited',
     invited_by_user_id: session.user.id,

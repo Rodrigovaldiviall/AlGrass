@@ -986,6 +986,12 @@ export default function ConfirmReservation() {
   // reserva de cupos. El backend (reserve_slots) sigue siendo la verdad.
   const _slotGameStart = gameStartDate(game?.dateKey, game?.time24);
   const slotReservationClosed = !!_slotGameStart && Date.now() >= _slotGameStart.getTime() - releaseHours * 3600_000;
+  // Toggle "Arma la lista": armar la lista (titular + invitados YA existentes) no
+  // consume cupos nuevos, así que se permite encender el switch aunque no queden
+  // cupos, siempre que ya haya lista (listFloor>1 = titular + al menos 1 invitado).
+  // Solo se bloquea sin invitados y sin cupos. Los steppers +/- siguen respetando
+  // onlyTitularSpot (no se pueden añadir cupos vacíos sin disponibilidad).
+  const armaListToggleDisabled = slotReservationClosed || (onlyTitularSpot && listFloor <= 1);
   const captainColor = isCaptainGold ? '#F5B301' : '#E5383B';
   // Arma la lista: ON pone N = max(piso, último N); OFF apaga la reserva (reservedSlots=0) y recuerda N.
   function toggleArmaLista() {
@@ -1033,15 +1039,22 @@ export default function ConfirmReservation() {
     if (invitedMode) {
       if (!guests.length) return;
       setFreeConfirming(true);
-      handlePaid();
+      payWithCredit('invited');   // invitación gratis del HOST → misma tubería Orders
       return;
     }
     if (total === 0) {
+      // 100% crédito/gratis → pasa por Orders (create_order → confirm_order modo
+      // credit) ANTES de debitar/materializar: flujo PRINCIPAL y addGuests CON
+      // invitados. addGuests SIN invitados (solo ajuste de R1, sin pago) conserva su
+      // camino actual (reserve_slots directo).
       setCreditLoading(true);
       setTimeout(() => {
         setCreditLoading(false);
         setFreeConfirming(true);
-        setTimeout(() => handlePaid(), 1800);
+        setTimeout(() => {
+          if (addGuestsMode && guests.length === 0) handlePaid();
+          else payWithCredit();
+        }, 1800);
       }, 1400);
       return;
     }
@@ -1056,15 +1069,43 @@ export default function ConfirmReservation() {
   //   · confirm_order consume ese snapshot serializado TAL CUAL (no recomputa nada).
   // Todo campo nuevo del snapshot se añade SOLO aquí.
   function buildMainSnapshot(paymentMethod) {
+    const noTitular = addGuestsMode || invitedMode;   // operaciones sin titular NUEVO
     return {
       gameId: game?.id, gameType: game?.type,
-      unitPrice, promoCode: promoApplied?.code ?? null, promoCodeId: promoApplied?.promoCodeId ?? null, promoDiscount: promoApplied?.discount ?? 0,
-      totalAmount: total, subtotalAmount: subtotal,
-      playersCount: isRental ? 1 : 1 + guests.length, guestTotal: isRental ? 0 : guestsTotal,
-      paymentMethod, creditApplied, source: game?.source ?? 'match',
-      guests, reservedSlots, referral, titularNet, hostUserId: game?.hostUserId ?? null,
+      unitPrice: invitedMode ? 0 : unitPrice,
+      promoCode: promoApplied?.code ?? null, promoCodeId: promoApplied?.promoCodeId ?? null,
+      promoDiscount: invitedMode ? 0 : (promoApplied?.discount ?? 0),
+      totalAmount: invitedMode ? 0 : total, subtotalAmount: invitedMode ? 0 : subtotal,
+      playersCount: noTitular ? guests.length : (isRental ? 1 : 1 + guests.length),
+      guestTotal: invitedMode ? 0 : (isRental ? 0 : guestsTotal),
+      paymentMethod, creditApplied: invitedMode ? 0 : creditApplied, source: game?.source ?? 'match',
+      // addGuests: SIN titular (ya inscrito) y referral = payer → create_order acredita la
+      // R1 PROPIA del capitán (mismo mecanismo que el Shared Link).
+      // invitedMode: HOST invita gratis → SIN titular, invited=true (confirm_order valida
+      // host y NO toca wallet), TODO importe = 0 (sin movimiento económico). El host no tiene
+      // R1 → los invitados salen de público. referral = host es inocuo (acredita 0).
+      titular: !noTitular,
+      invited: invitedMode,
+      guests, reservedSlots: invitedMode ? 0 : reservedSlots,
+      referral: noTitular ? (authUser?.id ?? null) : referral,
+      titularNet: invitedMode ? 0 : titularNet, hostUserId: game?.hostUserId ?? null,
       venueId: game?.venueId ?? null, releaseHours, payerName: authUser?.name,
     };
+  }
+
+  // Claim del HOLD para create_order. create_order hace v_units = titular + guests +
+  // reserved_slots, así que reserved_slots debe ser SOLO los cupos VACÍOS adicionales
+  // (emptySlots = N − listFloor), NUNCA el N total (que ya incluye titular+invitados)
+  // → evita el doble conteo que provocaba NO_CAPACITY en partidos ajustados.
+  // financial_snapshot.reservedSlots sigue siendo el N TOTAL objetivo (materialize/
+  // reserve_slots lo necesitan). addGuests: SIN titular y reserved_slots=0 → claimed_
+  // units = nº invitados; create_order acredita la R1 propia vía referral (= payer) y
+  // los vacíos ya están retenidos por esa R1. Rental: 1 unidad.
+  function buildClaimComposition() {
+    if (isRental) return { titular: true };
+    // addGuests e invitedMode: SIN titular, reserved_slots=0 → claimed_units = nº invitados.
+    if (addGuestsMode || invitedMode) return { titular: false, guests, reserved_slots: 0 };
+    return { titular: true, guests, reserved_slots: emptySlots };
   }
 
   // Cierre COMPARTIDO de una reserva confirmada del main flow (interno y externo):
@@ -1106,18 +1147,16 @@ export default function ConfirmReservation() {
     }}});
   }
 
-  // ── Camino EXTERNO (total>0, main flow) ───────────────────────────────────────
+  // ── Camino EXTERNO (total>0: main flow y addGuests con invitados) ─────────────
   // createOrder(HOLD) → paymentAdapter.charge → confirmOrder → finishConfirmedNavigation.
-  // addGuests/invited NO usan Order en esta fase (su materialización no fue extraída).
+  // addGuests usa una Order NUEVA del mismo game (titular:false); invited sigue sin Order.
   //
   // onPreCharge: adquiere el HOLD JUSTO antes del cobro, con el método ya elegido.
   // create_order es el ÚNICO responsable del HOLD.
   async function handlePreCharge(method) {
-    if (addGuestsMode || invitedMode) return { skip: true };
+    if (invitedMode) return { skip: true };
     const idempotencyKey = uuidv4();          // nueva key por intento (dedup en create_order)
-    const claimComposition = isRental
-      ? { titular: true }
-      : { titular: true, guests, reserved_slots: reservedSlots };
+    const claimComposition = buildClaimComposition();
     const { data, error } = await createOrder({
       idempotencyKey,
       resourceType:      game?.type,
@@ -1141,6 +1180,42 @@ export default function ConfirmReservation() {
       return { error: error?.message ?? 'CREATE_ORDER_FAILED' };
     }
     return { orderId: data.id };
+  }
+
+  // ── Camino sin PaymentSheet — HOLD antes de debitar/materializar ───────────────
+  // create_order → confirm_order (SIN pasarela) → MISMA materialización server-side.
+  //   · provider='credit' (flujo principal 100% crédito): confirm_order valida saldo.
+  //   · provider='invited' (invitación gratis del HOST): amount_total=0; confirm_order
+  //     valida HOST y NO toca wallet (invited=true en el snapshot). No debita crédito.
+  // Mismo claimComposition que usaría pasarela. NO_CAPACITY → capacityError.
+  // Reutiliza handleExternalPaid para confirmar/navegar.
+  async function payWithCredit(provider = 'credit') {
+    const isInvited = provider === 'invited';
+    const idempotencyKey = uuidv4();
+    const claimComposition = buildClaimComposition();
+    const { data, error } = await createOrder({
+      idempotencyKey,
+      resourceType:      game?.type,
+      resourceId:        game?.id,
+      claimComposition,
+      amountTotal:       isInvited ? 0 : total,   // invited: 0; crédito: 0 si todo es crédito
+      currency:          'PEN',
+      financialSnapshot: buildMainSnapshot(provider),
+      pendingExpiresAt:  new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      paymentProvider:   provider,
+    });
+    if (error || !data) {
+      if ((error?.message ?? '').includes('INSUFFICIENT_PUBLIC_SLOTS')) {
+        setCapacityError('RESERVED_SLOTS_UNAVAILABLE');
+      } else if ((error?.message ?? '').includes('NO_CAPACITY')) {
+        setCapacityError(game?.type === 'rental' ? 'RENTAL_TAKEN' : 'GAME_FULL');
+      } else {
+        console.warn('[checkout] create_order (credit) failed:', error);
+      }
+      setFreeConfirming(false);
+      return;   // NO se debitó crédito
+    }
+    await handleExternalPaid(provider, null, data.id);
   }
 
   // onPaid del PaymentSheet. Externo main (orderId) → confirm_order materializa
@@ -1193,7 +1268,7 @@ export default function ConfirmReservation() {
     let body = null;
     try { body = await error?.context?.json(); } catch {}
     const code = body?.error ?? null;
-    if (code === 'GAME_FULL' || code === 'RENTAL_TAKEN') { resolveTerminal(); return; }
+    if (code === 'GAME_FULL' || code === 'RENTAL_TAKEN' || code === 'INSUFFICIENT_CREDIT') { resolveTerminal(); return; }
     console.warn('[checkout] confirm_order failed; polling order status:', code ?? error);
     pollStatus();
   }
@@ -1517,8 +1592,8 @@ export default function ConfirmReservation() {
               <div style={{ fontSize: 16, fontWeight: 800, color: slotReservationClosed ? '#9A9AA0' : TEXT, letterSpacing: -0.2 }}>Arma la lista</div>
               <div style={{ fontSize: 12.5, color: slotReservationClosed ? '#C7C7CC' : SUB, marginTop: 1 }}>Hasta {releaseHours}h antes del partido</div>
             </div>
-            <button onClick={toggleArmaLista} role="switch" aria-checked={armaLista} disabled={slotReservationClosed || onlyTitularSpot}
-              style={{ width: 44, height: 26, borderRadius: 999, border: 'none', background: armaLista ? BLUE : '#E5E5EA', cursor: (slotReservationClosed || onlyTitularSpot) ? 'default' : 'pointer', padding: 0, position: 'relative', transition: 'background .2s ease', WebkitTapHighlightColor: 'transparent', outline: 'none', flexShrink: 0, opacity: (slotReservationClosed || onlyTitularSpot) ? 0.5 : 1 }}>
+            <button onClick={toggleArmaLista} role="switch" aria-checked={armaLista} disabled={armaListToggleDisabled}
+              style={{ width: 44, height: 26, borderRadius: 999, border: 'none', background: armaLista ? BLUE : '#E5E5EA', cursor: armaListToggleDisabled ? 'default' : 'pointer', padding: 0, position: 'relative', transition: 'background .2s ease', WebkitTapHighlightColor: 'transparent', outline: 'none', flexShrink: 0, opacity: armaListToggleDisabled ? 0.5 : 1 }}>
               <div style={{ position: 'absolute', top: 2, left: armaLista ? 20 : 2, width: 22, height: 22, borderRadius: '50%', background: '#fff', transition: 'left .2s ease', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
             </button>
           </div>

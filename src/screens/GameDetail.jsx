@@ -778,7 +778,7 @@ function PlayerModal({ player, onClose, isHost = false }) {
 }
 
 // ── ModifySheet
-function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, within24h = false }) {
+function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, hasInvited = false, within24h = false }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
@@ -790,6 +790,12 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
     </svg>
   );
   const canAdd = isHost ? (canAddPlayers && canAddGuests) : canAddGuests;
+  // "Gestionar mi lista" (capitán): accesible aunque no queden cupos SOLO si tiene
+  // al menos 1 invitado (armar lista = titular + invitados), para poder asegurar
+  // esos cupos si alguien cancela. Sin cupos y sin invitados → bloqueado. Dentro,
+  // agregar jugadores sigue respetando la disponibilidad (noSlots en
+  // ConfirmReservation). "Agregar jugadores" normal sigue exigiendo cupos.
+  const enabled = canAdd || (showReserveSlots && hasInvited);
   return (
     <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease', pointerEvents: open ? 'auto' : 'none' }}>
       <div className="sheet-panel" ref={rootRef} onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(20px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? `translateY(${dragY}px)` : 'translateY(100%)', transition: dragging ? 'none' : 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
@@ -806,19 +812,21 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
           </button>
         )}
         <button
-          onClick={canAdd ? onAddGuests : undefined}
-          style={{ ...rowStyle, cursor: canAdd ? 'pointer' : 'default', opacity: canAdd ? 1 : 0.45 }}>
+          onClick={enabled ? onAddGuests : undefined}
+          style={{ ...rowStyle, cursor: enabled ? 'pointer' : 'default', opacity: enabled ? 1 : 0.45 }}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>{showReserveSlots ? 'Gestionar mi lista' : 'Agregar jugadores'}</span>
-            <span style={{ fontSize: 13, color: canAdd ? SUB : '#BEBEC8' }}>
+            <span style={{ fontSize: 13, color: enabled ? SUB : '#BEBEC8' }}>
               {isHost && !canAddPlayers
                 ? '· Solo desde 1h antes'
                 : canAdd
                   ? `· ${openSpots} ${openSpots === 1 ? 'cupo disponible' : 'cupos disponibles'}`
-                  : '· Sin cupos'}
+                  : enabled
+                    ? '· Gestiona tu lista'
+                    : '· Sin cupos disponibles'}
             </span>
           </div>
-          {canAdd && chevron()}
+          {enabled && chevron()}
         </button>
         {isHost ? (
           invitedCount > 0 && (
@@ -2298,6 +2306,7 @@ export default function GameDetail() {
           canAddPlayers={hostWindowOpen}
           invitedCount={invitedByHost.length}
           showReserveSlots={!isHost && (isCaptain || isCaptainGold)}
+          hasInvited={guestsInRoster.length > 0}
           reserveSlotsDisabled={mySlotCanceled || slotReservationClosed || effectiveAvailability === 0}
           releaseHours={releaseHours}
           slotCanceled={mySlotCanceled}
