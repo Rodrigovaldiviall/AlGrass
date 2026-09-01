@@ -45,13 +45,14 @@ export async function fetchAppTimings() {
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('app_settings')
-    .select('free_invites_lead_min, attendance_lead_min')
+    .select('free_invites_lead_min, attendance_lead_min, match_refund_cutoff_hours')
     .eq('id', 1)
     .single();
   if (error || !data) return null;
   return {
-    freeInvitesLeadMin: data.free_invites_lead_min ?? null,
-    attendanceLeadMin:  data.attendance_lead_min ?? null,
+    freeInvitesLeadMin:     data.free_invites_lead_min ?? null,
+    attendanceLeadMin:      data.attendance_lead_min ?? null,
+    matchRefundCutoffHours: data.match_refund_cutoff_hours ?? null,   // solo para TEXTO del preview
   };
 }
 

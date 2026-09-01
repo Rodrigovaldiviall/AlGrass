@@ -17,7 +17,7 @@ import TabBar from '../components/TabBar';
 import { useForegroundTick } from '../hooks/useForegroundTick';
 import RatingBlock from '../components/RatingBlock';
 import { useAuth } from '../context/AuthContext';
-import { cancelGamePlayer, cancelGuestPlayers, cancelInvitedPlayers } from '../services/reservationService';
+import { cancelGamePlayer, cancelGuestPlayers, cancelInvitedPlayers, getMatchCancellationWindow } from '../services/reservationService';
 import { supabase } from '../lib/supabase';
 import * as sharedLink from '../lib/sharedLink';
 import { getAvatarUrl } from '../utils/avatar';
@@ -362,16 +362,21 @@ function PaymentDetail({ price, breakdown, paidBy, userName, titularCanceled = f
 }
 
 // ── PaymentDetailSheet
-function PaymentDetailSheet({ price, breakdown, paidBy, userName, titularCanceled, activeGuestCount, guestSubBreakdown, onClose, ready = true }) {
+function PaymentDetailSheet({ price, breakdown, paidBy, userName, titularCanceled, activeGuestCount, guestSubBreakdown, onClose, onBack, ready = true }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
-  function dismiss() { setOpen(false); setTimeout(onClose, 220); }
+  function dismiss() { setOpen(false); setTimeout(onClose, 220); }   // backdrop → cerrar todo
+  function back()    { setOpen(false); setTimeout(onBack, 220); }    // ← Atrás → Gestionar mi reserva
   const { rootRef, dragY, dragging } = useSheetPull({ onClose: dismiss });
   return (
     <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease', pointerEvents: open ? 'auto' : 'none' }}>
       <div className="sheet-panel" ref={rootRef} onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(24px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? `translateY(${dragY}px)` : 'translateY(100%)', transition: dragging ? 'none' : 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
         <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 20px' }} />
-        <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 16, textAlign: 'center', letterSpacing: -0.2 }}>Detalles del pago</div>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
+          <button onClick={back} aria-label="Atrás" style={{ width: 26, height: 20, marginLeft: -4, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-start', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{I.back(TEXT)}</button>
+          <div style={{ flex: 1, fontSize: 16, fontWeight: 700, color: TEXT, textAlign: 'center', letterSpacing: -0.2 }}>Detalles del pago</div>
+          <div style={{ width: 26, flexShrink: 0 }} />
+        </div>
         {ready ? (
           <PaymentDetail price={price} breakdown={breakdown} paidBy={paidBy} userName={userName} titularCanceled={titularCanceled} activeGuestCount={activeGuestCount} guestSubBreakdown={guestSubBreakdown} alwaysExpanded />
         ) : (
@@ -846,7 +851,7 @@ function HostCancelInvitedSheet({ gameId, invitedPlayers, unitPrice = 0, onClose
 }
 
 // ── CancelSheet
-function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, guestId, guestSelfName, payerName, payerCode, onClose, onDone, titularAlreadyCanceled = false, guestSubBreakdown = null, slotAmounts = null, selfUserId = null, within24h = false }) {
+function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, guestId, guestSelfName, payerName, payerCode, onClose, onBack, onDone, titularAlreadyCanceled = false, guestSubBreakdown = null, slotAmounts = null, selfUserId = null, within24h = false, refundReady = true, matchRefundCutoffHours = null }) {
   const [open, setOpen]           = useState(false);
   const [step, setStep]           = useState('select');
   const [titularChecked, setTitularChecked]   = useState(false);
@@ -882,11 +887,17 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
   const totalRefund = isGuest
     ? checkedGuestsSum
     : (effectiveTitularChecked ? titularRefund : 0) + checkedGuestsSum;
-  const canConfirm = isGuest ? (effectiveSelfChecked || checkedGuests.size > 0) : totalRefund > 0;
+  // refundReady=false → veredicto de reembolso aún desconocido: no se permite confirmar.
+  const canConfirm = refundReady && (isGuest ? (effectiveSelfChecked || checkedGuests.size > 0) : totalRefund > 0);
   const fmt = n => `S/. ${Number(n).toFixed(2)}`;
 
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
 
+  function back() {   // ← Atrás → Gestionar mi reserva (backdrop usa dismiss → cerrar todo)
+    if (step === 'processing') return;
+    setOpen(false);
+    setTimeout(onBack, 220);
+  }
   function dismiss() {
     if (step === 'processing') return;
     setOpen(false);
@@ -1001,14 +1012,21 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
         {step === 'select' && (<>
           <div style={{ padding: '20px 16px 0', flexShrink: 0 }}>
             <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 16px' }} />
-            <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, letterSpacing: -0.2 }}>{within24h ? 'Gestionar asistencia' : 'Cancelar reserva'}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button onClick={back} aria-label="Atrás" style={{ width: 22, height: 20, marginLeft: -4, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-start', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{I.back(TEXT)}</button>
+              <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, letterSpacing: -0.2 }}>{within24h ? 'Gestionar asistencia' : 'Cancelar reserva'}</div>
+            </div>
             <div style={{ fontSize: 13, color: SUB, marginTop: 4, marginBottom: 10 }}>Selecciona</div>
             {within24h ? (
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '9px 12px', borderRadius: 10, background: '#F6F7F9', marginBottom: 14 }}>
                 <svg width="15" height="15" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={SUB} strokeWidth="1.4"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={SUB} strokeWidth="1.5" strokeLinecap="round"/></svg>
                 <span style={{ fontSize: 12.5, color: SUB, fontWeight: 500, lineHeight: 1.45 }}>
                   <span style={{ display: 'block', fontWeight: 700, marginBottom: 4 }}>¿No podrás asistir?</span>
-                  Ya no es posible cancelar con devolución porque faltan menos de 24 horas para el partido.
+                  {typeof matchRefundCutoffHours === 'number' ? (
+                    <>Ya no es posible cancelar con devolución porque faltan menos de <strong style={{ fontWeight: 700, color: TEXT }}>{matchRefundCutoffHours} horas</strong> para el partido.</>
+                  ) : (
+                    'Ya no es posible cancelar con devolución por el tiempo restante para el partido.'
+                  )}
                   <span style={{ display: 'block', marginTop: 6 }}>Si tú o alguno de tus invitados no podrá asistir, te agradecemos que lo indiques para que podamos intentar completar el lugar.</span>
                 </span>
               </div>
@@ -1130,12 +1148,14 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
             </>)}
           </div>
           <div style={{ padding: '12px 16px calc(12px + env(safe-area-inset-bottom))', borderTop: `1px solid ${HAIR}`, flexShrink: 0 }}>
-            {!within24h && (
+            {!refundReady ? (
+              <div style={{ fontSize: 13, color: SUB, marginBottom: 12, textAlign: 'center' }}>Calculando condiciones de cancelación…</div>
+            ) : (!within24h && (
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
                 <span style={{ fontSize: 14, color: SUB }}>Total a cancelar</span>
                 <span style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{fmt(totalRefund)}</span>
               </div>
-            )}
+            ))}
             <button onClick={canConfirm ? confirm : undefined} style={{ width: '100%', height: 50, borderRadius: 14, background: canConfirm ? DANGER : '#E8E8EC', color: canConfirm ? '#fff' : '#9A9AA0', border: 'none', cursor: canConfirm ? 'pointer' : 'not-allowed', fontSize: 15, fontWeight: 700, fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
               {within24h ? 'Cancelar asistencia' : 'Confirmar cancelación'}
             </button>
@@ -1256,7 +1276,7 @@ export default function GameDetail() {
   const infoMode  = (location.state?.infoMode ?? false) || isBooked || isHost;
   const isGuest   = !!g.paidBy;
   const organizerPhone = useOrganizerPhone(g);   // resuelto (host vs algrass) o null → CTA off
-  const { freeInvitesLeadMin, attendanceLeadMin } = useAppTimings();   // app_settings (null = cerrado)
+  const { freeInvitesLeadMin, attendanceLeadMin, matchRefundCutoffHours } = useAppTimings();   // app_settings (null = cerrado)
 
   const confirmedRoster  = useMemo(() => sbRoster.filter(p => p.status === 'confirmed'), [sbRoster]);
 
@@ -1481,12 +1501,23 @@ export default function GameDetail() {
   // reservas, exista o no una R1 (activa/cancelada/expirada). Se basa en el tiempo, no en la R1.
   const releaseHours = isCaptainGold ? 24 : 48;
   const slotReservationClosed = !!gameStart && now >= new Date(gameStart.getTime() - releaseHours * 3600_000);
-  // PRESENTACIÓN de la política de 24h (solo preview; la autoridad económica al ejecutar
-  // sigue siendo match_cancellation_window/realRefundAmount). Espeja el corte estricto del
-  // backend: refundable ⇔ now < (inicio - 24h); por tanto NO reembolsable (modo "gestionar
-  // asistencia") ⇔ now >= (inicio - 24h). Reutiliza gameStart + now ya existentes; sin query
-  // ni helper nuevos. Si no hay gameStart, se asume reembolsable (flujo actual intacto).
-  const cancelWithin24h = !!gameStart && now >= new Date(gameStart.getTime() - 24 * 3600_000);
+  // Veredicto de reembolso Match desde el RPC EXISTENTE match_cancellation_window (autoridad
+  // del preview). NO se recalcula ninguna regla de horas en frontend. matchWin=null →
+  // veredicto DESCONOCIDO (cargando/error): no se asume refundable true/false y la confirmación
+  // queda bloqueada. Se re-consulta al montar → un cambio del cutoff en Admin se refleja al
+  // reabrir/recargar. La cancelación real vuelve a consultar el RPC al confirmar (flujo actual).
+  const [matchWin, setMatchWin] = useState(null);
+  useEffect(() => {
+    if (!gameId) { setMatchWin(null); return; }
+    let alive = true;
+    setMatchWin(null);
+    getMatchCancellationWindow(gameId).then(({ data }) => {
+      if (alive && data && typeof data.refundable === 'boolean') setMatchWin(data);
+    });
+    return () => { alive = false; };
+  }, [gameId]);
+  const matchRefundReady = matchWin != null;
+  const cancelWithin24h  = matchWin?.refundable === false;   // within24h = !refundable (backend)
   // Attendance window: [game_start - attendanceLeadMin, game_end). El lead viene de
   // app_settings; si aún no cargó (null) la ventana queda CERRADA (no se puede marcar).
   const attendanceOpen = infoMode && !!gameStart && !!gameEnd && attendanceLeadMin != null
@@ -2312,7 +2343,8 @@ export default function GameDetail() {
           titularCanceled={titularCanceled || guestCanceledView || mySlotCanceled}
           activeGuestCount={isGuest ? guestOwnGuests.length : (isCanceledWithGuests ? activeList.length : guestsInRoster.length)}
           guestSubBreakdown={isGuest ? g.guestSubBreakdown : null}
-          onClose={() => { setPaymentDetailOpen(false); setModifyOpen(true); }}
+          onClose={() => setPaymentDetailOpen(false)}
+          onBack={() => { setPaymentDetailOpen(false); setModifyOpen(true); }}
         />
       )}
       {cancelOpen && (
@@ -2332,7 +2364,10 @@ export default function GameDetail() {
           slotAmounts={myAmounts}
           selfUserId={user?.id}
           within24h={cancelWithin24h}
-          onClose={() => { setCancelOpen(false); setModifyOpen(true); }}
+          refundReady={matchRefundReady}
+          matchRefundCutoffHours={matchRefundCutoffHours}
+          onClose={() => setCancelOpen(false)}
+          onBack={() => { setCancelOpen(false); setModifyOpen(true); }}
           onDone={handleCancelDone}
         />
       )}

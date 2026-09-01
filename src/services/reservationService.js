@@ -667,6 +667,17 @@ export async function getRentalCancellationWindow(gameId) {
   return { data: win || null };
 }
 
+// Preview SOLO para UI del veredicto de reembolso Match (regla configurable, servidor).
+// NO es la autoridad del dinero: cancelGamePlayer/cancelGuestPlayers vuelven a consultar
+// match_cancellation_window al confirmar. Devuelve { data: { refundable, ... } } o { error }.
+export async function getMatchCancellationWindow(gameId) {
+  if (!supabase) return { error: new Error('NO_SUPABASE') };
+  const { data, error } = await supabase.rpc('match_cancellation_window', { p_game_id: gameId });
+  if (error) return { error };
+  const win = Array.isArray(data) ? data[0] : data;
+  return { data: win || null };
+}
+
 // Cancels invited player slots — no wallet movement (net cost was 0).
 // unitPrice is the gross spot price: stored in the refund ledger for financial analytics.
 export async function cancelInvitedPlayers(gameId, invitedUserIds, unitPrice = 0) {

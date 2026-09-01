@@ -191,8 +191,9 @@ function CancelSheet({ userName, gameId, baseAmount = 0, onClose, onConfirm, onD
     return () => { alive = false; };
   }, [gameId]);
 
-  // Crédito ESTIMADO para el preview (100/50 sobre el pago histórico conocido, round 2 dec).
-  const estRefund = pct === 100 ? baseAmount : pct === 50 ? Math.round(baseAmount * 50) / 100 : 0;
+  // Crédito ESTIMADO para el preview: cualquier refund_pct del servidor × pago histórico,
+  // con el MISMO redondeo (2 dec) que cancel_rental_self. La autoridad final la da la RPC.
+  const estRefund = pct ? Math.round((baseAmount * pct / 100) * 100) / 100 : 0;
 
   function dismiss() {
     if (step === 'processing') return;

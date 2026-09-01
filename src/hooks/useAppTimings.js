@@ -6,7 +6,7 @@ import { fetchAppTimings } from '../services/organizerContact';
 // asistencia) queda CERRADA: NO hay default operativo 60/15 en la App. Se re-lee al montar,
 // así que un cambio en Admin se refleja al reabrir la pantalla.
 export function useAppTimings() {
-  const [timings, setTimings] = useState({ freeInvitesLeadMin: null, attendanceLeadMin: null });
+  const [timings, setTimings] = useState({ freeInvitesLeadMin: null, attendanceLeadMin: null, matchRefundCutoffHours: null });
   useEffect(() => {
     let alive = true;
     fetchAppTimings().then((t) => { if (alive && t) setTimings(t); });
