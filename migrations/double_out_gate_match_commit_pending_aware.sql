@@ -82,11 +82,11 @@ begin
     -- lockea y re-lee SOLO A — NUNCA el gemelo, para no romper el orden determinista
     -- A+B del primer compromiso (mantendríamos A y pediríamos B, invirtiendo el orden).
     select * into v_game from public.games where id = new.game_id for update;
-    -- Re-validación BAJO lock: cierra published→cancel→commit (singleton). El game pudo
-    -- cancelarse entre el SELECT sin lock y este FOR UPDATE; ahora la lectura es autoritativa.
-    if v_game.status = 'canceled' then
-      raise exception 'GAME_CANCELED';
-    end if;
+    -- Re-validación autoritativa BAJO lock (reusa la FUENTE ÚNICA assert_game_reservable):
+    -- published/reserved pasan; draft/paused/canceled/completed/expired/iniciado → rechazo.
+    -- Cierra la carrera published/reserved→no-reservable durante confirm. Un singleton nunca
+    -- está 'blocked', así que no hay conflicto con ALTERNATIVE_TAKEN.
+    perform public.assert_game_reservable(new.game_id, v_game.type);
     if v_game.alternative_game_id is null then
       return new;                         -- sigue singleton: comportamiento actual intacto.
     end if;
@@ -121,23 +121,17 @@ begin
     raise exception 'DOUBLE_OUT_LINK_BROKEN';
   end if;
 
-  -- Re-validación BAJO lock A+B: cierra published→cancel→commit (par Doble salida). A pudo
-  -- pasar a 'canceled' (cancel_double_out) mientras este gate esperaba el lock; el re-read
-  -- ya es autoritativo. Debe ir ANTES del '<> published → return new' para no dejar pasar
-  -- el insert a un game cancelado.
-  if v_game.status = 'canceled' then
-    raise exception 'GAME_CANCELED';
-  end if;
-
-  -- Re-evaluar A tras el lock.
-  if v_game.status = 'reserved' then
-    return new;                           -- otro insert del propio A ya lo adjudicó.
-  end if;
+  -- Re-validación autoritativa BAJO lock A+B (reusa la FUENTE ÚNICA). Cierra la carrera
+  -- published→(draft/paused/canceled/completed/expired/iniciado) durante confirm. 'blocked'
+  -- va ANTES para conservar su error específico ALTERNATIVE_TAKEN; 'reserved' pasa el assert
+  -- (es reservable) pero queda validado contra iniciado/tipo; solo 'published' continúa a la
+  -- adjudicación.
   if v_game.status = 'blocked' then
     raise exception 'ALTERNATIVE_TAKEN';  -- el gemelo ganó entre medias.
   end if;
-  if v_game.status <> 'published' then
-    return new;
+  perform public.assert_game_reservable(new.game_id, v_game.type);
+  if v_game.status = 'reserved' then
+    return new;                           -- otro insert del propio A ya lo adjudicó.
   end if;
 
   -- El gemelo ya comprometido físicamente → nunca doble compromiso.

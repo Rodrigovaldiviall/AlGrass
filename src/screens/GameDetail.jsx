@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, useParams, Navigate } from 'react-router-dom';
 import { useSheetPull } from '../hooks/useSheetPull';
 import { useOrganizerPhone } from '../hooks/useOrganizerPhone';
-import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, DANGER, RED } from '../constants';
+import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, DANGER, RED, gameUnavailableCopy } from '../constants';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';
 import MapsLinkButton from '../components/MapsLinkButton';
@@ -1277,6 +1277,7 @@ export default function GameDetail() {
   const [sbRoster, setSbRoster] = useState(_cachedRoster ?? []);
   const [rosterReady, setRosterReady] = useState(_cachedRoster != null);
   const [spotsVerified, setSpotsVerified] = useState(false);
+  const [reserveBlock, setReserveBlock]   = useState(null);   // null | 'CAPACITY' | 'UNAVAILABLE'
 
   const stateGame = location.state?.game ?? null;
   // sbGame (canonical DB fetch) wins for game data; stateGame contributes reservation extras only
@@ -1833,6 +1834,29 @@ export default function GameDetail() {
     && (guestCanceledView ? guestOwnGuests.length : guestsInRoster.length) > 0
     && !isBooked;
 
+  // Validación UX anticipada al pulsar "Reservar": reconsulta el estado/disponibilidad
+  // REAL (NO confía en lo cargado en GameDetail) reutilizando getGameById (la misma que
+  // usa el montaje). create_order sigue siendo la validación autoritativa posterior.
+  async function handleReservePress() {
+    const fresh = await getGameById(gameId);
+    if (fresh) setSbGame(fresh);   // refresca la disponibilidad mostrada en GameDetail
+    const reservable = !!fresh
+      && (fresh.status === 'published' || fresh.status === 'reserved')
+      && !isGameStarted(fresh.dateKey, fresh.time24);
+    if (!reservable) { setReserveBlock('UNAVAILABLE'); return; }
+    // Selección del CTA principal = 1 (titular). Cupos = público FRESCO + remanente R1 propio.
+    const freshAvail = Math.max(0, fresh.openSpots ?? 0) + myReservedRemaining;
+    if (freshAvail < 1) { setReserveBlock('CAPACITY'); return; }
+    const checkoutGame = {
+      id: g.id, city: g.city ?? null, field: g.field, date: g.date, dateKey: g.dateKey,
+      time: g.time, ampm: g.ampm, time24: g.time24, durationMin: g.durationMin, format: g.format,
+      price: g.price, priceNumber: g.priceNumber, currency: g.currency, source: 'match', type: g.type,
+      openSpots: freshAvail, wasInWaitlist: inWaitlist, backPath: id ? `/game/${id}` : '/games',
+      gameDetailBackPath: backPath, hostUserId: g.hostUserId,
+    };
+    navigate('/checkout', { state: { game: checkoutGame, referral: sharedLink.getReferral(id) } });
+  }
+
   function handleAddGuests() {
     setModifyOpen(false);
     // "Agregar invitados" navega a checkout (pantalla completa). Si el usuario cancela allí,
@@ -2200,31 +2224,7 @@ export default function GameDetail() {
               price={g.price}
               disabled={isFull || !spotsVerified}
               hideTopBorder={isFull || isCanceledWithGuests}
-              onPress={() => {
-                const checkoutGame = {
-                  id:          g.id,
-                  city:        g.city ?? null,
-                  field:       g.field,
-                  date:        g.date,
-                  dateKey:     g.dateKey,
-                  time:        g.time,
-                  ampm:        g.ampm,
-                  time24:      g.time24,
-                  durationMin: g.durationMin,
-                  format:      g.format,
-                  price:       g.price,
-                  priceNumber: g.priceNumber,
-                  currency:    g.currency,
-                  source:      'match',
-                  type:        g.type,
-                  openSpots:   effectiveAvailability,
-                  wasInWaitlist: inWaitlist,
-                  backPath:    id ? `/game/${id}` : '/games',
-                  gameDetailBackPath: backPath,
-                  hostUserId:  g.hostUserId,
-                };
-                navigate('/checkout', { state: { game: checkoutGame, referral: sharedLink.getReferral(id) } });
-              }}
+              onPress={handleReservePress}
             />}
           </>
         )}
@@ -2258,6 +2258,36 @@ export default function GameDetail() {
           </div>
         </div>
       )}
+      {reserveBlock && (() => {
+        const isCap = reserveBlock === 'CAPACITY';
+        const u = gameUnavailableCopy(false);   // GameDetail es Match-only
+        // CAPACITY: sigue disponible → "Entendido" cierra y deja al usuario en el detalle
+        // (ya refrescado). UNAVAILABLE: ya NO reservable → "Volver a partidos" → /games.
+        const onCta = isCap ? () => setReserveBlock(null) : () => navigate(u.path);
+        return (
+          <div
+            onClick={onCta}
+            style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 32px' }}>
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{ background: '#fff', borderRadius: 20, width: '100%', maxWidth: 340, padding: '24px 22px 18px', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: TEXT, letterSpacing: -0.2, marginBottom: 8 }}>
+                {isCap ? 'No hay suficientes cupos disponibles' : u.title}
+              </div>
+              <div style={{ fontSize: 14.5, color: SUB, lineHeight: 1.5, marginBottom: 20 }}>
+                {isCap
+                  ? 'Mientras realizabas la reserva, uno o más cupos fueron reservados. Vuelve para consultar la disponibilidad actual.'
+                  : u.message}
+              </div>
+              <button
+                onClick={onCta}
+                style={{ width: '100%', height: 46, borderRadius: 14, border: 'none', background: BLUE, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                {isCap ? 'Entendido' : u.cta}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
       {modifyOpen && (
         <ModifySheet
           canAddGuests={effectiveAvailability > 0}

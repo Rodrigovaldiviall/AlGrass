@@ -5,7 +5,7 @@ import { useOrganizerPhone } from '../hooks/useOrganizerPhone';
 import MapsLinkButton from '../components/MapsLinkButton';
 import OrganizerContactButton from '../components/OrganizerContactButton';
 import Pressable from '../components/Pressable';
-import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN } from '../constants';
+import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, gameUnavailableCopy } from '../constants';
 import I from '../icons';
 import TabBar from '../components/TabBar';
 import { useForegroundTick } from '../hooks/useForegroundTick';
@@ -394,6 +394,7 @@ export default function RentalDetail() {
   const [manageOpen, setManageOpen]   = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [hostProfile, setHostProfile] = useState(null);
+  const [reserveBlock, setReserveBlock] = useState(false);   // true = "Cancha no disponible" (GAME_UNAVAILABLE)
 
   // Always fetch fresh: game status (full fetch) + reservation net state — all in parallel.
   useEffect(() => {
@@ -491,6 +492,27 @@ export default function RentalDetail() {
   // SOLO UX: un rental ya iniciado (now >= inicio, hora Perú) no debe permitir entrar al flujo
   // de cancelación (autoridad económica y guard RENTAL_ALREADY_STARTED siguen en cancel_rental_self).
   const alreadyStarted = isGameStarted(game.dateKey, game.time24);
+
+  // Validación UX anticipada al pulsar "Reservar cancha": reconsulta el rental REAL con
+  // getGameById (la MISMA carga del montaje) antes de navegar. Disponibilidad Rental =
+  // reservable (assert_game_reservable: status ∈ {published,reserved}, no cancelado, no
+  // iniciado) Y NO reservada (booked_by_user_id null — en Rental 'reserved' = ya tomada,
+  // por eso NO basta el status Match). create_order sigue siendo la autoridad final bajo lock.
+  async function handleReservePress() {
+    const fresh = await getGameById(id);
+    const reservable = !!fresh
+      && (fresh.status === 'published' || fresh.status === 'reserved')
+      && fresh.bookedByUserId == null
+      && !isGameStarted(fresh.dateKey, fresh.time24);
+    if (!reservable) { setReserveBlock(true); return; }   // GAME_UNAVAILABLE → "Cancha no disponible"
+    navigate('/checkout', { state: { game: {
+      id: game.id, city: game.city ?? null, type: 'rental', source: 'rental', field: title, date,
+      dateKey: game.dateKey ?? null, time: timeStr, time24: game.time24 ?? null, ampm: game.ampm ?? null,
+      duration: duration || '', format: game.format || '', price: priceDisplay, priceNumber: priceNum,
+      currency: 'S/.', backPath: `/rental/${game.id}`,
+    } } });
+  }
+
   const existingRating = location.state?.rating ?? (() => {
     try { return JSON.parse(localStorage.getItem('pichanga_ratings') || '{}')[game.id] ?? null; } catch { return null; }
   })();
@@ -633,28 +655,31 @@ export default function RentalDetail() {
       ) : statusReady && statusVerified && !isHost && priceDisplay && !isReserved ? (
         <CTA
           price={priceDisplay}
-          onPress={() => navigate('/checkout', { state: {
-            game: {
-              id:          game.id,
-              city:        game.city ?? null,
-              type:        'rental',
-              source:      'rental',
-              field:       title,
-              date,
-              dateKey:     game.dateKey  ?? null,
-              time:        timeStr,
-              time24:      game.time24   ?? null,
-              ampm:        game.ampm     ?? null,
-              duration:    duration || '',
-              format:      game.format || '',
-              price:       priceDisplay,
-              priceNumber: priceNum,
-              currency:    'S/.',
-              backPath:    `/rental/${game.id}`,
-            },
-          }})}
+          onPress={handleReservePress}
         />
       ) : null}
+
+      {reserveBlock && (() => {
+        const u = gameUnavailableCopy(true);            // Rental → "Cancha no disponible"
+        const goList = () => navigate(u.path);          // /fields (nunca deja al usuario en el detalle)
+        return (
+          <div
+            onClick={goList}
+            style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 32px' }}>
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{ background: '#fff', borderRadius: 20, width: '100%', maxWidth: 340, padding: '24px 22px 18px', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: TEXT, letterSpacing: -0.2, marginBottom: 8 }}>{u.title}</div>
+              <div style={{ fontSize: 14.5, color: SUB, lineHeight: 1.5, marginBottom: 20 }}>{u.message}</div>
+              <button
+                onClick={goList}
+                style={{ width: '100%', height: 46, borderRadius: 14, border: 'none', background: BLUE, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                {u.cta}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {manageOpen && (
         <ManageSheet

@@ -65,6 +65,13 @@ Deno.serve(async (req) => {
       return json({ error: 'ORDER_TERMINAL', status: order.status }, 409);
     // status === 'pending' → continuar.
 
+    // HOLD vencido: una PENDING cuyo pending_expires_at ya pasó NO puede empezar a
+    // materializar. NO se escribe ningún terminal aquí: expire_orders() sigue siendo el
+    // ÚNICO dueño de pending→expired (invariante: confirm_order solo escribe 'confirmed').
+    // Idempotencia/terminales existentes (confirmed/failed/expired) intactos.
+    if (new Date(order.pending_expires_at).getTime() <= Date.now())
+      return json({ error: 'ORDER_EXPIRED' }, 409);
+
     // 4) Validación según el MODO del Order (la materialización posterior es IDÉNTICA):
     //    · Crédito (payment_provider='credit'): sin comprobante externo; se valida
     //      SALDO suficiente ANTES de materializar (materializeReservation debita).

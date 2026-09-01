@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useSheetPull } from '../hooks/useSheetPull';
 import { useAuth } from '../context/AuthContext';
-import { TEXT, SUB, HAIR, ORANGE, SOFT, DANGER, YAPE, BLUE } from '../constants';
+import { TEXT, SUB, HAIR, ORANGE, SOFT, DANGER, YAPE, BLUE, gameUnavailableCopy } from '../constants';
 import I from '../icons';
 import { shareOrCopy, buildGameShareUrl } from '../utils/share';
 import { addPlayers as addPlayersToRoster, createRoster } from '../services/gameService';
@@ -794,6 +794,10 @@ export default function ConfirmReservation() {
   const shareGameLink = () => shareOrCopy({ url: _gameLink(), onCopied: _flashCopied });
   const copyGameLink = () => { try { navigator.clipboard?.writeText(_gameLink()).then(_flashCopied).catch(() => {}); } catch { /* sin portapapeles */ } };
   const [capacityError, setCapacityError]   = useState(null);
+  // "NO SE REALIZÓ NINGÚN COBRO" solo es verdad si el error ocurrió en create_order
+  // (pre-charge): paymentAdapter.charge aún no corrió. Para errores de confirm_order
+  // (post-charge) queda false y la frase NO se muestra.
+  const [noChargeYet, setNoChargeYet]       = useState(false);
   // Confirmación de la Order: un ÚNICO timer de polling (pollTimerRef), un guard de
   // "ya resuelto" (evita navegación/terminal duplicados) y un guard de montaje (evita
   // setState/navigate tras unmount). El poll consulta SIEMPRE el MISMO orderId.
@@ -1035,6 +1039,7 @@ export default function ConfirmReservation() {
   }
 
   function handleConfirm() {
+    setNoChargeYet(false);   // se pondrá true solo si create_order (pre-charge) rechaza
     if (!invitedMode && game?.hostUserId && authUser?.id && game.hostUserId === authUser.id) return;
     if (invitedMode) {
       if (!guests.length) return;
@@ -1153,6 +1158,18 @@ export default function ConfirmReservation() {
   //
   // onPreCharge: adquiere el HOLD JUSTO antes del cobro, con el método ya elegido.
   // create_order es el ÚNICO responsable del HOLD.
+  // Traduce el error de create_order al token del overlay capacityError (fuente única).
+  // NO_CAPACITY / INSUFFICIENT_PUBLIC_SLOTS → falta de cupos. Estados no reservables del
+  // game → GAME_UNAVAILABLE. ORDER_EXPIRED no nace en create_order (viene de confirm_order).
+  function reserveErrorToken(msg) {
+    const m = msg ?? '';
+    if (m.includes('INSUFFICIENT_PUBLIC_SLOTS')) return 'RESERVED_SLOTS_UNAVAILABLE';
+    if (m.includes('NO_CAPACITY')) return game?.type === 'rental' ? 'RENTAL_TAKEN' : 'GAME_FULL';
+    if (m.includes('GAME_NOT_RESERVABLE') || m.includes('GAME_CANCELED')
+        || m.includes('GAME_ALREADY_STARTED') || m.includes('ALTERNATIVE_TAKEN')) return 'GAME_UNAVAILABLE';
+    return null;
+  }
+
   async function handlePreCharge(method) {
     if (invitedMode) return { skip: true };
     const idempotencyKey = uuidv4();          // nueva key por intento (dedup en create_order)
@@ -1169,14 +1186,10 @@ export default function ConfirmReservation() {
       paymentProvider:   null,
     });
     if (error || !data) {
-      // NO_CAPACITY (u otra guarda de create_order) → overlay de capacidad, sin cobrar.
-      if ((error?.message ?? '').includes('INSUFFICIENT_PUBLIC_SLOTS')) {
-        setCapacityError('RESERVED_SLOTS_UNAVAILABLE');
-      } else if ((error?.message ?? '').includes('NO_CAPACITY')) {
-        setCapacityError(game?.type === 'rental' ? 'RENTAL_TAKEN' : 'GAME_FULL');
-      } else {
-        console.warn('[checkout] create_order failed:', error);
-      }
+      // create_order rechazó ANTES de cobrar → overlay visible + "sin cobro" garantizado.
+      const token = reserveErrorToken(error?.message);
+      if (token) { setNoChargeYet(true); setCapacityError(token); }
+      else console.warn('[checkout] create_order failed:', error);
       return { error: error?.message ?? 'CREATE_ORDER_FAILED' };
     }
     return { orderId: data.id };
@@ -1205,13 +1218,10 @@ export default function ConfirmReservation() {
       paymentProvider:   provider,
     });
     if (error || !data) {
-      if ((error?.message ?? '').includes('INSUFFICIENT_PUBLIC_SLOTS')) {
-        setCapacityError('RESERVED_SLOTS_UNAVAILABLE');
-      } else if ((error?.message ?? '').includes('NO_CAPACITY')) {
-        setCapacityError(game?.type === 'rental' ? 'RENTAL_TAKEN' : 'GAME_FULL');
-      } else {
-        console.warn('[checkout] create_order (credit) failed:', error);
-      }
+      // create_order rechazó ANTES de debitar → overlay visible + "sin cobro" garantizado.
+      const token = reserveErrorToken(error?.message);
+      if (token) { setNoChargeYet(true); setCapacityError(token); }
+      else console.warn('[checkout] create_order (credit) failed:', error);
       setFreeConfirming(false);
       return;   // NO se debitó crédito
     }
@@ -1236,12 +1246,13 @@ export default function ConfirmReservation() {
 
     // Terminal NO confirmado (failed/expired, o capacidad agotada explícita): detiene el
     // loading y muestra el error con el MECANISMO EXISTENTE (overlay capacityError).
-    const resolveTerminal = () => {
+    const resolveTerminal = (token = null) => {
       if (checkoutResolvedRef.current || !mountedRef.current) return;
       checkoutResolvedRef.current = true;
       if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
       setFreeConfirming(false);
-      setCapacityError(game?.type === 'rental' ? 'RENTAL_TAKEN' : 'GAME_FULL');
+      setNoChargeYet(false);   // confirm_order es POST-cobro → NO afirmar "sin cobro"
+      setCapacityError(token ?? (game?.type === 'rental' ? 'RENTAL_TAKEN' : 'GAME_FULL'));
     };
 
     // Poll del MISMO orderId hasta estado RESOLUTIVO. Un único timer (pollTimerRef).
@@ -1253,7 +1264,8 @@ export default function ConfirmReservation() {
       if (checkoutResolvedRef.current || !mountedRef.current) return;
       const status = (!readErr && row) ? row.status : null;   // null = incierto → seguir
       if (status === 'confirmed') { resolveConfirmed(); return; }
-      if (status === 'failed' || status === 'expired') { resolveTerminal(); return; }
+      if (status === 'expired') { resolveTerminal('ORDER_EXPIRED'); return; }
+      if (status === 'failed')  { resolveTerminal(); return; }
       pollTimerRef.current = setTimeout(pollStatus, 1000);     // pending / incierto
     };
 
@@ -1268,7 +1280,11 @@ export default function ConfirmReservation() {
     let body = null;
     try { body = await error?.context?.json(); } catch {}
     const code = body?.error ?? null;
+    // ORDER_EXPIRED: terminal explícito → overlay "Reserva expirada", SIN poll infinito.
+    if (code === 'ORDER_EXPIRED') { resolveTerminal('ORDER_EXPIRED'); return; }
     if (code === 'GAME_FULL' || code === 'RENTAL_TAKEN' || code === 'INSUFFICIENT_CREDIT') { resolveTerminal(); return; }
+    if (code === 'GAME_NOT_RESERVABLE' || code === 'GAME_CANCELED'
+        || code === 'GAME_ALREADY_STARTED' || code === 'ALTERNATIVE_TAKEN') { resolveTerminal('GAME_UNAVAILABLE'); return; }
     console.warn('[checkout] confirm_order failed; polling order status:', code ?? error);
     pollStatus();
   }
@@ -2040,15 +2056,22 @@ export default function ConfirmReservation() {
       )}
 
       {capacityError && (() => {
-        const isReserved = capacityError === 'RESERVED_SLOTS_UNAVAILABLE';
-        const isMatch    = capacityError === 'GAME_FULL';
-        const capTitle = isReserved ? 'Sin cupos suficientes' : isMatch ? 'Partido completo' : 'Cancha no disponible';
-        const capBody  = isReserved
-          ? 'Durante el proceso de pago otros jugadores reservaron algunos de esos cupos. Vuelve a revisar la disponibilidad e inténtalo nuevamente.'
-          : isMatch
-            ? 'Mientras procesábamos tu solicitud, los cupos disponibles fueron ocupados por otros jugadores.'
-            : 'Mientras procesábamos tu solicitud, otro usuario completó la reserva de esta cancha.';
-        const capCta = (isMatch || isReserved) ? 'Volver al partido' : 'Volver a la cancha';
+        const isExpired = capacityError === 'ORDER_EXPIRED';
+        const isUnavail = capacityError === 'GAME_UNAVAILABLE';
+        const isRentalType = game?.type === 'rental';
+        const u = gameUnavailableCopy(isRentalType);   // copy ÚNICO compartido con GameDetail
+        // capacidad = GAME_FULL / RENTAL_TAKEN / RESERVED_SLOTS_UNAVAILABLE (falta de cupos)
+        const capTitle = isExpired ? 'Reserva expirada'
+          : isUnavail ? u.title
+          : 'No hay suficientes cupos disponibles';
+        const capBody = isExpired
+          ? 'El tiempo para completar la reserva terminó. Vuelve a intentarlo.'
+          : isUnavail
+            ? u.message
+            : 'Mientras realizabas la reserva, uno o más cupos fueron reservados. Vuelve para consultar la disponibilidad actual.';
+        // GAME_UNAVAILABLE → LISTA (u.path). Capacidad y ORDER_EXPIRED → detalle (navigate(-1)).
+        const capCta = isUnavail ? u.cta : (isRentalType ? 'Volver a la cancha' : 'Volver al partido');
+        const onCta = isUnavail ? () => navigate(u.path) : () => navigate(-1);
         return (
           <div className="sheet-overlay" style={{
             position: 'fixed', inset: 0, zIndex: 200,
@@ -2067,11 +2090,13 @@ export default function ConfirmReservation() {
             <div style={{ marginTop: 8, fontSize: 14, color: SUB, textAlign: 'center', lineHeight: 1.5, maxWidth: 300 }}>
               {capBody}
             </div>
-            <div style={{ marginTop: 14, fontSize: 13, fontWeight: 700, color: DANGER, textAlign: 'center', letterSpacing: 0.2 }}>
-              NO SE REALIZÓ NINGÚN COBRO
-            </div>
+            {noChargeYet && (
+              <div style={{ marginTop: 14, fontSize: 13, fontWeight: 700, color: DANGER, textAlign: 'center', letterSpacing: 0.2 }}>
+                NO SE REALIZÓ NINGÚN COBRO
+              </div>
+            )}
             <div style={{ marginTop: 28, width: '100%', maxWidth: 320 }}>
-              <CtaButton onPress={() => navigate(-1)}>
+              <CtaButton onPress={onCta}>
                 {capCta}
               </CtaButton>
             </div>

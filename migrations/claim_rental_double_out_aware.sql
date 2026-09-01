@@ -67,6 +67,12 @@ begin
     end if;
   end if;
 
+  -- Corte autoritativo de reservabilidad ANTES del claim, BAJO el lock ya adquirido
+  -- (singleton: for update de R; pareja: order by id for update de R+gemelo). Reusa la
+  -- FUENTE ÚNICA: rechaza iniciado y estados no-reservables (misma regla que create_order).
+  -- NO toca el WHERE del UPDATE (exclusividad/booked_by), ni Paso 1, ni el HOLD de la Order.
+  perform public.assert_game_reservable(p_game_id, 'rental');
+
   -- 2) CLAIM idéntico al actual: published → reserved+booked, o reserved-sin-booking →
   --    booked. Con pareja, el UPDATE dispara Paso 1 (que lockea el gemelo YA tomado →
   --    re-entrante) y lo sella a 'blocked'. Singleton: no dispara Paso 1.
