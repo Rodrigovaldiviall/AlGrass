@@ -4,6 +4,7 @@ import { useSheetPull } from '../hooks/useSheetPull';
 import { useOrganizerPhone } from '../hooks/useOrganizerPhone';
 import MapsLinkButton from '../components/MapsLinkButton';
 import OrganizerContactButton from '../components/OrganizerContactButton';
+import AttendanceBadge from '../components/AttendanceBadge';
 import Pressable from '../components/Pressable';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, gameUnavailableCopy } from '../constants';
 import I from '../icons';
@@ -12,7 +13,7 @@ import { useForegroundTick } from '../hooks/useForegroundTick';
 import { supabase } from '../lib/supabase';
 import { getVenueCoverUrl } from '../utils/venue';
 import { getAvatarUrl } from '../utils/avatar';
-import { isGamePast, isGameStarted } from '../utils/deriveGameState';
+import { isGamePast, isGameStarted, gameStartDate, gameEndDate, deriveAttendance } from '../utils/deriveGameState';
 import RatingBlock from '../components/RatingBlock';
 import { getGameById } from '../services/gameService';
 import { cancelRental, getRentalCancellationWindow } from '../services/reservationService';
@@ -394,7 +395,15 @@ export default function RentalDetail() {
   const [manageOpen, setManageOpen]   = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [hostProfile, setHostProfile] = useState(null);
+  const [bookerProfile, setBookerProfile] = useState(null);   // perfil público del booker (nombre/avatar)
   const [reserveBlock, setReserveBlock] = useState(false);   // true = "Cancha no disponible" (GAME_UNAVAILABLE)
+  const [now, setNow] = useState(() => new Date());          // tick para la ventana de asistencia (como Match)
+
+  // Ventana de asistencia viva (misma cadencia que Match: refresco cada 30 s).
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   // Always fetch fresh: game status (full fetch) + reservation net state — all in parallel.
   useEffect(() => {
@@ -408,7 +417,7 @@ export default function RentalDetail() {
         : null,
     ]).then(([freshGame, spendsRes]) => {
       if (freshGame) setGame(prev => prev
-        ? { ...prev, status: freshGame.status, reserved: freshGame.status === 'reserved', bookedByUserId: freshGame.bookedByUserId ?? null, fieldCoverPath: freshGame.fieldCoverPath ?? prev.fieldCoverPath, fieldCoverVersion: freshGame.fieldCoverVersion ?? prev.fieldCoverVersion, venueCoverPath: freshGame.venueCoverPath ?? prev.venueCoverPath, venueCoverVersion: freshGame.venueCoverVersion ?? prev.venueCoverVersion }
+        ? { ...prev, status: freshGame.status, reserved: freshGame.status === 'reserved', bookedByUserId: freshGame.bookedByUserId ?? null, bookerCheckedInAt: freshGame.bookerCheckedInAt ?? null, fieldCoverPath: freshGame.fieldCoverPath ?? prev.fieldCoverPath, fieldCoverVersion: freshGame.fieldCoverVersion ?? prev.fieldCoverVersion, venueCoverPath: freshGame.venueCoverPath ?? prev.venueCoverPath, venueCoverVersion: freshGame.venueCoverVersion ?? prev.venueCoverVersion }
         : freshGame
       );
       setLoading(false);
@@ -444,6 +453,19 @@ export default function RentalDetail() {
       .maybeSingle()
       .then(({ data }) => { if (data) setHostProfile(data); });
   }, [game?.hostUserId]); // eslint-disable-line
+
+  // Perfil PÚBLICO del booker (games.booked_by_user_id) para la fila "Reservado por".
+  // Mismo patrón/vista que hostProfile: users_public, solo nombre/avatar (NUNCA phone).
+  useEffect(() => {
+    const bookerId = game?.bookedByUserId;
+    if (!bookerId || !supabase) { setBookerProfile(null); return; }
+    supabase
+      .from('users_public')
+      .select('full_name, avatar_hue, avatar_path, avatar_updated_at')
+      .eq('id', bookerId)
+      .maybeSingle()
+      .then(({ data }) => { if (data) setBookerProfile(data); });
+  }, [game?.bookedByUserId]); // eslint-disable-line
 
   const organizerPhone = useOrganizerPhone(game);   // resuelto (host vs algrass) o null → CTA off
 
@@ -511,6 +533,28 @@ export default function RentalDetail() {
       duration: duration || '', format: game.format || '', price: priceDisplay, priceNumber: priceNum,
       currency: 'S/.', backPath: `/rental/${game.id}`,
     } } });
+  }
+
+  // ── Asistencia del BOOKER (Rental) — misma ventana [inicio−15min, fin) y UX que Match.
+  // TEMPORAL y deliberado: update DIRECTO a games.booker_checked_in_at (sin RPC), igual que
+  // markAttendance de Match. La autoridad backend + Config se harán después para Match+Rental.
+  const rGameStart = gameStartDate(game.dateKey, game.time24);
+  const rGameEnd   = gameEndDate(game.dateKey, game.time24, game.durationMin);
+  const attendanceOpen = !!rGameStart && !!rGameEnd
+    && now >= new Date(rGameStart.getTime() - 15 * 60_000)
+    && now <  rGameEnd;
+  async function markBookerAttendance() {
+    if (!supabase || !game?.id) return;
+    const ts = new Date().toISOString();
+    const { error } = await supabase.from('games').update({ booker_checked_in_at: ts }).eq('id', game.id);
+    if (error) { console.warn('[rental attendance]', error.message); return; }
+    setGame(prev => (prev ? { ...prev, bookerCheckedInAt: ts } : prev));
+  }
+  async function resetBookerAttendance() {
+    if (!supabase || !game?.id) return;
+    const { error } = await supabase.from('games').update({ booker_checked_in_at: null }).eq('id', game.id);
+    if (error) { console.warn('[rental attendance reset]', error.message); return; }
+    setGame(prev => (prev ? { ...prev, bookerCheckedInAt: null } : prev));
   }
 
   const existingRating = location.state?.rating ?? (() => {
@@ -632,6 +676,39 @@ export default function RentalDetail() {
             </div>
           </div>
         </Section>
+
+        {statusReady && game.bookedByUserId && (isHost || userBooked) && (
+          <Section title="Reservado por">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', border: `1px solid ${HAIR}`, borderRadius: 14, background: '#fff' }}>
+              <div style={{ borderRadius: '50%', flexShrink: 0 }}>
+                <Avatar
+                  name={bookerProfile?.full_name || 'Jugador'}
+                  size={36}
+                  hue={bookerProfile?.avatar_hue ?? null}
+                  avatarPath={bookerProfile?.avatar_path ?? null}
+                  avatarVersion={bookerProfile?.avatar_updated_at ? new Date(bookerProfile.avatar_updated_at).getTime() : null}
+                />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 600, color: TEXT, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {bookerProfile?.full_name || 'Jugador'}
+                </div>
+              </div>
+              {/* Asistencia del booker: misma lógica/ventana; el badge se autogestiona
+                  (null antes de la ventana), pero la fila "Reservado por" permanece visible. */}
+              <AttendanceBadge
+                checkedInAt={game.bookerCheckedInAt}
+                gameStart={rGameStart}
+                isPast={isPastRental}
+                canMark={attendanceOpen && !game.bookerCheckedInAt && isHost}
+                onMark={markBookerAttendance}
+                canReset={attendanceOpen && !!game.bookerCheckedInAt && isHost}
+                onReset={resetBookerAttendance}
+                attendedOnly={!isHost}
+              />
+            </div>
+          </Section>
+        )}
 
         <div style={{ height: 8 }} />
       </div>
