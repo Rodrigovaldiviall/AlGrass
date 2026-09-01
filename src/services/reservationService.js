@@ -239,15 +239,14 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoCod
   if (error) { console.error('[createReservation]', error); return { data, error }; }
 
   if (source === 'rental' && gameId) {
-    // Claim if published (normal) OR reserved-but-unclaimed (stuck state from pre-migration booking).
-    const { data: claimed, error: gameErr } = await db
-      .from('games')
-      .update({ status: 'reserved', booked_by_user_id: actor })
-      .eq('id', gameId)
-      .or('status.eq.published,and(status.eq.reserved,booked_by_user_id.is.null)')
-      .select('id');
-    if (gameErr) console.error('[createReservation] game status update failed:', gameErr);
-    if (!gameErr && (!claimed || claimed.length === 0)) return { data, error, rentalTaken: true };
+    // Claim transaccional Doble-salida-aware: lockea R (+gemelo por id si hay pareja) y
+    // ejecuta el MISMO claim (published→reserved+booked, o reserved-sin-booking→booked).
+    // Devuelve el id reclamado, o NULL si 0 filas (rentalTaken). Paso 1 (dentro de la
+    // RPC) bloquea el gemelo. Error de la RPC → error de materialización.
+    const { data: claimedId, error: gameErr } = await db
+      .rpc('claim_rental_double_out_aware', { p_game_id: gameId, p_actor: actor });
+    if (gameErr) { console.error('[createReservation] rental claim rpc failed:', gameErr); return { data, error: gameErr }; }
+    if (claimedId == null) return { data, error, rentalTaken: true };
   }
 
   return { data, error };
