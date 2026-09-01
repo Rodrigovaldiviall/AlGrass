@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, useParams, Navigate } from 'react-router-dom';
 import { useSheetPull } from '../hooks/useSheetPull';
 import { useOrganizerPhone } from '../hooks/useOrganizerPhone';
+import { useAppTimings } from '../hooks/useAppTimings';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, DANGER, RED, gameUnavailableCopy } from '../constants';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';
@@ -678,7 +679,14 @@ function PlayerModal({ player, onClose, isHost = false }) {
 }
 
 // ── ModifySheet
-function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, hasInvited = false, within24h = false }) {
+// Copy dinámico de la ventana de invitados gratis según el lead configurado (app_settings).
+// null (config no disponible) → "No disponible". 60→"1 h", 120→"2 h", 30→"30 min".
+function leadCopy(min) {
+  if (min == null) return '· No disponible';
+  return min % 60 === 0 ? `· Solo desde ${min / 60} h antes` : `· Solo desde ${min} min antes`;
+}
+
+function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, freeInvitesLeadMin = null, invitedCount = 0, showReserveSlots = false, hasInvited = false, within24h = false }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
   function dismiss() { setOpen(false); setTimeout(onClose, 220); }
@@ -718,7 +726,7 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
             <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>{showReserveSlots ? 'Gestionar mi lista' : 'Agregar jugadores'}</span>
             <span style={{ fontSize: 13, color: enabled ? SUB : '#BEBEC8' }}>
               {isHost && !canAddPlayers
-                ? '· Solo desde 1h antes'
+                ? leadCopy(freeInvitesLeadMin)
                 : canAdd
                   ? `· ${openSpots} ${openSpots === 1 ? 'cupo disponible' : 'cupos disponibles'}`
                   : enabled
@@ -1248,6 +1256,7 @@ export default function GameDetail() {
   const infoMode  = (location.state?.infoMode ?? false) || isBooked || isHost;
   const isGuest   = !!g.paidBy;
   const organizerPhone = useOrganizerPhone(g);   // resuelto (host vs algrass) o null → CTA off
+  const { freeInvitesLeadMin, attendanceLeadMin } = useAppTimings();   // app_settings (null = cerrado)
 
   const confirmedRoster  = useMemo(() => sbRoster.filter(p => p.status === 'confirmed'), [sbRoster]);
 
@@ -1478,14 +1487,16 @@ export default function GameDetail() {
   // asistencia") ⇔ now >= (inicio - 24h). Reutiliza gameStart + now ya existentes; sin query
   // ni helper nuevos. Si no hay gameStart, se asume reembolsable (flujo actual intacto).
   const cancelWithin24h = !!gameStart && now >= new Date(gameStart.getTime() - 24 * 3600_000);
-  // Attendance window: [game_start - 15min, game_end)
-  const attendanceOpen = infoMode && !!gameStart && !!gameEnd
-    && now >= new Date(gameStart.getTime() - 15 * 60_000)
+  // Attendance window: [game_start - attendanceLeadMin, game_end). El lead viene de
+  // app_settings; si aún no cargó (null) la ventana queda CERRADA (no se puede marcar).
+  const attendanceOpen = infoMode && !!gameStart && !!gameEnd && attendanceLeadMin != null
+    && now >= new Date(gameStart.getTime() - attendanceLeadMin * 60_000)
     && now <  gameEnd;
 
-  // Host action window: [game_start - 60min, game_end)
-  const hostWindowOpen = isHost && !!gameStart && !!gameEnd
-    && now >= new Date(gameStart.getTime() - 60 * 60_000)
+  // Host action window (invitados gratis): [game_start - freeInvitesLeadMin, game_end).
+  // Lead de app_settings; null → CERRADA (no se habilita invitar gratis por hardcode).
+  const hostWindowOpen = isHost && !!gameStart && !!gameEnd && freeInvitesLeadMin != null
+    && now >= new Date(gameStart.getTime() - freeInvitesLeadMin * 60_000)
     && now <  gameEnd;
 
   useEffect(() => {
@@ -2236,6 +2247,7 @@ export default function GameDetail() {
           onPaymentDetail={() => { setModifyOpen(false); setPaymentDetailOpen(true); }}
           isHost={isHost}
           canAddPlayers={hostWindowOpen}
+          freeInvitesLeadMin={freeInvitesLeadMin}
           invitedCount={invitedByHost.length}
           showReserveSlots={!isHost && (isCaptain || isCaptainGold)}
           hasInvited={guestsInRoster.length > 0}

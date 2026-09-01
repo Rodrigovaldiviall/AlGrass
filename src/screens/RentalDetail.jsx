@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useLocation, useParams, Navigate } from 'react-router-dom';
 import { useSheetPull } from '../hooks/useSheetPull';
 import { useOrganizerPhone } from '../hooks/useOrganizerPhone';
+import { useAppTimings } from '../hooks/useAppTimings';
 import MapsLinkButton from '../components/MapsLinkButton';
 import OrganizerContactButton from '../components/OrganizerContactButton';
 import AttendanceBadge from '../components/AttendanceBadge';
@@ -468,6 +469,7 @@ export default function RentalDetail() {
   }, [game?.bookedByUserId]); // eslint-disable-line
 
   const organizerPhone = useOrganizerPhone(game);   // resuelto (host vs algrass) o null → CTA off
+  const { attendanceLeadMin } = useAppTimings();    // app_settings (null = ventana cerrada)
 
   if (loading) {
     return <div className="screen-shell" style={{ background: '#F2F2F4' }} />;
@@ -540,8 +542,8 @@ export default function RentalDetail() {
   // markAttendance de Match. La autoridad backend + Config se harán después para Match+Rental.
   const rGameStart = gameStartDate(game.dateKey, game.time24);
   const rGameEnd   = gameEndDate(game.dateKey, game.time24, game.durationMin);
-  const attendanceOpen = !!rGameStart && !!rGameEnd
-    && now >= new Date(rGameStart.getTime() - 15 * 60_000)
+  const attendanceOpen = !!rGameStart && !!rGameEnd && attendanceLeadMin != null
+    && now >= new Date(rGameStart.getTime() - attendanceLeadMin * 60_000)
     && now <  rGameEnd;
   async function markBookerAttendance() {
     if (!supabase || !game?.id) return;

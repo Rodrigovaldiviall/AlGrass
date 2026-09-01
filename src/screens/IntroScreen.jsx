@@ -241,6 +241,28 @@ export default function IntroScreen({ onStart, onDone }) {
           {isEnded && <OnboardingOverlay onDone={handleDone} />}
         </>
       )}
+
+      {/* Enlaces legales de la homepage pública — discretos, siempre presentes en
+          el DOM (desktop y mobile) para que Google pueda revisarlos sin clave.
+          Anchors nativos → navegación dura a las páginas standalone /privacy y
+          /terms. No ejecutan el CTA, no llevan a /games ni tocan algr_private_access. */}
+      <div style={{
+        position: 'absolute', left: 0, right: 0,
+        bottom: 'calc(env(safe-area-inset-bottom) + 10px)',
+        zIndex: 3,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        gap: 8, fontSize: 12, letterSpacing: -0.1,
+        color: isDesktop ? 'rgba(20,20,25,0.55)' : 'rgba(255,255,255,0.78)',
+        textShadow: isDesktop ? 'none' : '0 1px 6px rgba(0,0,0,0.45)',
+      }}>
+        <a href="/privacy" style={{ color: 'inherit', textDecoration: 'underline', textUnderlineOffset: 2, WebkitTapHighlightColor: 'transparent' }}>
+          Política de privacidad
+        </a>
+        <span aria-hidden="true" style={{ opacity: 0.6 }}>·</span>
+        <a href="/terms" style={{ color: 'inherit', textDecoration: 'underline', textUnderlineOffset: 2, WebkitTapHighlightColor: 'transparent' }}>
+          Términos del servicio
+        </a>
+      </div>
     </div>
   );
 }

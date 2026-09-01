@@ -38,6 +38,23 @@ async function fetchConfig() {
   return { mode: data.organizer_contact_mode, algrassPhone: data.algrass_operational_phone ?? null };
 }
 
+// Leads de tiempo configurables (MISMA fila app_settings id=1). Devuelve números o null.
+// null = no se pudo leer → la acción dependiente queda CERRADA (sin default 60/15 en la App:
+// los valores viven SOLO en Supabase, no como segunda fuente de verdad aquí).
+export async function fetchAppTimings() {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('app_settings')
+    .select('free_invites_lead_min, attendance_lead_min')
+    .eq('id', 1)
+    .single();
+  if (error || !data) return null;
+  return {
+    freeInvitesLeadMin: data.free_invites_lead_min ?? null,
+    attendanceLeadMin:  data.attendance_lead_min ?? null,
+  };
+}
+
 async function fetchHostPhone(gameId) {
   if (!supabase || !gameId) return null;
   const { data, error } = await supabase.rpc('get_game_host_contact', { p_game_id: gameId });
