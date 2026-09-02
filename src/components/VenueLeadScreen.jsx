@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { BLUE, TEXT, SUB, HAIR, SOFT, GREEN, DANGER } from '../constants';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../context/AuthContext';
 
 const REASONS = [
   { title: 'Más reservas',          body: 'Conecta tu cancha con jugadores que buscan dónde jugar todos los días.' },
@@ -32,10 +33,27 @@ function Field({ label, value, onChange, error, optional, type = 'text' }) {
 }
 
 export default function VenueLeadScreen({ onClose, defaultCity = '' }) {
+  const { user } = useAuth();
   const [form, setForm] = useState({ name: '', email: '', city: defaultCity, district: '', venue_name: '', website: '' });
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  const [checking, setChecking] = useState(!!supabase);   // sin backend → no se chequea (muestra form)
+  const [hasOpen, setHasOpen] = useState(false);           // true → "Solicitud en proceso" (no mostrar form)
+
+  // ¿El usuario ya tiene una solicitud abierta (pending/contacted)? RPC booleana (SECURITY
+  // DEFINER): NO se lee la tabla ni campos internos, solo un boolean. Fail-open: si la RPC
+  // falla, se muestra el formulario y la garantía real la impone el índice UNIQUE en el INSERT.
+  useEffect(() => {
+    if (!supabase) return;
+    let alive = true;
+    supabase.rpc('has_open_venue_manager_request').then(({ data, error }) => {
+      if (!alive) return;
+      if (!error && data === true) setHasOpen(true);
+      setChecking(false);
+    });
+    return () => { alive = false; };
+  }, []);
 
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
 
@@ -54,16 +72,26 @@ export default function VenueLeadScreen({ onClose, defaultCity = '' }) {
     if (submitting) return;
     if (!validate()) return;
     setSubmitting(true);
-    const { error } = await supabase.from('venue_leads').insert({
+    // Solicitud persistente (gestión operativa AlGrass). user_id = usuario autenticado; la RLS
+    // exige user_id = auth.uid() y status = 'pending' sin campos internos (los de gestión los
+    // escribe solo Admin/Staff en fase posterior). NO otorga rol ni crea venue.
+    const { error } = await supabase.from('venue_manager_requests').insert({
+      user_id:    user?.id,
       name:       form.name.trim(),
       email:      form.email.trim(),
       city:       form.city.trim(),
       district:   form.district.trim(),
       venue_name: form.venue_name.trim(),
       website:    form.website.trim() || null,
+      status:     'pending',
     });
     setSubmitting(false);
-    if (error) { setErrors({ submit: 'No se pudo enviar. Inténtalo de nuevo.' }); return; }
+    if (error) {
+      // 23505 = unique_violation del índice parcial → ya existe una solicitud abierta
+      // (dos envíos rápidos / dos dispositivos). No es error genérico: "Solicitud en proceso".
+      if (error.code === '23505') { setHasOpen(true); return; }
+      setErrors({ submit: 'No se pudo enviar. Inténtalo de nuevo.' }); return;
+    }
     setDone(true);
   }
 
@@ -84,7 +112,29 @@ export default function VenueLeadScreen({ onClose, defaultCity = '' }) {
         </div>
       </div>
 
-      {done ? (
+      {checking ? (
+        /* Resolviendo si ya hay solicitud abierta — sin flash del formulario */
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: 32, height: 32, borderRadius: '50%', border: `3px solid ${HAIR}`, borderTopColor: BLUE, animation: 'spin .8s linear infinite' }} />
+        </div>
+      ) : hasOpen ? (
+        /* Estado informativo (solicitud abierta) — sin datos administrativos */
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '24px 28px calc(28px + env(safe-area-inset-bottom))' }}>
+          <div style={{ width: 64, height: 64, borderRadius: '50%', background: `${BLUE}14`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}>
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="9" stroke={BLUE} strokeWidth="2"/>
+              <path d="M12 7.5V12l3 2" stroke={BLUE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: TEXT, marginBottom: 8, letterSpacing: -0.3 }}>Solicitud en proceso</div>
+          <div style={{ fontSize: 14.5, color: SUB, lineHeight: 1.5, maxWidth: 320 }}>Ya recibimos tu solicitud. Nuestro equipo se pondrá en contacto contigo para continuar con la gestión.</div>
+          <button
+            onClick={onClose}
+            style={{ marginTop: 26, width: '100%', maxWidth: 320, height: 50, borderRadius: 14, background: BLUE, color: '#fff', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 700, fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+            Entendido
+          </button>
+        </div>
+      ) : done ? (
         /* Confirmación */
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '24px 28px calc(28px + env(safe-area-inset-bottom))' }}>
           <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#D7F0DD', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}>
