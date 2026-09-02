@@ -126,7 +126,11 @@ input:-webkit-autofill:hover {
    (queda pegado abajo). En ≥1024px NO aplica → desktop mantiene .screen-shell (zoom,
    centrado). No afecta pantallas con bottom navigation (no llevan esta clase). */
 @media (max-width: 1023px) {
-  .cr-shell-fill { position: fixed; inset: 0; height: auto; }
+  /* Altura de viewport DEFINIDA (no 'auto', que en iOS colapsaba el contenedor fijo a la
+     altura del contenido y rompía el flex:1). Con height:100dvh la columna flex tiene altura
+     definida → el scroll (flex:1) se expande y empuja el footer al fondo del contenedor. El
+     top sigue en 0 (parte superior intacta); solo crece el área central. */
+  .cr-shell-fill { position: fixed; inset: 0; height: 100dvh; }
 }
 
 /* ── Desktop ≥ 1024 px ─────────────────────────────────── */
