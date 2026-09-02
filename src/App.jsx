@@ -16,21 +16,15 @@ import { useForegroundTick } from './hooks/useForegroundTick';
 const INTRO_KEY = 'algrass_intro_seen';
 
 
-// Al volver a primer plano: (A) emite 'app-foreground' SIEMPRE para que las
-// pantallas re-fetcheen en sitio; (B) comprueba versión nueva del SW solo si
-// pasaron >4h (deja el SW nuevo en 'waiting', sin recargar ni activar en sesión).
+// Al volver a primer plano emite 'app-foreground' para que las pantallas re-fetcheen en
+// sitio. La actualización del SW la gestiona VitePWA con registerType:'autoUpdate' (detecta
+// versión nueva en el arranque/registro y recarga UNA vez). Ya NO se fuerza r.update() cada
+// 4h: con autoUpdate eso provocaría recargas a mitad de sesión (se elimina por seguridad).
 function AppLifecycle() {
   useEffect(() => {
-    let lastSWCheck = 0;
-    const FOUR_HOURS = 4 * 60 * 60 * 1000;
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
       window.dispatchEvent(new CustomEvent('app-foreground'));
-      const now = Date.now();
-      if (now - lastSWCheck > FOUR_HOURS && 'serviceWorker' in navigator) {
-        lastSWCheck = now;
-        navigator.serviceWorker.getRegistration().then((r) => r && r.update());
-      }
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);

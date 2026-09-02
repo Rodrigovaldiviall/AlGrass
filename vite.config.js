@@ -7,7 +7,9 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'prompt',
+      // autoUpdate: el SW nuevo hace skipWaiting + clientsClaim y la app se recarga UNA vez
+      // al detectarlo (normalmente en el arranque), adoptando el bundle nuevo sin prompt.
+      registerType: 'autoUpdate',
       injectRegister: 'auto',
       manifest: {
         name: 'AlGrass',
