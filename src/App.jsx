@@ -16,18 +16,50 @@ import { useForegroundTick } from './hooks/useForegroundTick';
 const INTRO_KEY = 'algrass_intro_seen';
 
 
-// Al volver a primer plano emite 'app-foreground' para que las pantallas re-fetcheen en
-// sitio. La actualización del SW la gestiona VitePWA con registerType:'autoUpdate' (detecta
-// versión nueva en el arranque/registro y recarga UNA vez). Ya NO se fuerza r.update() cada
-// 4h: con autoUpdate eso provocaría recargas a mitad de sesión (se elimina por seguridad).
+// Al volver a primer plano: (A) emite 'app-foreground' para que las pantallas re-fetcheen;
+// (B) fuerza registration.update() para que el SW compruebe si hay versión nueva. Con
+// registerType:'autoUpdate' el SW nuevo hace skipWaiting+clientsClaim → dispara
+// 'controllerchange' → recargamos UNA sola vez para adoptar el bundle nuevo. Necesario para
+// la PWA iOS instalada, que si no solo comprobaría updates en arranque en frío.
+// NO se borra caché/localStorage/IndexedDB/sesión; el precache/offline se mantiene.
 function AppLifecycle() {
   useEffect(() => {
+    const hasSW = 'serviceWorker' in navigator;
+
+    // Recarga controlada al activarse un SW nuevo. Solo si la página YA estaba controlada
+    // por un SW (update real), no en la primera instalación (controller === null → el SW
+    // reclama la página por 1ª vez, sin bundle previo que reemplazar → no recargar).
+    let refreshing = false;
+    const onControllerChange = () => {
+      if (refreshing) return;
+      // Anti-loop entre recargas: como mucho una recarga cada 10s (por si un deploy fuera roto).
+      try {
+        const last = Number(sessionStorage.getItem('sw_reloaded_at') || 0);
+        if (Date.now() - last < 10000) return;
+        sessionStorage.setItem('sw_reloaded_at', String(Date.now()));
+      } catch { /* sessionStorage no disponible */ }
+      refreshing = true;
+      window.location.reload();
+    };
+    const wasControlled = hasSW && !!navigator.serviceWorker.controller;
+    if (hasSW && wasControlled) {
+      navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+    }
+
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
       window.dispatchEvent(new CustomEvent('app-foreground'));
+      // Comprobación de versión nueva al volver a foreground (no solo en arranque en frío).
+      if (hasSW) {
+        navigator.serviceWorker.getRegistration().then((r) => { if (r) r.update().catch(() => {}); }).catch(() => {});
+      }
     };
     document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      if (hasSW && wasControlled) navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
+    };
   }, []);
   return null;
 }
