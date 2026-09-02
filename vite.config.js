@@ -7,7 +7,10 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'prompt',
+      // autoUpdate: el sw.js hace skipWaiting()+clientsClaim() → el SW nuevo se activa al
+      // instalarse (sin quedarse en 'waiting') y toma control. La adopción del bundle nuevo
+      // en sesión la completa el listener controllerchange→reload de App.jsx.
+      registerType: 'autoUpdate',
       injectRegister: 'auto',
       manifest: {
         name: 'AlGrass',

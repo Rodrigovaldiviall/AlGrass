@@ -16,24 +16,49 @@ import { useForegroundTick } from './hooks/useForegroundTick';
 const INTRO_KEY = 'algrass_intro_seen';
 
 
-// Al volver a primer plano: (A) emite 'app-foreground' SIEMPRE para que las
-// pantallas re-fetcheen en sitio; (B) comprueba versión nueva del SW solo si
-// pasaron >4h (deja el SW nuevo en 'waiting', sin recargar ni activar en sesión).
+// Al volver a primer plano: (A) emite 'app-foreground' para que las pantallas re-fetcheen;
+// (B) comprueba versión nueva del SW (registration.update()) SIN esperar 4h. Con
+// registerType:'autoUpdate' el SW nuevo hace skipWaiting()+clientsClaim() → dispara
+// 'controllerchange' → recargamos UNA sola vez para adoptar el bundle nuevo en sesión
+// (necesario en la PWA iOS instalada, que si no solo actualizaría en arranque en frío).
+// NO se borra caché/localStorage/IndexedDB/sesión; el precache/offline se mantiene.
 function AppLifecycle() {
   useEffect(() => {
-    let lastSWCheck = 0;
-    const FOUR_HOURS = 4 * 60 * 60 * 1000;
+    const hasSW = 'serviceWorker' in navigator;
+
+    // Recarga controlada al activarse un SW NUEVO. Solo si la página YA estaba controlada
+    // por un SW al cargar (update real), no en la primera instalación (controller === null →
+    // el SW reclama la página por 1ª vez, sin bundle previo que reemplazar → no recargar).
+    const wasControlled = hasSW && !!navigator.serviceWorker.controller;
+    let refreshing = false;
+    const onControllerChange = () => {
+      if (refreshing) return;
+      // Anti-loop entre recargas: como mucho una cada 10s (por si un deploy fuera defectuoso).
+      try {
+        const last = Number(sessionStorage.getItem('sw_reloaded_at') || 0);
+        if (Date.now() - last < 10000) return;
+        sessionStorage.setItem('sw_reloaded_at', String(Date.now()));
+      } catch { /* sessionStorage no disponible */ }
+      refreshing = true;
+      window.location.reload();
+    };
+    if (hasSW && wasControlled) {
+      navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+    }
+
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
       window.dispatchEvent(new CustomEvent('app-foreground'));
-      const now = Date.now();
-      if (now - lastSWCheck > FOUR_HOURS && 'serviceWorker' in navigator) {
-        lastSWCheck = now;
-        navigator.serviceWorker.getRegistration().then((r) => r && r.update());
+      if (hasSW) {
+        navigator.serviceWorker.getRegistration().then((r) => { if (r) r.update().catch(() => {}); }).catch(() => {});
       }
     };
     document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      if (hasSW && wasControlled) navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
+    };
   }, []);
   return null;
 }
