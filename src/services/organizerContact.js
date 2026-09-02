@@ -45,15 +45,37 @@ export async function fetchAppTimings() {
   if (!supabase) return null;
   const { data, error } = await supabase
     .from('app_settings')
-    .select('free_invites_lead_min, attendance_lead_min, match_refund_cutoff_hours')
+    .select('free_invites_lead_min, attendance_lead_min, match_refund_cutoff_hours, captain_release_hours, captain_gold_release_hours')
     .eq('id', 1)
     .single();
   if (error || !data) return null;
   return {
-    freeInvitesLeadMin:     data.free_invites_lead_min ?? null,
-    attendanceLeadMin:      data.attendance_lead_min ?? null,
-    matchRefundCutoffHours: data.match_refund_cutoff_hours ?? null,   // solo para TEXTO del preview
+    freeInvitesLeadMin:      data.free_invites_lead_min ?? null,
+    attendanceLeadMin:       data.attendance_lead_min ?? null,
+    matchRefundCutoffHours:  data.match_refund_cutoff_hours ?? null,   // solo para TEXTO del preview
+    // Liberación de cupos R1 (capitán). null = no disponible → reservar cerrado. 0 es VÁLIDO
+    // (se conserva tal cual, no se colapsa a null): expira en game_start.
+    captainReleaseHours:     data.captain_release_hours ?? null,
+    captainGoldReleaseHours: data.captain_gold_release_hours ?? null,
   };
+}
+
+// Estado de "Modo mantenimiento" (app_settings id=1) vía RPC pública get_maintenance_status()
+// (anon + authenticated). Devuelve { error, mode, message }:
+//   · error=true  → la RPC falló → el llamador debe FAIL OPEN (nunca cerrar la app por un fallo de red).
+//   · error=false → mode/message válidos (mode=false si no hay fila).
+// Tolera ambas formas de retorno (table → array; jsonb/composite → objeto).
+export async function getMaintenanceStatus() {
+  if (!supabase) return { error: true };
+  try {
+    const { data, error } = await supabase.rpc('get_maintenance_status');
+    if (error) return { error: true };
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return { error: false, mode: false, message: '' };
+    return { error: false, mode: row.maintenance_mode === true, message: row.maintenance_message ?? '' };
+  } catch {
+    return { error: true };
+  }
 }
 
 async function fetchHostPhone(gameId) {

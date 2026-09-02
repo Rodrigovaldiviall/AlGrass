@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { TEXT, SUB, ORANGE, HAIR, SOFT } from '../constants';
 import { shareOrCopy } from '../utils/share';
 
-export default function ConfirmedOverlay({ game, onOK, shareLink = '', reservedSlots = 0, releaseHours = 48, title = '', lines = null, extraLine = '' }) {
+export default function ConfirmedOverlay({ game, onOK, shareLink = '', reservedSlots = 0, releaseHours = null, title = '', lines = null, extraLine = '' }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const fmt = n => `S/. ${Number(n || 0).toFixed(2)}`;

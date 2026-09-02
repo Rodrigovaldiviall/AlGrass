@@ -54,6 +54,9 @@ declare
   v_used_after       integer := 0;   -- V14: used PROYECTADO tras la adopción (reemplaza v_used de V13)
   v_new_hold         integer;
   v_reservation      public.game_slot_reservations%rowtype;
+  v_cap_h            integer;    -- app_settings.captain_release_hours
+  v_gold_h           integer;    -- app_settings.captain_gold_release_hours
+  v_release_h        integer;    -- horas efectivas según rol (0 = expira en game_start)
 begin
   -- 1) Sesión.
   if v_actor is null then
@@ -236,6 +239,30 @@ begin
     return null;
   end if;
 
+  -- Ventana de liberación configurable (app_settings id=1). Se lee SOLO AQUÍ, en el
+  -- punto de CREACIÓN de la R1 (materializa expires_at UNA vez). La rama UPDATE de una
+  -- R1 existente retorna antes de llegar aquí → NUNCA recalcula expires_at. Roles no
+  -- capitanes (admin/staff/owner) conservan 0h (expira en game_start), sin leer config.
+  if v_role = 'captain_gold' or v_role = 'captain' then
+    select s.captain_gold_release_hours, s.captain_release_hours
+      into v_gold_h, v_cap_h
+      from public.app_settings s
+     where s.id = 1;
+
+    v_release_h := case v_role
+                     when 'captain_gold' then v_gold_h
+                     when 'captain'      then v_cap_h
+                   end;
+
+    -- SIN fallback silencioso a 24/48: config ausente / NULL / fuera de 0..720 → abortar
+    -- ANTES de escribir la R1. 0 es VÁLIDO (expira en game_start).
+    if v_release_h is null or v_release_h < 0 or v_release_h > 720 then
+      raise exception 'SLOT_RELEASE_CONFIG_UNAVAILABLE';
+    end if;
+  else
+    v_release_h := 0;
+  end if;
+
   insert into public.game_slot_reservations (
     game_id,
     reserved_by_user_id,
@@ -255,11 +282,7 @@ begin
     p_reserved_slots_total,
     p_reserved_slots_total,
     p_reserved_slots_total,
-    v_game_start - (case v_role
-                      when 'captain_gold' then interval '24 hours'
-                      when 'captain'      then interval '48 hours'
-                      else interval '0 hours'
-                    end),
+    v_game_start - make_interval(hours => v_release_h),   -- config: captain(_gold)_release_hours; 0 ⇒ game_start
     now(),
     now()
   )

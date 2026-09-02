@@ -24,7 +24,7 @@ import { TEXT, SUB, HAIR, SOFT, DANGER, ORANGE, BLUE } from '../constants';
 //   +  sube de uno en uno; se deshabilita cuando (reservados − inscritos) >= publicAvailable
 //      (evita seleccionar valores que reserve_slots rechazaría). La validación final es del backend.
 // ============================================================================
-export default function ReserveSlotsSheet({ inscritos = 0, reservedInitial = 0, publicAvailable = 0, poolPublico = 0, shareLink = '', releaseHours = 48, onAccept, onConfirmed, onClose }) {
+export default function ReserveSlotsSheet({ inscritos = 0, reservedInitial = 0, publicAvailable = 0, poolPublico = 0, shareLink = '', releaseHours = null, onAccept, onConfirmed, onClose }) {
   const [open, setOpen] = useState(false);
   const [reservados, setReservados] = useState(reservedInitial);
   const [copied, setCopied] = useState(false);

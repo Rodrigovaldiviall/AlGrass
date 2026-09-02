@@ -24,6 +24,7 @@ import { getMyWaitlistGamesFull } from '../services/waitlistService';
 import { useForegroundTick } from '../hooks/useForegroundTick';
 import { uploadAvatar, getAvatarUrl } from '../utils/avatar';
 import { useGlobalRoles } from '../hooks/useGlobalRoles';
+import { useAppTimings } from '../hooks/useAppTimings';
 import CaptainSlotsBadge from '../components/CaptainSlotsBadge';
 import { buildCaptainSlotsMap } from '../utils/captainSlots';
 
@@ -530,6 +531,8 @@ function StatItem({ value, label }) {
 function ProfileCard({ user, gamesPlayedCount, onEdit, onEditEmail, onConfirmEmail, isProfileComplete = false, isHostOrStaff = false, hasActivity = false }) {
   // Estado de capitán desde la fuente de verdad V6 (roles ya existentes), no de lógica antigua.
   const { isCaptain, isCaptainGold } = useGlobalRoles();
+  const { captainReleaseHours, captainGoldReleaseHours } = useAppTimings();   // app_settings (misma fuente que reserve_slots)
+  const captainReleaseH = isCaptainGold ? captainGoldReleaseHours : captainReleaseHours;   // null = no disponible
   // Revisión VISUAL del correo de acceso (sin verificación real ni cambio de auth). Fuente de verdad:
   // users.confirmed_email (ligada a la cuenta, no al dispositivo). Confirmado ⇔ confirmed_email == email.
   const _emailReviewed = !!user.email && user.confirmedEmail === user.email;
@@ -636,13 +639,13 @@ function ProfileCard({ user, gamesPlayedCount, onEdit, onEditEmail, onConfirmEma
           )}
         </div>
       )}
-      {(isCaptain || isCaptainGold) && (
+      {(isCaptain || isCaptainGold) && captainReleaseH != null && (
         <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${HAIR}`, display: 'flex', alignItems: 'center', gap: 5 }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.3))' }}>
             <path d="M12 3l7 3v5c0 4.2-2.9 7.6-7 8.8-4.1-1.2-7-4.6-7-8.8V6l7-3z" fill={isCaptainGold ? '#F5B301' : '#E5383B'} stroke={isCaptainGold ? '#F5B301' : '#E5383B'} strokeWidth="1.2" strokeLinejoin="round"/>
             <path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
-          <span style={{ fontSize: 12.5, color: RED, lineHeight: 1.4, whiteSpace: 'nowrap' }}>{`Capitán. Reserva cupos hasta ${isCaptainGold ? 24 : 48}h antes del partido.`}</span>
+          <span style={{ fontSize: 12.5, color: RED, lineHeight: 1.4, whiteSpace: 'nowrap' }}>{`Capitán. Reserva cupos hasta ${captainReleaseH}h antes del partido.`}</span>
         </div>
       )}
 
@@ -2035,6 +2038,8 @@ export default function Profile() {
   const navigate = useNavigate();
   const { user, login } = useAuth();
   const { isCaptainGold } = useGlobalRoles();
+  const { captainReleaseHours, captainGoldReleaseHours } = useAppTimings();   // app_settings (misma fuente que reserve_slots)
+  const captainReleaseH = isCaptainGold ? captainGoldReleaseHours : captainReleaseHours;   // null = no disponible
   const { isVenueStaff, isVenueManager, isGameHost } = useStaff();
   const location = useLocation();
   const { state } = location;
@@ -3124,7 +3129,7 @@ export default function Profile() {
             <>
               <div>Tu reserva incluye <b style={{ fontWeight: 700, color: TEXT }}>{(confirmedGame.guestsCount ?? 0) > 0 ? `${confirmedGame.guestsCount} ${confirmedGame.guestsCount === 1 ? 'invitado' : 'invitados'} y ` : ''}{confirmedGame.reservedSlots} {confirmedGame.reservedSlots === 1 ? 'cupo' : 'cupos'}</b>.</div>
               <div style={{ marginTop: 8 }}>
-                Comparte el link antes de <span style={{ color: RED, textDecoration: 'underline' }}>{confirmedGame.releaseHours ?? 48}h</span> del partido.
+                Comparte el link antes de <span style={{ color: RED, textDecoration: 'underline' }}>{confirmedGame.releaseHours}h</span> del partido.
               </div>
             </>
           ) : ''}
@@ -3136,7 +3141,9 @@ export default function Profile() {
         <ConfirmedOverlay
           key={slotExpiry.id}
           title="Cupos expirados."
-          lines={[`Recuerda que tienes hasta ${isCaptainGold ? 24 : 48} horas antes del partido para reservar.`]}
+          lines={[captainReleaseH != null
+            ? `Recuerda que tienes hasta ${captainReleaseH} horas antes del partido para reservar.`
+            : 'Recuerda reservar con anticipación antes del partido.']}
           shareLink={buildGameShareUrl(slotExpiry.gameId, { sharedByUserId: user?.id })}
           onOK={async () => {
             // Marca esta R1 y encadena la siguiente en la MISMA sesión (patrón Rating):

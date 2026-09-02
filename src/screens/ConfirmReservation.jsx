@@ -14,6 +14,7 @@ import { resolveCaptainGroupAssignment } from '../services/captainGroupService';
 import { markWaitlistReserved } from '../services/waitlistService';
 import { materializeReservation } from '../services/materializeReservation';
 import { createOrder, failOrder, confirmOrder, getOrderStatus } from '../services/orderService';
+import { useAppTimings } from '../hooks/useAppTimings';
 import { charge } from '../services/paymentAdapter';
 import { uuidv4 } from '../lib/uuid';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
@@ -814,6 +815,7 @@ export default function ConfirmReservation() {
   const [showConfirmed, setShowConfirmed] = useState(false);
   const [creditLoading, setCreditLoading]   = useState(true);
   const { isCaptain, isCaptainGold } = useGlobalRoles();
+  const { captainReleaseHours, captainGoldReleaseHours } = useAppTimings();   // app_settings (null = reservar cerrado)
   const [reservedSlots, setReservedSlots] = useState(0);
   const [armaLista, setArmaLista] = useState(false); // "Arma la lista" ON/OFF (reservedSlots = N total)
   const [lastN, setLastN] = useState(0);             // N recordado al apagar el toggle (misma sesión)
@@ -984,12 +986,13 @@ export default function ConfirmReservation() {
   const creditApplied = invitedMode ? 0 : Math.min(creditBalance, subtotal);
   const total        = invitedMode ? 0 : Math.max(0, subtotal - creditApplied);
 
-  // Reserva de cupos (UX de checkout para capitanes). releaseHours según rol.
-  const releaseHours = isCaptainGold ? 24 : 48;
-  // Misma regla temporal que GameDetail: dentro de las 24/48h previas no se crea/modifica
-  // reserva de cupos. El backend (reserve_slots) sigue siendo la verdad.
+  // Reserva de cupos (UX de checkout para capitanes). releaseHours desde app_settings según rol
+  // (SIN fallback 24/48): null ⇒ reservar CERRADO. 0 es VÁLIDO (== null distingue "no disponible").
+  const releaseHours = isCaptainGold ? captainGoldReleaseHours : captainReleaseHours;
+  // Misma regla temporal que GameDetail: dentro de esa ventana no se crea/modifica reserva de
+  // cupos. El backend (reserve_slots) sigue siendo la verdad.
   const _slotGameStart = gameStartDate(game?.dateKey, game?.time24);
-  const slotReservationClosed = !!_slotGameStart && Date.now() >= _slotGameStart.getTime() - releaseHours * 3600_000;
+  const slotReservationClosed = releaseHours == null || (!!_slotGameStart && Date.now() >= _slotGameStart.getTime() - releaseHours * 3600_000);
   // Toggle "Arma la lista": armar la lista (titular + invitados YA existentes) no
   // consume cupos nuevos, así que se permite encender el switch aunque no queden
   // cupos, siempre que ya haya lista (listFloor>1 = titular + al menos 1 invitado).
@@ -1645,8 +1648,8 @@ export default function ConfirmReservation() {
               {stepBtn(() => setReservedSlots(n => n + 1), slotReservationClosed || onlyTitularSpot || _refPending || (reservedMax != null && (reservedSlots - listFloor) >= reservedMax), true)}
             </div>
             {/* Disponibilidad — reutiliza reservedMax (misma capacidad existente). Una sola línea. */}
-            <div style={{ fontSize: 12.5, color: SUB, textAlign: 'center', paddingBottom: 8, whiteSpace: 'nowrap' }}>
-              {reservedSlots} {reservedSlots === 1 ? 'cupo reservado' : 'cupos reservados'}{reservedMax != null ? ` · solo quedan ${Math.max(0, reservedMax - emptySlots)} disponibles` : ''}
+            <div style={{ fontSize: 12.5, color: SUB, textAlign: 'center', paddingBottom: 8 }}>
+              Estás reservando {reservedSlots} {reservedSlots === 1 ? 'cupo exclusivo' : 'cupos exclusivos'} para ti y tus amigos{reservedMax != null ? ` · solo quedan ${Math.max(0, reservedMax - emptySlots)} disponibles` : ''}
             </div>
             <div style={{ height: 1, background: HAIR }} />
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, padding: '12px 0 2px' }}>
@@ -1759,7 +1762,7 @@ export default function ConfirmReservation() {
                   <Avatar name={canonicalName} hue={selfAvatar.hue ?? 210} size={44} avatarPath={selfAvatar.path} avatarVersion={selfAvatar.version} />,
                   <>{canonicalName} <span style={{ color: SUB, fontWeight: 600 }}>(Tú)</span></>, user.email, rightOverride ?? tag('Tú'));
                 if (item.t === 'direct') return wrap(av(item.p), item.p.full_name || 'Invitado', item.p.user_code ? `@${item.p.user_code}` : null, rightOverride ?? tag('Tu invitado'));
-                if (item.t === 'link')   return wrap(av(item.p), item.p.full_name || 'Jugador', item.p.user_code ? `@${item.p.user_code}` : null, rightOverride ?? null);
+                if (item.t === 'link')   return wrap(av(item.p), item.p.full_name || 'Jugador', item.p.user_code ? `@${item.p.user_code}` : null, rightOverride ?? tag('Con tu link'));
                 // nuevo invitado de esta edición: precio + X (flujo actual)
                 const g = item.g;
                 return (
@@ -1779,8 +1782,8 @@ export default function ConfirmReservation() {
               };
               return (
                 <>
-                  <div style={{ fontSize: 12.5, color: SUB, textAlign: 'center', paddingBottom: 8, whiteSpace: 'nowrap' }}>
-                    {reservedSlots} {reservedSlots === 1 ? 'cupo reservado' : 'cupos reservados'}{publicLeft != null ? ` · solo quedan ${publicLeft} disponibles` : ''}
+                  <div style={{ fontSize: 12.5, color: SUB, textAlign: 'center', paddingBottom: 8 }}>
+                    Estás reservando {reservedSlots} {reservedSlots === 1 ? 'cupo exclusivo' : 'cupos exclusivos'} para ti y tus amigos{publicLeft != null ? ` · solo quedan ${publicLeft} disponibles` : ''}
                   </div>
                   <div style={{ height: 1, background: HAIR }} />
                   <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, padding: '12px 0 2px' }}>
@@ -1820,7 +1823,7 @@ export default function ConfirmReservation() {
                     <>
                       <div style={{ padding: '8px 0 2px', paddingLeft: 30 }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: SUB, letterSpacing: -0.1 }}>Amigos sin cupos asegurados</div>
-                        <div style={{ fontSize: 11.5, color: '#9A9AA0', marginTop: 1 }}>Ingresaron también con tu link</div>
+                        <div style={{ fontSize: 11.5, color: '#9A9AA0', marginTop: 1 }}>Ingresaron también con tu link, pero si alguno cancela el cupo se libera al público</div>
                       </div>
                       {fuera.map((it, i) => row(it, `f-${i}`, '–', it.t === 'link' ? upArrow(it.p) : undefined))}
                     </>
