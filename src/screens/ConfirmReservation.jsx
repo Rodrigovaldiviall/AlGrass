@@ -781,6 +781,51 @@ function ArmaListSkeleton() {
   );
 }
 
+// ── DIAGNÓSTICO TEMPORAL (solo ConfirmReservation móvil) — QUITAR tras medir ─────
+// Mide el render REAL (no el CSS): viewport, visualViewport y rects del contenedor
+// .cr-shell-fill y del footer (separador+Total+botón, marcado con data-diag-footer).
+function LayoutDiag() {
+  const [m, setM] = useState(null);
+  useEffect(() => {
+    let raf, prev = '';
+    const R = (n) => (n == null ? '—' : Math.round(n));
+    const tick = () => {
+      const shell = document.querySelector('.cr-shell-fill');
+      const foot  = document.querySelector('[data-diag-footer]');
+      const s  = shell ? shell.getBoundingClientRect() : null;
+      const f  = foot  ? foot.getBoundingClientRect()  : null;
+      const vv = window.visualViewport || null;
+      const vvBottom = vv ? vv.offsetTop + vv.height : null;
+      const next = {
+        innerH:  window.innerHeight,
+        clientH: document.documentElement.clientHeight,
+        vvH:     vv ? R(vv.height) : '—',
+        vvTop:   vv ? R(vv.offsetTop) : '—',
+        vvBot:   vv ? R(vvBottom) : '—',
+        sT: s ? R(s.top) : '—', sB: s ? R(s.bottom) : '—', sH: s ? R(s.height) : '—',
+        fT: f ? R(f.top) : '—', fB: f ? R(f.bottom) : '—', fH: f ? R(f.height) : '—',
+        vvMinusF:  (vv && f) ? R(vvBottom - f.bottom) : '—',
+        innMinusF: f ? R(window.innerHeight - f.bottom) : '—',
+        sBminusFB: (s && f) ? R(s.bottom - f.bottom) : '—',
+      };
+      const key = JSON.stringify(next);
+      if (key !== prev) { prev = key; setM(next); }
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  if (!m) return null;
+  return (
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 2147483647, background: 'rgba(0,0,0,0.85)', color: '#39FF14', fontFamily: 'monospace', fontSize: 10, lineHeight: 1.35, padding: '3px 6px', pointerEvents: 'none', whiteSpace: 'pre-wrap' }}>
+      {`innerH ${m.innerH}  clientH ${m.clientH}  vvH ${m.vvH}  vvTop ${m.vvTop}  vvBot ${m.vvBot}
+shell   T${m.sT}  B${m.sB}  H${m.sH}
+footer  T${m.fT}  B${m.fB}  H${m.fH}
+vvBot-fB ${m.vvMinusF}   innerH-fB ${m.innMinusF}   shellB-fB ${m.sBminusFB}`}
+    </div>
+  );
+}
+
 export default function ConfirmReservation() {
   const navigate = useNavigate();
   const { state } = useLocation();
@@ -1624,6 +1669,7 @@ export default function ConfirmReservation() {
 
   return (
     <div className="screen-shell cr-shell-fill" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
+      {typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 1023px)').matches && <LayoutDiag />}
       <TopBar
         title={invitedMode ? 'Agregar jugadores' : armaListaMode ? 'Gestionar mi lista' : addGuestsMode ? 'Agregar invitados' : isRental ? 'Reservar cancha' : 'Confirmación de reserva'}
         rightNode={armaListaMode ? (
@@ -1979,7 +2025,7 @@ export default function ConfirmReservation() {
         <div style={{ height: 8 }} />
       </div>
 
-      <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '10px 16px max(12px, env(safe-area-inset-bottom))' }}>
+      <div data-diag-footer="1" style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '10px 16px max(12px, env(safe-area-inset-bottom))' }}>
         {!promoOpen && !promoApplied && !addGuestsMode && !invitedMode && (
           <button onClick={() => setPromoOpen(true)} style={{ padding: '6px 4px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, color: ORANGE, letterSpacing: -0.1, display: 'inline-flex', alignItems: 'center', gap: 6, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
