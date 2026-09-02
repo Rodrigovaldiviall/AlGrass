@@ -15,6 +15,7 @@ import { markWaitlistReserved } from '../services/waitlistService';
 import { materializeReservation } from '../services/materializeReservation';
 import { createOrder, failOrder, confirmOrder, getOrderStatus } from '../services/orderService';
 import { useAppTimings } from '../hooks/useAppTimings';
+import SkeletonPill from '../components/SkeletonPill';
 import { charge } from '../services/paymentAdapter';
 import { uuidv4 } from '../lib/uuid';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
@@ -723,6 +724,63 @@ async function loadSlotSnapshot(gameId, referral) {
   return data;
 }
 
+// ── Cache local de "Gestionar mi lista" (SOLO percepción de carga) ───────────
+// Mismo patrón que gd_roster_ / pf_player_rows_ (sessionStorage, {data, ts}, TTL,
+// aislado por usuario en la clave). Guarda la ÚLTIMA lista conocida (rows + snapshot R1)
+// para pintar al instante al reabrir. NUNCA es autoridad: el fetch de fondo la
+// sobrescribe y el backend (reserve_slots) sigue validando cupos/capacidad.
+const ARMA_CACHE_TTL = 15 * 60 * 1000;
+const _armaKey = (gameId, uid) => `cr_arma_${gameId}_${uid}`;
+function readArmaCache(gameId, uid) {
+  if (!gameId || !uid) return null;
+  try {
+    const c = JSON.parse(sessionStorage.getItem(_armaKey(gameId, uid)));
+    if (!c || !c.ts || Date.now() - c.ts > ARMA_CACHE_TTL) return null;
+    return { rows: c.rows ?? [], r1: c.r1 ?? null };
+  } catch { return null; }
+}
+function writeArmaCache(gameId, uid, rows, r1) {
+  if (!gameId || !uid) return;
+  try { sessionStorage.setItem(_armaKey(gameId, uid), JSON.stringify({ rows, r1, ts: Date.now() })); } catch { /* no-op */ }
+}
+function clearArmaCache(gameId, uid) {
+  if (!gameId || !uid) return;
+  try { sessionStorage.removeItem(_armaKey(gameId, uid)); } catch { /* no-op */ }
+}
+// Semilla del contador desde el snapshot R1: ON con N = reserved_slots_total si la R1
+// propia está activa (>0). Sin recálculo: solo lee el estado ya persistido.
+function _r1Seed(r1) {
+  const on = !!(r1?.has_reservation && r1?.status === 'active' && (r1?.reserved_slots_total ?? 0) > 0);
+  return { on, n: on ? r1.reserved_slots_total : 0 };
+}
+
+// Skeleton SOLO de la LISTA dinámica (roster) de "Gestionar mi lista". El contenido fijo
+// —TopBar (Cancelar / Gestionar mi lista), nombre del venue, fecha/hora y el encabezado
+// "Arma la lista"— es estático (viene de `game`) y se pinta REAL desde el primer frame; NO
+// se simula aquí. Reproduce el layout del bloque real de la lista (contador, resumen, filas)
+// con sus mismos paddings, usando el pulse gris de SkeletonPill.
+function ArmaListSkeleton() {
+  const bar = (w, h, r = 8, extra) => <SkeletonPill className="" style={{ width: w, height: h, borderRadius: r, minWidth: 0, ...extra }} />;
+  const circle = (d) => <SkeletonPill className="" style={{ width: d, height: d, borderRadius: '50%', minWidth: 0 }} />;
+  const rowSkel = (i) => (
+    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0' }}>
+      {circle(44)}
+      <div style={{ flex: 1 }}>{bar(120, 15)}</div>
+      {bar(64, 16, 999)}
+    </div>
+  );
+  return (
+    <div style={{ padding: '0 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, padding: '6px 0' }}>
+        {circle(34)}{bar(30, 24)}{circle(34)}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'center', paddingBottom: 8 }}>{bar(230, 13)}</div>
+      <div style={{ height: 1, background: HAIR, margin: '4px 0' }} />
+      {[0, 1, 2].map(rowSkel)}
+    </div>
+  );
+}
+
 export default function ConfirmReservation() {
   const navigate = useNavigate();
   const { state } = useLocation();
@@ -816,8 +874,15 @@ export default function ConfirmReservation() {
   const [creditLoading, setCreditLoading]   = useState(true);
   const { isCaptain, isCaptainGold } = useGlobalRoles();
   const { captainReleaseHours, captainGoldReleaseHours } = useAppTimings();   // app_settings (null = reservar cerrado)
-  const [reservedSlots, setReservedSlots] = useState(0);
-  const [armaLista, setArmaLista] = useState(false); // "Arma la lista" ON/OFF (reservedSlots = N total)
+  // CASO B — cache local (SOLO percepción): última "Gestionar mi lista" conocida, leída de
+  // forma SÍNCRONA para sembrar el estado inicial → pinta al instante sin blanco/skeleton.
+  // NO es autoridad: el fetch de fondo la sobrescribe y reconcilia (ver efecto de carga).
+  // _armaModeInit refleja armaListaMode (definido más abajo) solo para el momento de init.
+  const _armaModeInit = (isCaptain || isCaptainGold) && (game?.addGuestsMode ?? false) && game?.source !== 'campo' && game?.type !== 'rental';
+  const _armaInit     = _armaModeInit ? readArmaCache(game?.id, authUser?.id) : null;
+  const _armaSeedInit = _armaInit ? _r1Seed(_armaInit.r1) : null;
+  const [reservedSlots, setReservedSlots] = useState(_armaSeedInit?.on ? _armaSeedInit.n : 0);
+  const [armaLista, setArmaLista] = useState(!!_armaSeedInit?.on); // "Arma la lista" ON/OFF (reservedSlots = N total)
   const [lastN, setLastN] = useState(0);             // N recordado al apagar el toggle (misma sesión)
 
   const [confirmedPlayerIds, setConfirmedPlayerIds] = useState(new Set());
@@ -852,11 +917,13 @@ export default function ConfirmReservation() {
   // Guardar/confirmar. NO es un modo nuevo: es addGuestsMode + rol capitán.
   const armaListaMode = (isCaptain || isCaptainGold) && addGuestsMode && !isCampo && !isRental;
   const _capId = authUser?.id;
-  const [listRoster, setListRoster] = useState([]);        // confirmed del partido (clasificación)
-  const [listR1, setListR1] = useState(null);              // snapshot get_slot_reservation (R1 propia)
-  const [listLoaded, setListLoaded] = useState(false);     // roster+snapshot listos (evita flip visible)
+  const [listRoster, setListRoster] = useState(_armaInit?.rows ?? []);        // confirmed del partido (clasificación)
+  const [listR1, setListR1] = useState(_armaInit?.r1 ?? null);                // snapshot get_slot_reservation (R1 propia)
+  const [listLoaded, setListLoaded] = useState(_armaInit != null);           // cache → pinta ya; sin cache → skeleton
   const [promotedLinkIds, setPromotedLinkIds] = useState([]); // links subidos a Lista con la flecha ↑
-  const _listSeeded = useRef(false);
+  // Si el cache ya sembró (Caso B), _listSeeded=true → el fetch NO re-siembra, RECONCILIA.
+  const _listSeeded = useRef(_armaInit != null);
+  const _cacheSeed = useRef(_armaSeedInit);   // {on, n} sembrado por el cache (reconciliar sin pisar edits)
   useEffect(() => {
     const gid = game?.id;
     if (!supabase || !gid || !armaListaMode) return;
@@ -875,15 +942,21 @@ export default function ConfirmReservation() {
             .select('id, full_name, user_code, avatar_hue, avatar_path, avatar_updated_at').in('id', ids);
           (us || []).forEach(u => { byId[u.id] = u; });
         }
-        setListRoster(rows.map(r => { const u = byId[r.user_id] || {}; return { ...r, ...u, _av: u.avatar_updated_at ? new Date(u.avatar_updated_at).getTime() : null }; }));
+        const authRows = rows.map(r => { const u = byId[r.user_id] || {}; return { ...r, ...u, _av: u.avatar_updated_at ? new Date(u.avatar_updated_at).getTime() : null }; });
+        setListRoster(authRows);           // AUTORITATIVO: siempre gana sobre el cache
         setListR1(r1 || null);
-        // Semilla ÚNICA: R1 propia activa → ON con N = reserved_slots_total (no recalcula).
+        writeArmaCache(gid, _capId, authRows, r1 || null);   // refresca cache (solo percepción)
+        // Semilla / reconciliación del contador. Caso A (sin cache): semilla desde el snapshot
+        // AUTORITATIVO (como antes). Caso B (cache ya sembró): el autoritativo GANA si el usuario
+        // no tocó (el estado sigue igual a la semilla del cache).
+        const { on: _authOn, n: _authN } = _r1Seed(r1);
         if (!_listSeeded.current) {
           _listSeeded.current = true;
-          if (r1?.has_reservation && r1?.status === 'active' && (r1?.reserved_slots_total ?? 0) > 0) {
-            setReservedSlots(r1.reserved_slots_total);
-            setArmaLista(true);
-          }
+          if (_authOn) { setReservedSlots(_authN); setArmaLista(true); }
+        } else if (_cacheSeed.current) {
+          const seed = _cacheSeed.current; _cacheSeed.current = null;
+          setReservedSlots(prev => (prev === seed.n ? _authN : prev));
+          setArmaLista(prev => (prev === seed.on ? _authOn : prev));
         }
       } finally {
         setListLoaded(true); // recién aquí se muestra la pantalla (ya sembrada y clasificada)
@@ -1379,6 +1452,9 @@ export default function ConfirmReservation() {
           if (_rsErr) { setFreeConfirming(false); return; }
           _slotTotal = 0;
         }
+        // La lista cambió → invalidar cache (patrón existente) para no pintar datos obsoletos
+        // al reabrir; la próxima apertura refetchea (skeleton o cache fresco) y reconcilia.
+        clearArmaCache(gameId, authUser?.id);
       }
       // Guardar sin invitados nuevos: no hay pago; volver a GameDetail (los datos se refrescan al remontar).
       // Se retira el marcador de reapertura para volver al detalle LIMPIO (sin reabrir "Gestionar mi
@@ -1548,13 +1624,6 @@ export default function ConfirmReservation() {
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden', position: 'relative' }}>
-      {/* "Gestionar mi lista": no mostrar la pantalla hasta tener roster+snapshot listos y sembrados
-          (evita ver el flip OFF→ON). Solo aplica al capitán en addGuestsMode. */}
-      {armaListaMode && !listLoaded && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 210, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ width: 34, height: 34, borderRadius: '50%', border: '3px solid rgba(27,27,31,0.15)', borderTop: '3px solid #1B1B1F', animation: 'spin 0.8s linear infinite' }} />
-        </div>
-      )}
       <TopBar
         title={invitedMode ? 'Agregar jugadores' : armaListaMode ? 'Gestionar mi lista' : addGuestsMode ? 'Agregar invitados' : isRental ? 'Reservar cancha' : 'Confirmación de reserva'}
         rightNode={armaListaMode ? (
@@ -1713,7 +1782,9 @@ export default function ConfirmReservation() {
           </div>
         )}
 
-        {armaLista && armaListaMode && (
+        {/* Lista dinámica (roster): skeleton mientras carga; el contenido fijo de arriba
+            (venue, fecha, "Arma la lista") ya está renderizado real. */}
+        {armaListaMode && !listLoaded ? <ArmaListSkeleton /> : armaLista && armaListaMode && (
           <div style={{ padding: '0 16px' }}>
             {/* Contador N. Piso = titular + directos existentes de mi lista + nuevos de esta edición. */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, padding: '6px 0' }}>
