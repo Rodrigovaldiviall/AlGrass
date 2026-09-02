@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useSheetPull } from '../hooks/useSheetPull';
 import { useAuth } from '../context/AuthContext';
-import { TEXT, SUB, HAIR, ORANGE, SOFT, DANGER, YAPE, BLUE } from '../constants';
+import { TEXT, SUB, HAIR, ORANGE, SOFT, DANGER, YAPE, BLUE, gameUnavailableCopy } from '../constants';
 import I from '../icons';
 import { shareOrCopy, buildGameShareUrl } from '../utils/share';
 import { addPlayers as addPlayersToRoster, createRoster } from '../services/gameService';
@@ -14,6 +14,8 @@ import { resolveCaptainGroupAssignment } from '../services/captainGroupService';
 import { markWaitlistReserved } from '../services/waitlistService';
 import { materializeReservation } from '../services/materializeReservation';
 import { createOrder, failOrder, confirmOrder, getOrderStatus } from '../services/orderService';
+import { useAppTimings } from '../hooks/useAppTimings';
+import SkeletonPill from '../components/SkeletonPill';
 import { charge } from '../services/paymentAdapter';
 import { uuidv4 } from '../lib/uuid';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
@@ -722,6 +724,63 @@ async function loadSlotSnapshot(gameId, referral) {
   return data;
 }
 
+// ── Cache local de "Gestionar mi lista" (SOLO percepción de carga) ───────────
+// Mismo patrón que gd_roster_ / pf_player_rows_ (sessionStorage, {data, ts}, TTL,
+// aislado por usuario en la clave). Guarda la ÚLTIMA lista conocida (rows + snapshot R1)
+// para pintar al instante al reabrir. NUNCA es autoridad: el fetch de fondo la
+// sobrescribe y el backend (reserve_slots) sigue validando cupos/capacidad.
+const ARMA_CACHE_TTL = 15 * 60 * 1000;
+const _armaKey = (gameId, uid) => `cr_arma_${gameId}_${uid}`;
+function readArmaCache(gameId, uid) {
+  if (!gameId || !uid) return null;
+  try {
+    const c = JSON.parse(sessionStorage.getItem(_armaKey(gameId, uid)));
+    if (!c || !c.ts || Date.now() - c.ts > ARMA_CACHE_TTL) return null;
+    return { rows: c.rows ?? [], r1: c.r1 ?? null };
+  } catch { return null; }
+}
+function writeArmaCache(gameId, uid, rows, r1) {
+  if (!gameId || !uid) return;
+  try { sessionStorage.setItem(_armaKey(gameId, uid), JSON.stringify({ rows, r1, ts: Date.now() })); } catch { /* no-op */ }
+}
+function clearArmaCache(gameId, uid) {
+  if (!gameId || !uid) return;
+  try { sessionStorage.removeItem(_armaKey(gameId, uid)); } catch { /* no-op */ }
+}
+// Semilla del contador desde el snapshot R1: ON con N = reserved_slots_total si la R1
+// propia está activa (>0). Sin recálculo: solo lee el estado ya persistido.
+function _r1Seed(r1) {
+  const on = !!(r1?.has_reservation && r1?.status === 'active' && (r1?.reserved_slots_total ?? 0) > 0);
+  return { on, n: on ? r1.reserved_slots_total : 0 };
+}
+
+// Skeleton SOLO de la LISTA dinámica (roster) de "Gestionar mi lista". El contenido fijo
+// —TopBar (Cancelar / Gestionar mi lista), nombre del venue, fecha/hora y el encabezado
+// "Arma la lista"— es estático (viene de `game`) y se pinta REAL desde el primer frame; NO
+// se simula aquí. Reproduce el layout del bloque real de la lista (contador, resumen, filas)
+// con sus mismos paddings, usando el pulse gris de SkeletonPill.
+function ArmaListSkeleton() {
+  const bar = (w, h, r = 8, extra) => <SkeletonPill className="" style={{ width: w, height: h, borderRadius: r, minWidth: 0, ...extra }} />;
+  const circle = (d) => <SkeletonPill className="" style={{ width: d, height: d, borderRadius: '50%', minWidth: 0 }} />;
+  const rowSkel = (i) => (
+    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0' }}>
+      {circle(44)}
+      <div style={{ flex: 1 }}>{bar(120, 15)}</div>
+      {bar(64, 16, 999)}
+    </div>
+  );
+  return (
+    <div style={{ padding: '0 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, padding: '6px 0' }}>
+        {circle(34)}{bar(30, 24)}{circle(34)}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'center', paddingBottom: 8 }}>{bar(230, 13)}</div>
+      <div style={{ height: 1, background: HAIR, margin: '4px 0' }} />
+      {[0, 1, 2].map(rowSkel)}
+    </div>
+  );
+}
+
 export default function ConfirmReservation() {
   const navigate = useNavigate();
   const { state } = useLocation();
@@ -794,6 +853,10 @@ export default function ConfirmReservation() {
   const shareGameLink = () => shareOrCopy({ url: _gameLink(), onCopied: _flashCopied });
   const copyGameLink = () => { try { navigator.clipboard?.writeText(_gameLink()).then(_flashCopied).catch(() => {}); } catch { /* sin portapapeles */ } };
   const [capacityError, setCapacityError]   = useState(null);
+  // "NO SE REALIZÓ NINGÚN COBRO" solo es verdad si el error ocurrió en create_order
+  // (pre-charge): paymentAdapter.charge aún no corrió. Para errores de confirm_order
+  // (post-charge) queda false y la frase NO se muestra.
+  const [noChargeYet, setNoChargeYet]       = useState(false);
   // Confirmación de la Order: un ÚNICO timer de polling (pollTimerRef), un guard de
   // "ya resuelto" (evita navegación/terminal duplicados) y un guard de montaje (evita
   // setState/navigate tras unmount). El poll consulta SIEMPRE el MISMO orderId.
@@ -810,8 +873,16 @@ export default function ConfirmReservation() {
   const [showConfirmed, setShowConfirmed] = useState(false);
   const [creditLoading, setCreditLoading]   = useState(true);
   const { isCaptain, isCaptainGold } = useGlobalRoles();
-  const [reservedSlots, setReservedSlots] = useState(0);
-  const [armaLista, setArmaLista] = useState(false); // "Arma la lista" ON/OFF (reservedSlots = N total)
+  const { captainReleaseHours, captainGoldReleaseHours } = useAppTimings();   // app_settings (null = reservar cerrado)
+  // CASO B — cache local (SOLO percepción): última "Gestionar mi lista" conocida, leída de
+  // forma SÍNCRONA para sembrar el estado inicial → pinta al instante sin blanco/skeleton.
+  // NO es autoridad: el fetch de fondo la sobrescribe y reconcilia (ver efecto de carga).
+  // _armaModeInit refleja armaListaMode (definido más abajo) solo para el momento de init.
+  const _armaModeInit = (isCaptain || isCaptainGold) && (game?.addGuestsMode ?? false) && game?.source !== 'campo' && game?.type !== 'rental';
+  const _armaInit     = _armaModeInit ? readArmaCache(game?.id, authUser?.id) : null;
+  const _armaSeedInit = _armaInit ? _r1Seed(_armaInit.r1) : null;
+  const [reservedSlots, setReservedSlots] = useState(_armaSeedInit?.on ? _armaSeedInit.n : 0);
+  const [armaLista, setArmaLista] = useState(!!_armaSeedInit?.on); // "Arma la lista" ON/OFF (reservedSlots = N total)
   const [lastN, setLastN] = useState(0);             // N recordado al apagar el toggle (misma sesión)
 
   const [confirmedPlayerIds, setConfirmedPlayerIds] = useState(new Set());
@@ -846,11 +917,13 @@ export default function ConfirmReservation() {
   // Guardar/confirmar. NO es un modo nuevo: es addGuestsMode + rol capitán.
   const armaListaMode = (isCaptain || isCaptainGold) && addGuestsMode && !isCampo && !isRental;
   const _capId = authUser?.id;
-  const [listRoster, setListRoster] = useState([]);        // confirmed del partido (clasificación)
-  const [listR1, setListR1] = useState(null);              // snapshot get_slot_reservation (R1 propia)
-  const [listLoaded, setListLoaded] = useState(false);     // roster+snapshot listos (evita flip visible)
+  const [listRoster, setListRoster] = useState(_armaInit?.rows ?? []);        // confirmed del partido (clasificación)
+  const [listR1, setListR1] = useState(_armaInit?.r1 ?? null);                // snapshot get_slot_reservation (R1 propia)
+  const [listLoaded, setListLoaded] = useState(_armaInit != null);           // cache → pinta ya; sin cache → skeleton
   const [promotedLinkIds, setPromotedLinkIds] = useState([]); // links subidos a Lista con la flecha ↑
-  const _listSeeded = useRef(false);
+  // Si el cache ya sembró (Caso B), _listSeeded=true → el fetch NO re-siembra, RECONCILIA.
+  const _listSeeded = useRef(_armaInit != null);
+  const _cacheSeed = useRef(_armaSeedInit);   // {on, n} sembrado por el cache (reconciliar sin pisar edits)
   useEffect(() => {
     const gid = game?.id;
     if (!supabase || !gid || !armaListaMode) return;
@@ -869,15 +942,21 @@ export default function ConfirmReservation() {
             .select('id, full_name, user_code, avatar_hue, avatar_path, avatar_updated_at').in('id', ids);
           (us || []).forEach(u => { byId[u.id] = u; });
         }
-        setListRoster(rows.map(r => { const u = byId[r.user_id] || {}; return { ...r, ...u, _av: u.avatar_updated_at ? new Date(u.avatar_updated_at).getTime() : null }; }));
+        const authRows = rows.map(r => { const u = byId[r.user_id] || {}; return { ...r, ...u, _av: u.avatar_updated_at ? new Date(u.avatar_updated_at).getTime() : null }; });
+        setListRoster(authRows);           // AUTORITATIVO: siempre gana sobre el cache
         setListR1(r1 || null);
-        // Semilla ÚNICA: R1 propia activa → ON con N = reserved_slots_total (no recalcula).
+        writeArmaCache(gid, _capId, authRows, r1 || null);   // refresca cache (solo percepción)
+        // Semilla / reconciliación del contador. Caso A (sin cache): semilla desde el snapshot
+        // AUTORITATIVO (como antes). Caso B (cache ya sembró): el autoritativo GANA si el usuario
+        // no tocó (el estado sigue igual a la semilla del cache).
+        const { on: _authOn, n: _authN } = _r1Seed(r1);
         if (!_listSeeded.current) {
           _listSeeded.current = true;
-          if (r1?.has_reservation && r1?.status === 'active' && (r1?.reserved_slots_total ?? 0) > 0) {
-            setReservedSlots(r1.reserved_slots_total);
-            setArmaLista(true);
-          }
+          if (_authOn) { setReservedSlots(_authN); setArmaLista(true); }
+        } else if (_cacheSeed.current) {
+          const seed = _cacheSeed.current; _cacheSeed.current = null;
+          setReservedSlots(prev => (prev === seed.n ? _authN : prev));
+          setArmaLista(prev => (prev === seed.on ? _authOn : prev));
         }
       } finally {
         setListLoaded(true); // recién aquí se muestra la pantalla (ya sembrada y clasificada)
@@ -980,12 +1059,19 @@ export default function ConfirmReservation() {
   const creditApplied = invitedMode ? 0 : Math.min(creditBalance, subtotal);
   const total        = invitedMode ? 0 : Math.max(0, subtotal - creditApplied);
 
-  // Reserva de cupos (UX de checkout para capitanes). releaseHours según rol.
-  const releaseHours = isCaptainGold ? 24 : 48;
-  // Misma regla temporal que GameDetail: dentro de las 24/48h previas no se crea/modifica
-  // reserva de cupos. El backend (reserve_slots) sigue siendo la verdad.
+  // Reserva de cupos (UX de checkout para capitanes). releaseHours desde app_settings según rol
+  // (SIN fallback 24/48): null ⇒ reservar CERRADO. 0 es VÁLIDO (== null distingue "no disponible").
+  const releaseHours = isCaptainGold ? captainGoldReleaseHours : captainReleaseHours;
+  // Misma regla temporal que GameDetail: dentro de esa ventana no se crea/modifica reserva de
+  // cupos. El backend (reserve_slots) sigue siendo la verdad.
   const _slotGameStart = gameStartDate(game?.dateKey, game?.time24);
-  const slotReservationClosed = !!_slotGameStart && Date.now() >= _slotGameStart.getTime() - releaseHours * 3600_000;
+  const slotReservationClosed = releaseHours == null || (!!_slotGameStart && Date.now() >= _slotGameStart.getTime() - releaseHours * 3600_000);
+  // Toggle "Arma la lista": armar la lista (titular + invitados YA existentes) no
+  // consume cupos nuevos, así que se permite encender el switch aunque no queden
+  // cupos, siempre que ya haya lista (listFloor>1 = titular + al menos 1 invitado).
+  // Solo se bloquea sin invitados y sin cupos. Los steppers +/- siguen respetando
+  // onlyTitularSpot (no se pueden añadir cupos vacíos sin disponibilidad).
+  const armaListToggleDisabled = slotReservationClosed || (onlyTitularSpot && listFloor <= 1);
   const captainColor = isCaptainGold ? '#F5B301' : '#E5383B';
   // Arma la lista: ON pone N = max(piso, último N); OFF apaga la reserva (reservedSlots=0) y recuerda N.
   function toggleArmaLista() {
@@ -1029,19 +1115,27 @@ export default function ConfirmReservation() {
   }
 
   function handleConfirm() {
+    setNoChargeYet(false);   // se pondrá true solo si create_order (pre-charge) rechaza
     if (!invitedMode && game?.hostUserId && authUser?.id && game.hostUserId === authUser.id) return;
     if (invitedMode) {
       if (!guests.length) return;
       setFreeConfirming(true);
-      handlePaid();
+      payWithCredit('invited');   // invitación gratis del HOST → misma tubería Orders
       return;
     }
     if (total === 0) {
+      // 100% crédito/gratis → pasa por Orders (create_order → confirm_order modo
+      // credit) ANTES de debitar/materializar: flujo PRINCIPAL y addGuests CON
+      // invitados. addGuests SIN invitados (solo ajuste de R1, sin pago) conserva su
+      // camino actual (reserve_slots directo).
       setCreditLoading(true);
       setTimeout(() => {
         setCreditLoading(false);
         setFreeConfirming(true);
-        setTimeout(() => handlePaid(), 1800);
+        setTimeout(() => {
+          if (addGuestsMode && guests.length === 0) handlePaid();
+          else payWithCredit();
+        }, 1800);
       }, 1400);
       return;
     }
@@ -1056,15 +1150,43 @@ export default function ConfirmReservation() {
   //   · confirm_order consume ese snapshot serializado TAL CUAL (no recomputa nada).
   // Todo campo nuevo del snapshot se añade SOLO aquí.
   function buildMainSnapshot(paymentMethod) {
+    const noTitular = addGuestsMode || invitedMode;   // operaciones sin titular NUEVO
     return {
       gameId: game?.id, gameType: game?.type,
-      unitPrice, promoCode: promoApplied?.code ?? null, promoCodeId: promoApplied?.promoCodeId ?? null, promoDiscount: promoApplied?.discount ?? 0,
-      totalAmount: total, subtotalAmount: subtotal,
-      playersCount: isRental ? 1 : 1 + guests.length, guestTotal: isRental ? 0 : guestsTotal,
-      paymentMethod, creditApplied, source: game?.source ?? 'match',
-      guests, reservedSlots, referral, titularNet, hostUserId: game?.hostUserId ?? null,
+      unitPrice: invitedMode ? 0 : unitPrice,
+      promoCode: promoApplied?.code ?? null, promoCodeId: promoApplied?.promoCodeId ?? null,
+      promoDiscount: invitedMode ? 0 : (promoApplied?.discount ?? 0),
+      totalAmount: invitedMode ? 0 : total, subtotalAmount: invitedMode ? 0 : subtotal,
+      playersCount: noTitular ? guests.length : (isRental ? 1 : 1 + guests.length),
+      guestTotal: invitedMode ? 0 : (isRental ? 0 : guestsTotal),
+      paymentMethod, creditApplied: invitedMode ? 0 : creditApplied, source: game?.source ?? 'match',
+      // addGuests: SIN titular (ya inscrito) y referral = payer → create_order acredita la
+      // R1 PROPIA del capitán (mismo mecanismo que el Shared Link).
+      // invitedMode: HOST invita gratis → SIN titular, invited=true (confirm_order valida
+      // host y NO toca wallet), TODO importe = 0 (sin movimiento económico). El host no tiene
+      // R1 → los invitados salen de público. referral = host es inocuo (acredita 0).
+      titular: !noTitular,
+      invited: invitedMode,
+      guests, reservedSlots: invitedMode ? 0 : reservedSlots,
+      referral: noTitular ? (authUser?.id ?? null) : referral,
+      titularNet: invitedMode ? 0 : titularNet, hostUserId: game?.hostUserId ?? null,
       venueId: game?.venueId ?? null, releaseHours, payerName: authUser?.name,
     };
+  }
+
+  // Claim del HOLD para create_order. create_order hace v_units = titular + guests +
+  // reserved_slots, así que reserved_slots debe ser SOLO los cupos VACÍOS adicionales
+  // (emptySlots = N − listFloor), NUNCA el N total (que ya incluye titular+invitados)
+  // → evita el doble conteo que provocaba NO_CAPACITY en partidos ajustados.
+  // financial_snapshot.reservedSlots sigue siendo el N TOTAL objetivo (materialize/
+  // reserve_slots lo necesitan). addGuests: SIN titular y reserved_slots=0 → claimed_
+  // units = nº invitados; create_order acredita la R1 propia vía referral (= payer) y
+  // los vacíos ya están retenidos por esa R1. Rental: 1 unidad.
+  function buildClaimComposition() {
+    if (isRental) return { titular: true };
+    // addGuests e invitedMode: SIN titular, reserved_slots=0 → claimed_units = nº invitados.
+    if (addGuestsMode || invitedMode) return { titular: false, guests, reserved_slots: 0 };
+    return { titular: true, guests, reserved_slots: emptySlots };
   }
 
   // Cierre COMPARTIDO de una reserva confirmada del main flow (interno y externo):
@@ -1106,18 +1228,28 @@ export default function ConfirmReservation() {
     }}});
   }
 
-  // ── Camino EXTERNO (total>0, main flow) ───────────────────────────────────────
+  // ── Camino EXTERNO (total>0: main flow y addGuests con invitados) ─────────────
   // createOrder(HOLD) → paymentAdapter.charge → confirmOrder → finishConfirmedNavigation.
-  // addGuests/invited NO usan Order en esta fase (su materialización no fue extraída).
+  // addGuests usa una Order NUEVA del mismo game (titular:false); invited sigue sin Order.
   //
   // onPreCharge: adquiere el HOLD JUSTO antes del cobro, con el método ya elegido.
   // create_order es el ÚNICO responsable del HOLD.
+  // Traduce el error de create_order al token del overlay capacityError (fuente única).
+  // NO_CAPACITY / INSUFFICIENT_PUBLIC_SLOTS → falta de cupos. Estados no reservables del
+  // game → GAME_UNAVAILABLE. ORDER_EXPIRED no nace en create_order (viene de confirm_order).
+  function reserveErrorToken(msg) {
+    const m = msg ?? '';
+    if (m.includes('INSUFFICIENT_PUBLIC_SLOTS')) return 'RESERVED_SLOTS_UNAVAILABLE';
+    if (m.includes('NO_CAPACITY')) return game?.type === 'rental' ? 'RENTAL_TAKEN' : 'GAME_FULL';
+    if (m.includes('GAME_NOT_RESERVABLE') || m.includes('GAME_CANCELED')
+        || m.includes('GAME_ALREADY_STARTED') || m.includes('ALTERNATIVE_TAKEN')) return 'GAME_UNAVAILABLE';
+    return null;
+  }
+
   async function handlePreCharge(method) {
-    if (addGuestsMode || invitedMode) return { skip: true };
+    if (invitedMode) return { skip: true };
     const idempotencyKey = uuidv4();          // nueva key por intento (dedup en create_order)
-    const claimComposition = isRental
-      ? { titular: true }
-      : { titular: true, guests, reserved_slots: reservedSlots };
+    const claimComposition = buildClaimComposition();
     const { data, error } = await createOrder({
       idempotencyKey,
       resourceType:      game?.type,
@@ -1130,17 +1262,46 @@ export default function ConfirmReservation() {
       paymentProvider:   null,
     });
     if (error || !data) {
-      // NO_CAPACITY (u otra guarda de create_order) → overlay de capacidad, sin cobrar.
-      if ((error?.message ?? '').includes('INSUFFICIENT_PUBLIC_SLOTS')) {
-        setCapacityError('RESERVED_SLOTS_UNAVAILABLE');
-      } else if ((error?.message ?? '').includes('NO_CAPACITY')) {
-        setCapacityError(game?.type === 'rental' ? 'RENTAL_TAKEN' : 'GAME_FULL');
-      } else {
-        console.warn('[checkout] create_order failed:', error);
-      }
+      // create_order rechazó ANTES de cobrar → overlay visible + "sin cobro" garantizado.
+      const token = reserveErrorToken(error?.message);
+      if (token) { setNoChargeYet(true); setCapacityError(token); }
+      else console.warn('[checkout] create_order failed:', error);
       return { error: error?.message ?? 'CREATE_ORDER_FAILED' };
     }
     return { orderId: data.id };
+  }
+
+  // ── Camino sin PaymentSheet — HOLD antes de debitar/materializar ───────────────
+  // create_order → confirm_order (SIN pasarela) → MISMA materialización server-side.
+  //   · provider='credit' (flujo principal 100% crédito): confirm_order valida saldo.
+  //   · provider='invited' (invitación gratis del HOST): amount_total=0; confirm_order
+  //     valida HOST y NO toca wallet (invited=true en el snapshot). No debita crédito.
+  // Mismo claimComposition que usaría pasarela. NO_CAPACITY → capacityError.
+  // Reutiliza handleExternalPaid para confirmar/navegar.
+  async function payWithCredit(provider = 'credit') {
+    const isInvited = provider === 'invited';
+    const idempotencyKey = uuidv4();
+    const claimComposition = buildClaimComposition();
+    const { data, error } = await createOrder({
+      idempotencyKey,
+      resourceType:      game?.type,
+      resourceId:        game?.id,
+      claimComposition,
+      amountTotal:       isInvited ? 0 : total,   // invited: 0; crédito: 0 si todo es crédito
+      currency:          'PEN',
+      financialSnapshot: buildMainSnapshot(provider),
+      pendingExpiresAt:  new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      paymentProvider:   provider,
+    });
+    if (error || !data) {
+      // create_order rechazó ANTES de debitar → overlay visible + "sin cobro" garantizado.
+      const token = reserveErrorToken(error?.message);
+      if (token) { setNoChargeYet(true); setCapacityError(token); }
+      else console.warn('[checkout] create_order (credit) failed:', error);
+      setFreeConfirming(false);
+      return;   // NO se debitó crédito
+    }
+    await handleExternalPaid(provider, null, data.id);
   }
 
   // onPaid del PaymentSheet. Externo main (orderId) → confirm_order materializa
@@ -1161,12 +1322,13 @@ export default function ConfirmReservation() {
 
     // Terminal NO confirmado (failed/expired, o capacidad agotada explícita): detiene el
     // loading y muestra el error con el MECANISMO EXISTENTE (overlay capacityError).
-    const resolveTerminal = () => {
+    const resolveTerminal = (token = null) => {
       if (checkoutResolvedRef.current || !mountedRef.current) return;
       checkoutResolvedRef.current = true;
       if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
       setFreeConfirming(false);
-      setCapacityError(game?.type === 'rental' ? 'RENTAL_TAKEN' : 'GAME_FULL');
+      setNoChargeYet(false);   // confirm_order es POST-cobro → NO afirmar "sin cobro"
+      setCapacityError(token ?? (game?.type === 'rental' ? 'RENTAL_TAKEN' : 'GAME_FULL'));
     };
 
     // Poll del MISMO orderId hasta estado RESOLUTIVO. Un único timer (pollTimerRef).
@@ -1178,7 +1340,8 @@ export default function ConfirmReservation() {
       if (checkoutResolvedRef.current || !mountedRef.current) return;
       const status = (!readErr && row) ? row.status : null;   // null = incierto → seguir
       if (status === 'confirmed') { resolveConfirmed(); return; }
-      if (status === 'failed' || status === 'expired') { resolveTerminal(); return; }
+      if (status === 'expired') { resolveTerminal('ORDER_EXPIRED'); return; }
+      if (status === 'failed')  { resolveTerminal(); return; }
       pollTimerRef.current = setTimeout(pollStatus, 1000);     // pending / incierto
     };
 
@@ -1193,7 +1356,11 @@ export default function ConfirmReservation() {
     let body = null;
     try { body = await error?.context?.json(); } catch {}
     const code = body?.error ?? null;
-    if (code === 'GAME_FULL' || code === 'RENTAL_TAKEN') { resolveTerminal(); return; }
+    // ORDER_EXPIRED: terminal explícito → overlay "Reserva expirada", SIN poll infinito.
+    if (code === 'ORDER_EXPIRED') { resolveTerminal('ORDER_EXPIRED'); return; }
+    if (code === 'GAME_FULL' || code === 'RENTAL_TAKEN' || code === 'INSUFFICIENT_CREDIT') { resolveTerminal(); return; }
+    if (code === 'GAME_NOT_RESERVABLE' || code === 'GAME_CANCELED'
+        || code === 'GAME_ALREADY_STARTED' || code === 'ALTERNATIVE_TAKEN') { resolveTerminal('GAME_UNAVAILABLE'); return; }
     console.warn('[checkout] confirm_order failed; polling order status:', code ?? error);
     pollStatus();
   }
@@ -1285,6 +1452,9 @@ export default function ConfirmReservation() {
           if (_rsErr) { setFreeConfirming(false); return; }
           _slotTotal = 0;
         }
+        // La lista cambió → invalidar cache (patrón existente) para no pintar datos obsoletos
+        // al reabrir; la próxima apertura refetchea (skeleton o cache fresco) y reconcilia.
+        clearArmaCache(gameId, authUser?.id);
       }
       // Guardar sin invitados nuevos: no hay pago; volver a GameDetail (los datos se refrescan al remontar).
       // Se retira el marcador de reapertura para volver al detalle LIMPIO (sin reabrir "Gestionar mi
@@ -1454,13 +1624,6 @@ export default function ConfirmReservation() {
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden', position: 'relative' }}>
-      {/* "Gestionar mi lista": no mostrar la pantalla hasta tener roster+snapshot listos y sembrados
-          (evita ver el flip OFF→ON). Solo aplica al capitán en addGuestsMode. */}
-      {armaListaMode && !listLoaded && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 210, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ width: 34, height: 34, borderRadius: '50%', border: '3px solid rgba(27,27,31,0.15)', borderTop: '3px solid #1B1B1F', animation: 'spin 0.8s linear infinite' }} />
-        </div>
-      )}
       <TopBar
         title={invitedMode ? 'Agregar jugadores' : armaListaMode ? 'Gestionar mi lista' : addGuestsMode ? 'Agregar invitados' : isRental ? 'Reservar cancha' : 'Confirmación de reserva'}
         rightNode={armaListaMode ? (
@@ -1517,8 +1680,8 @@ export default function ConfirmReservation() {
               <div style={{ fontSize: 16, fontWeight: 800, color: slotReservationClosed ? '#9A9AA0' : TEXT, letterSpacing: -0.2 }}>Arma la lista</div>
               <div style={{ fontSize: 12.5, color: slotReservationClosed ? '#C7C7CC' : SUB, marginTop: 1 }}>Hasta {releaseHours}h antes del partido</div>
             </div>
-            <button onClick={toggleArmaLista} role="switch" aria-checked={armaLista} disabled={slotReservationClosed || onlyTitularSpot}
-              style={{ width: 44, height: 26, borderRadius: 999, border: 'none', background: armaLista ? BLUE : '#E5E5EA', cursor: (slotReservationClosed || onlyTitularSpot) ? 'default' : 'pointer', padding: 0, position: 'relative', transition: 'background .2s ease', WebkitTapHighlightColor: 'transparent', outline: 'none', flexShrink: 0, opacity: (slotReservationClosed || onlyTitularSpot) ? 0.5 : 1 }}>
+            <button onClick={toggleArmaLista} role="switch" aria-checked={armaLista} disabled={armaListToggleDisabled}
+              style={{ width: 44, height: 26, borderRadius: 999, border: 'none', background: armaLista ? BLUE : '#E5E5EA', cursor: armaListToggleDisabled ? 'default' : 'pointer', padding: 0, position: 'relative', transition: 'background .2s ease', WebkitTapHighlightColor: 'transparent', outline: 'none', flexShrink: 0, opacity: armaListToggleDisabled ? 0.5 : 1 }}>
               <div style={{ position: 'absolute', top: 2, left: armaLista ? 20 : 2, width: 22, height: 22, borderRadius: '50%', background: '#fff', transition: 'left .2s ease', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
             </button>
           </div>
@@ -1554,8 +1717,8 @@ export default function ConfirmReservation() {
               {stepBtn(() => setReservedSlots(n => n + 1), slotReservationClosed || onlyTitularSpot || _refPending || (reservedMax != null && (reservedSlots - listFloor) >= reservedMax), true)}
             </div>
             {/* Disponibilidad — reutiliza reservedMax (misma capacidad existente). Una sola línea. */}
-            <div style={{ fontSize: 12.5, color: SUB, textAlign: 'center', paddingBottom: 8, whiteSpace: 'nowrap' }}>
-              {reservedSlots} {reservedSlots === 1 ? 'cupo reservado' : 'cupos reservados'}{reservedMax != null ? ` · solo quedan ${Math.max(0, reservedMax - emptySlots)} disponibles` : ''}
+            <div style={{ fontSize: 12.5, color: SUB, textAlign: 'center', paddingBottom: 8 }}>
+              Estás reservando {reservedSlots} {reservedSlots === 1 ? 'cupo exclusivo' : 'cupos exclusivos'} para ti y tus amigos{reservedMax != null ? ` · solo quedan ${Math.max(0, reservedMax - emptySlots)} disponibles` : ''}
             </div>
             <div style={{ height: 1, background: HAIR }} />
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, padding: '12px 0 2px' }}>
@@ -1619,7 +1782,9 @@ export default function ConfirmReservation() {
           </div>
         )}
 
-        {armaLista && armaListaMode && (
+        {/* Lista dinámica (roster): skeleton mientras carga; el contenido fijo de arriba
+            (venue, fecha, "Arma la lista") ya está renderizado real. */}
+        {armaListaMode && !listLoaded ? <ArmaListSkeleton /> : armaLista && armaListaMode && (
           <div style={{ padding: '0 16px' }}>
             {/* Contador N. Piso = titular + directos existentes de mi lista + nuevos de esta edición. */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, padding: '6px 0' }}>
@@ -1668,7 +1833,7 @@ export default function ConfirmReservation() {
                   <Avatar name={canonicalName} hue={selfAvatar.hue ?? 210} size={44} avatarPath={selfAvatar.path} avatarVersion={selfAvatar.version} />,
                   <>{canonicalName} <span style={{ color: SUB, fontWeight: 600 }}>(Tú)</span></>, user.email, rightOverride ?? tag('Tú'));
                 if (item.t === 'direct') return wrap(av(item.p), item.p.full_name || 'Invitado', item.p.user_code ? `@${item.p.user_code}` : null, rightOverride ?? tag('Tu invitado'));
-                if (item.t === 'link')   return wrap(av(item.p), item.p.full_name || 'Jugador', item.p.user_code ? `@${item.p.user_code}` : null, rightOverride ?? null);
+                if (item.t === 'link')   return wrap(av(item.p), item.p.full_name || 'Jugador', item.p.user_code ? `@${item.p.user_code}` : null, rightOverride ?? tag('Con tu link'));
                 // nuevo invitado de esta edición: precio + X (flujo actual)
                 const g = item.g;
                 return (
@@ -1688,8 +1853,8 @@ export default function ConfirmReservation() {
               };
               return (
                 <>
-                  <div style={{ fontSize: 12.5, color: SUB, textAlign: 'center', paddingBottom: 8, whiteSpace: 'nowrap' }}>
-                    {reservedSlots} {reservedSlots === 1 ? 'cupo reservado' : 'cupos reservados'}{publicLeft != null ? ` · solo quedan ${publicLeft} disponibles` : ''}
+                  <div style={{ fontSize: 12.5, color: SUB, textAlign: 'center', paddingBottom: 8 }}>
+                    Estás reservando {reservedSlots} {reservedSlots === 1 ? 'cupo exclusivo' : 'cupos exclusivos'} para ti y tus amigos{publicLeft != null ? ` · solo quedan ${publicLeft} disponibles` : ''}
                   </div>
                   <div style={{ height: 1, background: HAIR }} />
                   <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, padding: '12px 0 2px' }}>
@@ -1729,7 +1894,7 @@ export default function ConfirmReservation() {
                     <>
                       <div style={{ padding: '8px 0 2px', paddingLeft: 30 }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: SUB, letterSpacing: -0.1 }}>Amigos sin cupos asegurados</div>
-                        <div style={{ fontSize: 11.5, color: '#9A9AA0', marginTop: 1 }}>Ingresaron también con tu link</div>
+                        <div style={{ fontSize: 11.5, color: '#9A9AA0', marginTop: 1 }}>Ingresaron también con tu link, pero si alguno cancela el cupo se libera al público</div>
                       </div>
                       {fuera.map((it, i) => row(it, `f-${i}`, '–', it.t === 'link' ? upArrow(it.p) : undefined))}
                     </>
@@ -1965,15 +2130,22 @@ export default function ConfirmReservation() {
       )}
 
       {capacityError && (() => {
-        const isReserved = capacityError === 'RESERVED_SLOTS_UNAVAILABLE';
-        const isMatch    = capacityError === 'GAME_FULL';
-        const capTitle = isReserved ? 'Sin cupos suficientes' : isMatch ? 'Partido completo' : 'Cancha no disponible';
-        const capBody  = isReserved
-          ? 'Durante el proceso de pago otros jugadores reservaron algunos de esos cupos. Vuelve a revisar la disponibilidad e inténtalo nuevamente.'
-          : isMatch
-            ? 'Mientras procesábamos tu solicitud, los cupos disponibles fueron ocupados por otros jugadores.'
-            : 'Mientras procesábamos tu solicitud, otro usuario completó la reserva de esta cancha.';
-        const capCta = (isMatch || isReserved) ? 'Volver al partido' : 'Volver a la cancha';
+        const isExpired = capacityError === 'ORDER_EXPIRED';
+        const isUnavail = capacityError === 'GAME_UNAVAILABLE';
+        const isRentalType = game?.type === 'rental';
+        const u = gameUnavailableCopy(isRentalType);   // copy ÚNICO compartido con GameDetail
+        // capacidad = GAME_FULL / RENTAL_TAKEN / RESERVED_SLOTS_UNAVAILABLE (falta de cupos)
+        const capTitle = isExpired ? 'Reserva expirada'
+          : isUnavail ? u.title
+          : 'No hay suficientes cupos disponibles';
+        const capBody = isExpired
+          ? 'El tiempo para completar la reserva terminó. Vuelve a intentarlo.'
+          : isUnavail
+            ? u.message
+            : 'Mientras realizabas la reserva, uno o más cupos fueron reservados. Vuelve para consultar la disponibilidad actual.';
+        // GAME_UNAVAILABLE → LISTA (u.path). Capacidad y ORDER_EXPIRED → detalle (navigate(-1)).
+        const capCta = isUnavail ? u.cta : (isRentalType ? 'Volver a la cancha' : 'Volver al partido');
+        const onCta = isUnavail ? () => navigate(u.path) : () => navigate(-1);
         return (
           <div className="sheet-overlay" style={{
             position: 'fixed', inset: 0, zIndex: 200,
@@ -1992,11 +2164,13 @@ export default function ConfirmReservation() {
             <div style={{ marginTop: 8, fontSize: 14, color: SUB, textAlign: 'center', lineHeight: 1.5, maxWidth: 300 }}>
               {capBody}
             </div>
-            <div style={{ marginTop: 14, fontSize: 13, fontWeight: 700, color: DANGER, textAlign: 'center', letterSpacing: 0.2 }}>
-              NO SE REALIZÓ NINGÚN COBRO
-            </div>
+            {noChargeYet && (
+              <div style={{ marginTop: 14, fontSize: 13, fontWeight: 700, color: DANGER, textAlign: 'center', letterSpacing: 0.2 }}>
+                NO SE REALIZÓ NINGÚN COBRO
+              </div>
+            )}
             <div style={{ marginTop: 28, width: '100%', maxWidth: 320 }}>
-              <CtaButton onPress={() => navigate(-1)}>
+              <CtaButton onPress={onCta}>
                 {capCta}
               </CtaButton>
             </div>

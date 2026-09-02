@@ -32,6 +32,7 @@ const GAME_SELECT = `
   duration_min,
   host_user_id,
   booked_by_user_id,
+  booker_checked_in_at,
   game_amenities:amenities,
   fields:field_id (
     name,
@@ -107,6 +108,8 @@ function mapGame(g) {
     effectiveHostUserId: g.host_user_id                ?? null,
     // Rental operational SoT: who currently holds the booking (null = available)
     bookedByUserId:      g.booked_by_user_id           ?? null,
+    // Rental attendance: asistencia del booker (distinta de host_checked_in_at)
+    bookerCheckedInAt:   g.booker_checked_in_at        ?? null,
   };
 }
 

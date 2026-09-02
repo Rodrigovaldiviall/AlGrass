@@ -499,7 +499,9 @@ export default function AuthScreen() {
       // Solo datos NO sensibles: nombre y email. NUNCA contraseña ni aceptación.
       sessionStorage.setItem('auth_legal_form', JSON.stringify({ name, email }));
     } catch { /* sessionStorage no disponible */ }
-    navigate(t === 'terms' ? '/terms' : '/privacy');
+    // state.internal → Atrás en LegalPage usa navigate(-1) y vuelve a este resumen (que se
+    // reabre por auth_legal_resume), en vez de la nav dura a "/".
+    navigate(t === 'terms' ? '/terms' : '/privacy', { state: { internal: true } });
   };
 
   // Recuperación de contraseña por OTP oficial de Supabase. UNA pantalla, dos estados:

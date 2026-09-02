@@ -65,47 +65,13 @@ Deno.serve(async (req) => {
       return json({ error: 'ORDER_TERMINAL', status: order.status }, 409);
     // status === 'pending' → continuar.
 
-    // HOLD vencido: una PENDING cuyo pending_expires_at ya pasó NO puede empezar a
-    // materializar. NO se escribe ningún terminal aquí: expire_orders() sigue siendo el
-    // ÚNICO dueño de pending→expired (invariante: confirm_order solo escribe 'confirmed').
-    // Idempotencia/terminales existentes (confirmed/failed/expired) intactos.
-    if (new Date(order.pending_expires_at).getTime() <= Date.now())
-      return json({ error: 'ORDER_EXPIRED' }, 409);
-
     // 4) Validación según el MODO del Order (la materialización posterior es IDÉNTICA):
     //    · Crédito (payment_provider='credit'): sin comprobante externo; se valida
     //      SALDO suficiente ANTES de materializar (materializeReservation debita).
     //    · Externo (pasarela): comprobante simulado, EXACTAMENTE como hasta ahora.
     //    Inválido/insuficiente → Order queda PENDING (no materializa); el TTL la reclama.
-    //    · Invitación gratis (financial_snapshot.invited=true): AUTORIZACIÓN server-side.
-    //      La puede crear el HOST del partido O un algrass_admin/algrass_staff. Cualquier
-    //      otro actor → NOT_AUTHORIZED_INVITE. Sin comprobante y SIN validación/movimiento
-    //      de wallet (materializeReservation omite applySpend por invited=true). El source
-    //      se DERIVA aquí (server-side): host→organizer_invite, staff→algrass_invite.
-    //      Precede a credit/pasarela.
-    const isInvited = order.financial_snapshot?.invited === true;
     const isCredit = order.payment_provider === 'credit';
-    let inviteSource: string | null = null;   // fuente autoritativa (solo cuando isInvited)
-    if (isInvited) {
-      const { data: game } = await admin
-        .from('games').select('host_user_id')
-        .eq('id', order.resource_id).maybeSingle();
-      const isHost = !!game && game.host_user_id === order.payer_user_id;
-      let isStaff = false;
-      if (!isHost) {
-        const { data: role } = await admin
-          .from('user_roles').select('role')
-          .eq('user_id', order.payer_user_id)
-          .in('role', ['algrass_admin', 'algrass_staff'])
-          .maybeSingle();
-        isStaff = !!role;
-      }
-      if (!isHost && !isStaff) {
-        return json({ error: 'NOT_AUTHORIZED_INVITE' }, 403);
-      }
-      inviteSource = isHost ? 'organizer_invite' : 'algrass_invite';
-      // Sin wallet: invitación gratuita, sin lógica económica.
-    } else if (isCredit) {
+    if (isCredit) {
       const creditApplied = Number(order.financial_snapshot?.creditApplied ?? 0);
       const { data: wallet } = await admin
         .from('wallet_summary').select('credit_balance')
@@ -123,19 +89,8 @@ Deno.serve(async (req) => {
     const ctx = { db: admin, actor: order.payer_user_id, orderId: order.id };
 
     // 6) Snapshot: DESERIALIZACIÓN 1:1 del snapshot congelado en create_order.
-    //    ÚNICA recomputación permitida: la CLASIFICACIÓN AUTORITATIVA de `source`
-    //    (server-side; NO se confía en el source del cliente). Order invited → se usa el
-    //    inviteSource ya derivado en el paso 4 (host→organizer_invite, staff→algrass_invite).
-    //    Un Order NO invited nunca puede reclamar una fuente de invitación → se sanea a
-    //    'match'. Todo lo demás del snapshot se pasa TAL CUAL.
-    const INVITE_SOURCES = new Set(['organizer_invite', 'algrass_invite']);
-    let source = order.financial_snapshot?.source ?? 'match';
-    if (isInvited) {
-      source = inviteSource!;
-    } else if (INVITE_SOURCES.has(source)) {
-      source = 'match';
-    }
-    const snapshot = { ...order.financial_snapshot, source };
+    //    NO se recomputa nada aquí (eso sería una segunda orquestación).
+    const snapshot = order.financial_snapshot;
 
     // 7) ÚNICA orquestación del dominio (idéntica al camino interno).
     const result = await materializeReservation(ctx, snapshot);

@@ -195,13 +195,17 @@ async function setMatchPublishedIfEmpty(gameId) {
 // ── reserve ───────────────────────────────────────────────────────────────────
 
 // Appends a spend record to reservations (append-only ledger).
-export async function createReservation({ gameId, unitPrice, promoCode, promoCodeId, promoDiscount, totalAmount, subtotalAmount, playersCount, guestTotal, paymentMethod, creditApplied, source }, ctx) {
+export async function createReservation({ gameId, unitPrice, promoCode, promoCodeId, promoDiscount, totalAmount, subtotalAmount, playersCount, guestTotal, paymentMethod, creditApplied, source, invited = false }, ctx) {
   const db = ctx?.db ?? supabase;
   if (!db) return { skipped: true };
   const actor = ctx?.actor ?? (await getSession())?.user?.id;
   if (!actor) return { skipped: true };
 
-  await applySpend(actor, { totalAmount, subtotalAmount: subtotalAmount || totalAmount, creditApplied: creditApplied || 0 }, ctx);
+  // invited (invitación gratis del host): registro operativo SIN movimiento económico.
+  // NO se ejecuta applySpend (no toca credit_balance ni reserved_balance).
+  if (!invited) {
+    await applySpend(actor, { totalAmount, subtotalAmount: subtotalAmount || totalAmount, creditApplied: creditApplied || 0 }, ctx);
+  }
 
   const { data, error } = await db
     .from('reservations')
@@ -221,8 +225,10 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoCod
       payment_method:      totalAmount > 0 ? paymentMethod : null,
       source:              source || 'match',
       reserved_at:         new Date().toISOString(),
-      reservation_type:    'normal',
-      invited_by_user_id:  null,
+      // invited (invitación gratis del host): el ledger se identifica como 'invited'
+      // desde el origen, con economía 0 (importes ya vienen en 0 en el snapshot).
+      reservation_type:    invited ? 'invited' : 'normal',
+      invited_by_user_id:  invited ? actor : null,
       // Proveniencia (Etapa 4): solo cuando se materializa desde una Order (camino externo).
       // El camino interno NO pasa ctx.orderId → la columna ni se referencia (queda NULL por
       // default), así que esta línea no depende de reservations.order_id hasta usarse en externo.
@@ -233,15 +239,14 @@ export async function createReservation({ gameId, unitPrice, promoCode, promoCod
   if (error) { console.error('[createReservation]', error); return { data, error }; }
 
   if (source === 'rental' && gameId) {
-    // Claim if published (normal) OR reserved-but-unclaimed (stuck state from pre-migration booking).
-    const { data: claimed, error: gameErr } = await db
-      .from('games')
-      .update({ status: 'reserved', booked_by_user_id: actor })
-      .eq('id', gameId)
-      .or('status.eq.published,and(status.eq.reserved,booked_by_user_id.is.null)')
-      .select('id');
-    if (gameErr) console.error('[createReservation] game status update failed:', gameErr);
-    if (!gameErr && (!claimed || claimed.length === 0)) return { data, error, rentalTaken: true };
+    // Claim transaccional Doble-salida-aware: lockea R (+gemelo por id si hay pareja) y
+    // ejecuta el MISMO claim (published→reserved+booked, o reserved-sin-booking→booked).
+    // Devuelve el id reclamado, o NULL si 0 filas (rentalTaken). Paso 1 (dentro de la
+    // RPC) bloquea el gemelo. Error de la RPC → error de materialización.
+    const { data: claimedId, error: gameErr } = await db
+      .rpc('claim_rental_double_out_aware', { p_game_id: gameId, p_actor: actor });
+    if (gameErr) { console.error('[createReservation] rental claim rpc failed:', gameErr); return { data, error: gameErr }; }
+    if (claimedId == null) return { data, error, rentalTaken: true };
   }
 
   return { data, error };
@@ -662,6 +667,17 @@ export async function getRentalCancellationWindow(gameId) {
   return { data: win || null };
 }
 
+// Preview SOLO para UI del veredicto de reembolso Match (regla configurable, servidor).
+// NO es la autoridad del dinero: cancelGamePlayer/cancelGuestPlayers vuelven a consultar
+// match_cancellation_window al confirmar. Devuelve { data: { refundable, ... } } o { error }.
+export async function getMatchCancellationWindow(gameId) {
+  if (!supabase) return { error: new Error('NO_SUPABASE') };
+  const { data, error } = await supabase.rpc('match_cancellation_window', { p_game_id: gameId });
+  if (error) return { error };
+  const win = Array.isArray(data) ? data[0] : data;
+  return { data: win || null };
+}
+
 // Cancels invited player slots — no wallet movement (net cost was 0).
 // unitPrice is the gross spot price: stored in the refund ledger for financial analytics.
 export async function cancelInvitedPlayers(gameId, invitedUserIds, unitPrice = 0) {
@@ -691,18 +707,18 @@ export async function cancelInvitedPlayers(gameId, invitedUserIds, unitPrice = 0
   if (error) { console.error('[cancelInvitedPlayers]', error); return { error }; }
   await setMatchPublishedIfEmpty(gameId);
 
-  const grossTotal = unitPrice * rows.length;
+  // Invitación gratis: economía 0 en el refund (sin descuento ficticio). No toca wallet.
   const { error: ledgerErr } = await supabase.from('reservations').insert({
     game_id:            gameId,
     user_id:            session.user.id,
     canceled_by:        session.user.id,
     status:             'refund',
-    unit_price:         unitPrice,
-    promo_discount:     grossTotal,
-    subtotal_amount:    grossTotal,
+    unit_price:         0,
+    promo_discount:     0,
+    subtotal_amount:    0,
     total_amount:       0,
     players_count:      rows.length,
-    guest_total:        grossTotal,
+    guest_total:        0,
     canceled_at:        new Date().toISOString(),
     reservation_type:   'invited',
     invited_by_user_id: session.user.id,

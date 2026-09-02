@@ -1,24 +1,25 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation, useParams, Navigate } from 'react-router-dom';
 import { useSheetPull } from '../hooks/useSheetPull';
+import { useOrganizerPhone } from '../hooks/useOrganizerPhone';
+import { useAppTimings } from '../hooks/useAppTimings';
 import MapsLinkButton from '../components/MapsLinkButton';
+import OrganizerContactButton from '../components/OrganizerContactButton';
+import AttendanceBadge from '../components/AttendanceBadge';
 import Pressable from '../components/Pressable';
-import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, WHATSAPP_NUMBER } from '../constants';
+import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, gameUnavailableCopy } from '../constants';
 import I from '../icons';
 import TabBar from '../components/TabBar';
 import { useForegroundTick } from '../hooks/useForegroundTick';
 import { supabase } from '../lib/supabase';
 import { getVenueCoverUrl } from '../utils/venue';
 import { getAvatarUrl } from '../utils/avatar';
-import { isGamePast, isGameStarted } from '../utils/deriveGameState';
+import { isGamePast, isGameStarted, gameStartDate, gameEndDate, deriveAttendance } from '../utils/deriveGameState';
 import RatingBlock from '../components/RatingBlock';
 import { getGameById } from '../services/gameService';
 import { cancelRental, getRentalCancellationWindow } from '../services/reservationService';
 import { shareOrCopy } from '../utils/share';
 import { useAuth } from '../context/AuthContext';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faWhatsapp } from '@fortawesome/free-brands-svg-icons';
-import { faCommentSms } from '@fortawesome/free-solid-svg-icons';
 
 const DANGER = '#FF3B30';
 
@@ -101,47 +102,7 @@ function InfoRow({ icon, primary, secondary, action }) {
   );
 }
 
-// ── WA chat button
-function WAChatButton() {
-  const [open, setOpen] = useState(false);
-  const ph = WHATSAPP_NUMBER;
-  const displayPhone = `+${ph.slice(0, 2)} ${ph.slice(2, 5)} ${ph.slice(5, 8)} ${ph.slice(8)}`;
-  return (
-    <div style={{ position: 'relative', flexShrink: 0 }}>
-      <button
-        className="pressable"
-        onClick={() => setOpen(v => !v)}
-        style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none', padding: '2px 0' }}>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ color: SUB }}>
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-        <span style={{ fontSize: 11, color: SUB, fontWeight: 700, textAlign: 'center', lineHeight: 1.25 }}>
-          Comunícate con<br />el organizador
-        </span>
-      </button>
-      {open && (
-        <>
-          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
-          <div style={{ position: 'absolute', right: 0, bottom: 'calc(100% + 8px)', zIndex: 100, background: '#fff', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', border: `1px solid ${HAIR}`, overflow: 'hidden', minWidth: 252 }}>
-            <a className="pressable" href={`https://wa.me/${ph}`} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}
-              style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', textDecoration: 'none', borderBottom: `1px solid ${HAIR}` }}>
-              <FontAwesomeIcon icon={faWhatsapp} style={{ fontSize: 22, color: '#25D366', flexShrink: 0 }} />
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, lineHeight: 1.2 }}>WhatsApp</div>
-                <div style={{ fontSize: 12.5, color: SUB, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayPhone}</div>
-              </div>
-            </a>
-            <a className="pressable" href={`sms:+${ph}`} onClick={() => setOpen(false)}
-              style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', textDecoration: 'none' }}>
-              <FontAwesomeIcon icon={faCommentSms} style={{ fontSize: 22, color: BLUE, flexShrink: 0 }} />
-              <span style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>SMS</span>
-            </a>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
+// WAChatButton extraído a src/components/OrganizerContactButton.jsx (pieza única reutilizable).
 
 // ── Chip
 function Chip({ label, icon }) {
@@ -230,8 +191,9 @@ function CancelSheet({ userName, gameId, baseAmount = 0, onClose, onConfirm, onD
     return () => { alive = false; };
   }, [gameId]);
 
-  // Crédito ESTIMADO para el preview (100/50 sobre el pago histórico conocido, round 2 dec).
-  const estRefund = pct === 100 ? baseAmount : pct === 50 ? Math.round(baseAmount * 50) / 100 : 0;
+  // Crédito ESTIMADO para el preview: cualquier refund_pct del servidor × pago histórico,
+  // con el MISMO redondeo (2 dec) que cancel_rental_self. La autoridad final la da la RPC.
+  const estRefund = pct ? Math.round((baseAmount * pct / 100) * 100) / 100 : 0;
 
   function dismiss() {
     if (step === 'processing') return;
@@ -435,6 +397,15 @@ export default function RentalDetail() {
   const [manageOpen, setManageOpen]   = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [hostProfile, setHostProfile] = useState(null);
+  const [bookerProfile, setBookerProfile] = useState(null);   // perfil público del booker (nombre/avatar)
+  const [reserveBlock, setReserveBlock] = useState(false);   // true = "Cancha no disponible" (GAME_UNAVAILABLE)
+  const [now, setNow] = useState(() => new Date());          // tick para la ventana de asistencia (como Match)
+
+  // Ventana de asistencia viva (misma cadencia que Match: refresco cada 30 s).
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   // Always fetch fresh: game status (full fetch) + reservation net state — all in parallel.
   useEffect(() => {
@@ -448,7 +419,7 @@ export default function RentalDetail() {
         : null,
     ]).then(([freshGame, spendsRes]) => {
       if (freshGame) setGame(prev => prev
-        ? { ...prev, status: freshGame.status, reserved: freshGame.status === 'reserved', bookedByUserId: freshGame.bookedByUserId ?? null, fieldCoverPath: freshGame.fieldCoverPath ?? prev.fieldCoverPath, fieldCoverVersion: freshGame.fieldCoverVersion ?? prev.fieldCoverVersion, venueCoverPath: freshGame.venueCoverPath ?? prev.venueCoverPath, venueCoverVersion: freshGame.venueCoverVersion ?? prev.venueCoverVersion }
+        ? { ...prev, status: freshGame.status, reserved: freshGame.status === 'reserved', bookedByUserId: freshGame.bookedByUserId ?? null, bookerCheckedInAt: freshGame.bookerCheckedInAt ?? null, fieldCoverPath: freshGame.fieldCoverPath ?? prev.fieldCoverPath, fieldCoverVersion: freshGame.fieldCoverVersion ?? prev.fieldCoverVersion, venueCoverPath: freshGame.venueCoverPath ?? prev.venueCoverPath, venueCoverVersion: freshGame.venueCoverVersion ?? prev.venueCoverVersion }
         : freshGame
       );
       setLoading(false);
@@ -484,6 +455,22 @@ export default function RentalDetail() {
       .maybeSingle()
       .then(({ data }) => { if (data) setHostProfile(data); });
   }, [game?.hostUserId]); // eslint-disable-line
+
+  // Perfil PÚBLICO del booker (games.booked_by_user_id) para la fila "Reservado por".
+  // Mismo patrón/vista que hostProfile: users_public, solo nombre/avatar (NUNCA phone).
+  useEffect(() => {
+    const bookerId = game?.bookedByUserId;
+    if (!bookerId || !supabase) { setBookerProfile(null); return; }
+    supabase
+      .from('users_public')
+      .select('full_name, avatar_hue, avatar_path, avatar_updated_at')
+      .eq('id', bookerId)
+      .maybeSingle()
+      .then(({ data }) => { if (data) setBookerProfile(data); });
+  }, [game?.bookedByUserId]); // eslint-disable-line
+
+  const organizerPhone = useOrganizerPhone(game);   // resuelto (host vs algrass) o null → CTA off
+  const { attendanceLeadMin } = useAppTimings();    // app_settings (null = ventana cerrada)
 
   if (loading) {
     return <div className="screen-shell" style={{ background: '#F2F2F4' }} />;
@@ -530,6 +517,49 @@ export default function RentalDetail() {
   // SOLO UX: un rental ya iniciado (now >= inicio, hora Perú) no debe permitir entrar al flujo
   // de cancelación (autoridad económica y guard RENTAL_ALREADY_STARTED siguen en cancel_rental_self).
   const alreadyStarted = isGameStarted(game.dateKey, game.time24);
+
+  // Validación UX anticipada al pulsar "Reservar cancha": reconsulta el rental REAL con
+  // getGameById (la MISMA carga del montaje) antes de navegar. Disponibilidad Rental =
+  // reservable (assert_game_reservable: status ∈ {published,reserved}, no cancelado, no
+  // iniciado) Y NO reservada (booked_by_user_id null — en Rental 'reserved' = ya tomada,
+  // por eso NO basta el status Match). create_order sigue siendo la autoridad final bajo lock.
+  async function handleReservePress() {
+    const fresh = await getGameById(id);
+    const reservable = !!fresh
+      && (fresh.status === 'published' || fresh.status === 'reserved')
+      && fresh.bookedByUserId == null
+      && !isGameStarted(fresh.dateKey, fresh.time24);
+    if (!reservable) { setReserveBlock(true); return; }   // GAME_UNAVAILABLE → "Cancha no disponible"
+    navigate('/checkout', { state: { game: {
+      id: game.id, city: game.city ?? null, type: 'rental', source: 'rental', field: title, date,
+      dateKey: game.dateKey ?? null, time: timeStr, time24: game.time24 ?? null, ampm: game.ampm ?? null,
+      duration: duration || '', format: game.format || '', price: priceDisplay, priceNumber: priceNum,
+      currency: 'S/.', backPath: `/rental/${game.id}`,
+    } } });
+  }
+
+  // ── Asistencia del BOOKER (Rental) — misma ventana [inicio−15min, fin) y UX que Match.
+  // TEMPORAL y deliberado: update DIRECTO a games.booker_checked_in_at (sin RPC), igual que
+  // markAttendance de Match. La autoridad backend + Config se harán después para Match+Rental.
+  const rGameStart = gameStartDate(game.dateKey, game.time24);
+  const rGameEnd   = gameEndDate(game.dateKey, game.time24, game.durationMin);
+  const attendanceOpen = !!rGameStart && !!rGameEnd && attendanceLeadMin != null
+    && now >= new Date(rGameStart.getTime() - attendanceLeadMin * 60_000)
+    && now <  rGameEnd;
+  async function markBookerAttendance() {
+    if (!supabase || !game?.id) return;
+    const ts = new Date().toISOString();
+    const { error } = await supabase.from('games').update({ booker_checked_in_at: ts }).eq('id', game.id);
+    if (error) { console.warn('[rental attendance]', error.message); return; }
+    setGame(prev => (prev ? { ...prev, bookerCheckedInAt: ts } : prev));
+  }
+  async function resetBookerAttendance() {
+    if (!supabase || !game?.id) return;
+    const { error } = await supabase.from('games').update({ booker_checked_in_at: null }).eq('id', game.id);
+    if (error) { console.warn('[rental attendance reset]', error.message); return; }
+    setGame(prev => (prev ? { ...prev, bookerCheckedInAt: null } : prev));
+  }
+
   const existingRating = location.state?.rating ?? (() => {
     try { return JSON.parse(localStorage.getItem('pichanga_ratings') || '{}')[game.id] ?? null; } catch { return null; }
   })();
@@ -594,7 +624,8 @@ export default function RentalDetail() {
               icon={I.cal()}
               primary={date}
               secondary={timeRow || undefined}
-              action={(isHost || userBooked) ? <WAChatButton /> : undefined}
+              action={(isHost || userBooked)
+                ? <OrganizerContactButton phone={organizerPhone} /> : undefined}
             />
           )}
           <Pressable
@@ -649,6 +680,39 @@ export default function RentalDetail() {
           </div>
         </Section>
 
+        {statusReady && game.bookedByUserId && (isHost || userBooked) && (
+          <Section title="Reservado por">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', border: `1px solid ${HAIR}`, borderRadius: 14, background: '#fff' }}>
+              <div style={{ borderRadius: '50%', flexShrink: 0 }}>
+                <Avatar
+                  name={bookerProfile?.full_name || 'Jugador'}
+                  size={36}
+                  hue={bookerProfile?.avatar_hue ?? null}
+                  avatarPath={bookerProfile?.avatar_path ?? null}
+                  avatarVersion={bookerProfile?.avatar_updated_at ? new Date(bookerProfile.avatar_updated_at).getTime() : null}
+                />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 600, color: TEXT, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {bookerProfile?.full_name || 'Jugador'}
+                </div>
+              </div>
+              {/* Asistencia del booker: misma lógica/ventana; el badge se autogestiona
+                  (null antes de la ventana), pero la fila "Reservado por" permanece visible. */}
+              <AttendanceBadge
+                checkedInAt={game.bookerCheckedInAt}
+                gameStart={rGameStart}
+                isPast={isPastRental}
+                canMark={attendanceOpen && !game.bookerCheckedInAt && isHost}
+                onMark={markBookerAttendance}
+                canReset={attendanceOpen && !!game.bookerCheckedInAt && isHost}
+                onReset={resetBookerAttendance}
+                attendedOnly={!isHost}
+              />
+            </div>
+          </Section>
+        )}
+
         <div style={{ height: 8 }} />
       </div>
 
@@ -671,28 +735,31 @@ export default function RentalDetail() {
       ) : statusReady && statusVerified && !isHost && priceDisplay && !isReserved ? (
         <CTA
           price={priceDisplay}
-          onPress={() => navigate('/checkout', { state: {
-            game: {
-              id:          game.id,
-              city:        game.city ?? null,
-              type:        'rental',
-              source:      'rental',
-              field:       title,
-              date,
-              dateKey:     game.dateKey  ?? null,
-              time:        timeStr,
-              time24:      game.time24   ?? null,
-              ampm:        game.ampm     ?? null,
-              duration:    duration || '',
-              format:      game.format || '',
-              price:       priceDisplay,
-              priceNumber: priceNum,
-              currency:    'S/.',
-              backPath:    `/rental/${game.id}`,
-            },
-          }})}
+          onPress={handleReservePress}
         />
       ) : null}
+
+      {reserveBlock && (() => {
+        const u = gameUnavailableCopy(true);            // Rental → "Cancha no disponible"
+        const goList = () => navigate(u.path);          // /fields (nunca deja al usuario en el detalle)
+        return (
+          <div
+            onClick={goList}
+            style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 32px' }}>
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{ background: '#fff', borderRadius: 20, width: '100%', maxWidth: 340, padding: '24px 22px 18px', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: TEXT, letterSpacing: -0.2, marginBottom: 8 }}>{u.title}</div>
+              <div style={{ fontSize: 14.5, color: SUB, lineHeight: 1.5, marginBottom: 20 }}>{u.message}</div>
+              <button
+                onClick={goList}
+                style={{ width: '100%', height: 46, borderRadius: 14, border: 'none', background: BLUE, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                {u.cta}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {manageOpen && (
         <ManageSheet

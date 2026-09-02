@@ -1,3 +1,4 @@
+import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB } from '../constants';
 import I from '../icons';
 
@@ -361,12 +362,21 @@ const TERMS_BLOCKS = [
 export default function LegalPage({ type }) {
   const isTerms = type === 'terms';
   const title = isTerms ? 'Términos del Servicio' : 'Política de Privacidad';
+  const navigate = useNavigate();
+  const location = useLocation();
 
-  // "Atrás" navega SIEMPRE a "/" con navegación dura (no history.back hacia una
-  // ruta interna). Así PrivateAccessGate se re-evalúa en la carga: si se llegó
-  // sin clave, "/" muestra la pantalla de clave; si ya había acceso válido,
-  // carga normal. No desbloquea ni escribe algr_private_access en localStorage.
-  const goBack = () => { window.location.href = '/'; };
+  // "Atrás":
+  //   · INTERNO (abierto desde un resumen dentro de la App, marcado con state.internal):
+  //     navigate(-1) → regresa al paso anterior con su estado exacto (el resumen/modal se
+  //     reabre por su propia lógica). Preserva el origen real vía history, sin hardcodear
+  //     rutas por cada pantalla de origen.
+  //   · DIRECTO/público (URL directa, footer): nav DURA a "/" para re-evaluar
+  //     PrivateAccessGate (si se llegó sin clave, "/" muestra la pantalla de clave; si ya
+  //     había acceso válido, carga normal). Comportamiento actual sin cambios.
+  const goBack = () => {
+    if (location.state?.internal) navigate(-1);
+    else window.location.href = '/';
+  };
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff' }}>

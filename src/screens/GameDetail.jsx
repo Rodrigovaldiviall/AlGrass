@@ -1,11 +1,13 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, useLayoutEffect } from 'react';
 import { useNavigate, useLocation, useParams, Navigate } from 'react-router-dom';
 import { useSheetPull } from '../hooks/useSheetPull';
-import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, DANGER, RED, WHATSAPP_NUMBER } from '../constants';
+import { useOrganizerPhone } from '../hooks/useOrganizerPhone';
+import { useAppTimings } from '../hooks/useAppTimings';
+import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, DANGER, RED, gameUnavailableCopy } from '../constants';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faWhatsapp } from '@fortawesome/free-brands-svg-icons';
-import { faCommentSms, faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';
+import { faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';
 import MapsLinkButton from '../components/MapsLinkButton';
+import OrganizerContactButton from '../components/OrganizerContactButton';
 import Pressable from '../components/Pressable';
 import I from '../icons';
 import { shareOrCopy, buildGameShareUrl } from '../utils/share';
@@ -15,15 +17,16 @@ import TabBar from '../components/TabBar';
 import { useForegroundTick } from '../hooks/useForegroundTick';
 import RatingBlock from '../components/RatingBlock';
 import { useAuth } from '../context/AuthContext';
-import { cancelGamePlayer, cancelGuestPlayers, cancelInvitedPlayers } from '../services/reservationService';
+import { cancelGamePlayer, cancelGuestPlayers, cancelInvitedPlayers, getMatchCancellationWindow } from '../services/reservationService';
 import { supabase } from '../lib/supabase';
 import * as sharedLink from '../lib/sharedLink';
 import { getAvatarUrl } from '../utils/avatar';
 import { getVenueCoverUrl } from '../utils/venue';
-import { deriveGameState, requiredPlayers, gameStartDate, gameEndDate, isGamePast, isGameStarted, deriveAttendance } from '../utils/deriveGameState';
+import { deriveGameState, requiredPlayers, gameStartDate, gameEndDate, isGamePast, isGameStarted } from '../utils/deriveGameState';
 import { joinWaitlist, leaveWaitlist, getMyWaitlistGameIds } from '../services/waitlistService';
 import ReserveSlotsSheet from '../components/ReserveSlotsSheet';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
+import AttendanceBadge from '../components/AttendanceBadge';
 import SkeletonPill from '../components/SkeletonPill';
 import { useGlobalRoles } from '../hooks/useGlobalRoles';
 import CaptainSlotsBadge from '../components/CaptainSlotsBadge';
@@ -217,46 +220,7 @@ function InfoRow({ icon, primary, secondary, action }) {
   );
 }
 
-function WAChatButton() {
-  const [open, setOpen] = useState(false);
-  const ph = WHATSAPP_NUMBER;
-  const displayPhone = `+${ph.slice(0, 2)} ${ph.slice(2, 5)} ${ph.slice(5, 8)} ${ph.slice(8)}`;
-  return (
-    <div style={{ position: 'relative', flexShrink: 0 }}>
-      <button
-        className="pressable"
-        onClick={() => setOpen(v => !v)}
-        style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none', padding: '2px 0' }}>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ color: SUB }}>
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-        <span style={{ fontSize: 11, color: SUB, fontWeight: 700, textAlign: 'center', lineHeight: 1.25 }}>
-          Comunícate con<br />el organizador
-        </span>
-      </button>
-      {open && (
-        <>
-          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
-          <div style={{ position: 'absolute', right: 0, bottom: 'calc(100% + 8px)', zIndex: 100, background: '#fff', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', border: `1px solid ${HAIR}`, overflow: 'hidden', minWidth: 252 }}>
-            <a className="pressable" href={`https://wa.me/${ph}`} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}
-              style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', textDecoration: 'none', borderBottom: `1px solid ${HAIR}` }}>
-              <FontAwesomeIcon icon={faWhatsapp} style={{ fontSize: 22, color: '#25D366', flexShrink: 0 }} />
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, lineHeight: 1.2 }}>WhatsApp</div>
-                <div style={{ fontSize: 12.5, color: SUB, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayPhone}</div>
-              </div>
-            </a>
-            <a className="pressable" href={`sms:+${ph}`} onClick={() => setOpen(false)}
-              style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', textDecoration: 'none' }}>
-              <FontAwesomeIcon icon={faCommentSms} style={{ fontSize: 22, color: BLUE, flexShrink: 0 }} />
-              <span style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>SMS</span>
-            </a>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
+// WAChatButton extraído a src/components/OrganizerContactButton.jsx (pieza única reutilizable).
 
 // ── Chip
 const _ParkingIcon = (c = TEXT) => (
@@ -398,16 +362,16 @@ function PaymentDetail({ price, breakdown, paidBy, userName, titularCanceled = f
 }
 
 // ── PaymentDetailSheet
-function PaymentDetailSheet({ price, breakdown, paidBy, userName, titularCanceled, activeGuestCount, guestSubBreakdown, onClose, ready = true }) {
-  const [open, setOpen] = useState(false);
-  useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
-  function dismiss() { setOpen(false); setTimeout(onClose, 220); }
-  const { rootRef, dragY, dragging } = useSheetPull({ onClose: dismiss });
+// Vista DETALLES DEL PAGO (embebida en MorphSheet). ← Atrás vuelve al menú dentro del
+// mismo contenedor; el backdrop (cerrar todo) lo maneja el contenedor.
+function PaymentDetailSheet({ price, breakdown, paidBy, userName, titularCanceled, activeGuestCount, guestSubBreakdown, onBack, ready = true }) {
   return (
-    <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease', pointerEvents: open ? 'auto' : 'none' }}>
-      <div className="sheet-panel" ref={rootRef} onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(24px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? `translateY(${dragY}px)` : 'translateY(100%)', transition: dragging ? 'none' : 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
-        <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 20px' }} />
-        <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 16, textAlign: 'center', letterSpacing: -0.2 }}>Detalles del pago</div>
+      <div style={{ padding: '4px 16px calc(24px + env(safe-area-inset-bottom))' }}>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
+          <button onClick={onBack} aria-label="Atrás" style={{ width: 26, height: 20, marginLeft: -4, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-start', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{I.back(TEXT)}</button>
+          <div style={{ flex: 1, fontSize: 16, fontWeight: 700, color: TEXT, textAlign: 'center', letterSpacing: -0.2 }}>Detalles del pago</div>
+          <div style={{ width: 26, flexShrink: 0 }} />
+        </div>
         {ready ? (
           <PaymentDetail price={price} breakdown={breakdown} paidBy={paidBy} userName={userName} titularCanceled={titularCanceled} activeGuestCount={activeGuestCount} guestSubBreakdown={guestSubBreakdown} alwaysExpanded />
         ) : (
@@ -417,7 +381,6 @@ function PaymentDetailSheet({ price, breakdown, paidBy, userName, titularCancele
           </div>
         )}
       </div>
-    </div>
   );
 }
 
@@ -484,71 +447,8 @@ function WaitlistRow({ inList, openSpots = 0, onToggle }) {
   );
 }
 
-// ── Attendance badge — all state derived from checked_in_at + game timing
-function ResetBtn({ onReset }) {
-  return (
-    <button
-      onClick={e => { e.stopPropagation(); onReset(); }}
-      style={{
-        flexShrink: 0, width: 18, height: 18, borderRadius: '50%',
-        border: 'none', background: 'rgba(0,0,0,0.08)',
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        cursor: 'pointer', outline: 'none', padding: 0,
-        WebkitTapHighlightColor: 'transparent',
-      }}>
-      <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-        <path d="M1.5 1.5l5 5M6.5 1.5l-5 5" stroke={SUB} strokeWidth="1.5" strokeLinecap="round"/>
-      </svg>
-    </button>
-  );
-}
-
-function AttendanceBadge({ checkedInAt, gameStart, isPast, canMark, onMark, canReset, onReset }) {
-  const att = deriveAttendance(checkedInAt, gameStart, isPast);
-  if (att) {
-    if (att.status === 'a_tiempo') {
-      return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <path d="M2 6.5l2.5 2.5 5.5-5.5" stroke={GREEN} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          <span style={{ fontSize: 11, fontWeight: 700, color: GREEN, whiteSpace: 'nowrap' }}>A tiempo</span>
-          {canReset && <ResetBtn onReset={onReset} />}
-        </div>
-      );
-    }
-    if (att.status === 'tarde') {
-      return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: ORANGE, whiteSpace: 'nowrap' }}>
-            {att.minsLate} min tarde
-          </span>
-          {canReset && <ResetBtn onReset={onReset} />}
-        </div>
-      );
-    }
-    return (
-      <span style={{ fontSize: 11, fontWeight: 600, color: SUB, whiteSpace: 'nowrap', flexShrink: 0 }}>
-        Ausente
-      </span>
-    );
-  }
-  if (!canMark) return null;
-  return (
-    <button
-      onClick={e => { e.stopPropagation(); onMark(); }}
-      style={{
-        flexShrink: 0, height: 28, padding: '0 12px', borderRadius: 999,
-        border: 'none', background: BLUE,
-        fontSize: 12, fontWeight: 700, color: '#fff',
-        cursor: 'pointer', outline: 'none', whiteSpace: 'nowrap',
-        WebkitTapHighlightColor: 'transparent', fontFamily: 'inherit',
-        boxShadow: '0 2px 8px rgba(0,123,255,0.35)',
-      }}>
-      Asistencia
-    </button>
-  );
-}
+// AttendanceBadge (y su ResetBtn) se extrajeron a src/components/AttendanceBadge.jsx
+// para reutilizarlos en RentalDetail. Comportamiento idéntico.
 
 // ── CTA
 function CTA({ price, disabled, onPress, hideTopBorder }) {
@@ -778,11 +678,17 @@ function PlayerModal({ player, onClose, isHost = false }) {
 }
 
 // ── ModifySheet
-function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, invitedCount = 0, showReserveSlots = false, within24h = false }) {
-  const [open, setOpen] = useState(false);
-  useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
-  function dismiss() { setOpen(false); setTimeout(onClose, 220); }
-  const { rootRef, dragY, dragging } = useSheetPull({ onClose: dismiss });
+// Copy dinámico de la ventana de invitados gratis según el lead configurado (app_settings).
+// null (config no disponible) → "No disponible". 60→"1 h", 120→"2 h", 30→"30 min".
+function leadCopy(min) {
+  if (min == null) return '· No disponible';
+  return min % 60 === 0 ? `· Solo desde ${min / 60} h antes` : `· Solo desde ${min} min antes`;
+}
+
+// Vista MENÚ (embebida en MorphSheet). El overlay/panel/handle/slide los provee el
+// contenedor; aquí solo el contenido. Navegar a pago/cancelar cambia de vista en el
+// MISMO contenedor (no cae un sheet y sube otro).
+function ModifySheet({ canAddGuests, openSpots, onAddGuests, onCancel, onPaymentDetail, isHost = false, canAddPlayers = true, freeInvitesLeadMin = null, invitedCount = 0, showReserveSlots = false, hasInvited = false, within24h = false }) {
   const rowStyle = { width: '100%', padding: '14px 16px', borderRadius: 14, background: '#fff', border: `1px solid ${HAIR}`, display: 'flex', alignItems: 'center', marginBottom: 10, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' };
   const chevron = (color = SUB) => (
     <svg width="8" height="14" viewBox="0 0 8 14" fill="none">
@@ -790,10 +696,14 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
     </svg>
   );
   const canAdd = isHost ? (canAddPlayers && canAddGuests) : canAddGuests;
+  // "Gestionar mi lista" (capitán): accesible aunque no queden cupos SOLO si tiene
+  // al menos 1 invitado (armar lista = titular + invitados), para poder asegurar
+  // esos cupos si alguien cancela. Sin cupos y sin invitados → bloqueado. Dentro,
+  // agregar jugadores sigue respetando la disponibilidad (noSlots en
+  // ConfirmReservation). "Agregar jugadores" normal sigue exigiendo cupos.
+  const enabled = canAdd || (showReserveSlots && hasInvited);
   return (
-    <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease', pointerEvents: open ? 'auto' : 'none' }}>
-      <div className="sheet-panel" ref={rootRef} onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', padding: '20px 16px calc(20px + env(safe-area-inset-bottom))', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? `translateY(${dragY}px)` : 'translateY(100%)', transition: dragging ? 'none' : 'transform .28s cubic-bezier(0.32,0.72,0,1)' }}>
-        <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 20px' }} />
+      <div style={{ padding: '4px 16px calc(20px + env(safe-area-inset-bottom))' }}>
         <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 16, textAlign: 'center', letterSpacing: -0.2 }}>
           {isHost ? 'Gestionar el partido' : 'Gestionar mi reserva'}
         </div>
@@ -806,19 +716,21 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
           </button>
         )}
         <button
-          onClick={canAdd ? onAddGuests : undefined}
-          style={{ ...rowStyle, cursor: canAdd ? 'pointer' : 'default', opacity: canAdd ? 1 : 0.45 }}>
+          onClick={enabled ? onAddGuests : undefined}
+          style={{ ...rowStyle, cursor: enabled ? 'pointer' : 'default', opacity: enabled ? 1 : 0.45 }}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>{showReserveSlots ? 'Gestionar mi lista' : 'Agregar jugadores'}</span>
-            <span style={{ fontSize: 13, color: canAdd ? SUB : '#BEBEC8' }}>
+            <span style={{ fontSize: 13, color: enabled ? SUB : '#BEBEC8' }}>
               {isHost && !canAddPlayers
-                ? '· Solo desde 1h antes'
+                ? leadCopy(freeInvitesLeadMin)
                 : canAdd
                   ? `· ${openSpots} ${openSpots === 1 ? 'cupo disponible' : 'cupos disponibles'}`
-                  : '· Sin cupos'}
+                  : enabled
+                    ? '· Gestiona tu lista'
+                    : '· Sin cupos disponibles'}
             </span>
           </div>
-          {canAdd && chevron()}
+          {enabled && chevron()}
         </button>
         {isHost ? (
           invitedCount > 0 && (
@@ -839,7 +751,6 @@ function ModifySheet({ canAddGuests, openSpots, onClose, onAddGuests, onCancel, 
           </button>
         )}
       </div>
-    </div>
   );
 }
 
@@ -930,8 +841,11 @@ function HostCancelInvitedSheet({ gameId, invitedPlayers, unitPrice = 0, onClose
 }
 
 // ── CancelSheet
-function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, guestId, guestSelfName, payerName, payerCode, onClose, onDone, titularAlreadyCanceled = false, guestSubBreakdown = null, slotAmounts = null, selfUserId = null, within24h = false }) {
-  const [open, setOpen]           = useState(false);
+// Vista CANCELAR RESERVA (embebida en MorphSheet). ← Atrás vuelve al menú en el mismo
+// contenedor; el backdrop (cerrar todo) lo maneja el contenedor, salvo durante
+// 'processing' (onBusyChange bloquea el cierre). scrollRef lo provee el contenedor
+// para el pull-to-close con handoff al scroll interno de la lista.
+function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, guestId, guestSelfName, payerName, payerCode, onBack, onDone, onBusyChange, scrollRef, titularAlreadyCanceled = false, guestSubBreakdown = null, slotAmounts = null, selfUserId = null, within24h = false, refundReady = true, matchRefundCutoffHours = null }) {
   const [step, setStep]           = useState('select');
   const [titularChecked, setTitularChecked]   = useState(false);
   const [checkedGuests, setCheckedGuests]     = useState(new Set());
@@ -966,17 +880,17 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
   const totalRefund = isGuest
     ? checkedGuestsSum
     : (effectiveTitularChecked ? titularRefund : 0) + checkedGuestsSum;
-  const canConfirm = isGuest ? (effectiveSelfChecked || checkedGuests.size > 0) : totalRefund > 0;
+  // refundReady=false → veredicto de reembolso aún desconocido: no se permite confirmar.
+  const canConfirm = refundReady && (isGuest ? (effectiveSelfChecked || checkedGuests.size > 0) : totalRefund > 0);
   const fmt = n => `S/. ${Number(n).toFixed(2)}`;
 
-  useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
+  // 'processing' → el contenedor bloquea backdrop/drag (no se puede cerrar a medias).
+  useEffect(() => { onBusyChange?.(step === 'processing'); }, [step, onBusyChange]);
 
-  function dismiss() {
+  function back() {   // ← Atrás → menú (Gestionar mi reserva), misma transición del contenedor
     if (step === 'processing') return;
-    setOpen(false);
-    setTimeout(onClose, 220);
+    onBack();
   }
-  const { rootRef, scrollRef, dragY, dragging } = useSheetPull({ onClose: dismiss });
 
   function confirm() {
     setStep('processing');
@@ -1079,20 +993,24 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
   );
 
   return (
-    <div className="sheet-overlay" onClick={step !== 'processing' ? dismiss : undefined} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease', pointerEvents: open ? 'auto' : 'none' }}>
-      <div className="sheet-panel" ref={rootRef} onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? `translateY(${dragY}px)` : 'translateY(100%)', transition: dragging ? 'none' : 'transform .28s cubic-bezier(0.32,0.72,0,1)', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
-
+      <>
         {step === 'select' && (<>
-          <div style={{ padding: '20px 16px 0', flexShrink: 0 }}>
-            <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 16px' }} />
-            <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, letterSpacing: -0.2 }}>{within24h ? 'Gestionar asistencia' : 'Cancelar reserva'}</div>
+          <div style={{ padding: '4px 16px 0', flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button onClick={back} aria-label="Atrás" style={{ width: 22, height: 20, marginLeft: -4, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-start', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{I.back(TEXT)}</button>
+              <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, letterSpacing: -0.2 }}>{within24h ? 'Gestionar asistencia' : 'Cancelar reserva'}</div>
+            </div>
             <div style={{ fontSize: 13, color: SUB, marginTop: 4, marginBottom: 10 }}>Selecciona</div>
             {within24h ? (
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '9px 12px', borderRadius: 10, background: '#F6F7F9', marginBottom: 14 }}>
                 <svg width="15" height="15" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={SUB} strokeWidth="1.4"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={SUB} strokeWidth="1.5" strokeLinecap="round"/></svg>
                 <span style={{ fontSize: 12.5, color: SUB, fontWeight: 500, lineHeight: 1.45 }}>
                   <span style={{ display: 'block', fontWeight: 700, marginBottom: 4 }}>¿No podrás asistir?</span>
-                  Ya no es posible cancelar con devolución porque faltan menos de 24 horas para el partido.
+                  {typeof matchRefundCutoffHours === 'number' ? (
+                    <>Ya no es posible cancelar con devolución porque faltan menos de <strong style={{ fontWeight: 700, color: TEXT }}>{matchRefundCutoffHours} horas</strong> para el partido.</>
+                  ) : (
+                    'Ya no es posible cancelar con devolución por el tiempo restante para el partido.'
+                  )}
                   <span style={{ display: 'block', marginTop: 6 }}>Si tú o alguno de tus invitados no podrá asistir, te agradecemos que lo indiques para que podamos intentar completar el lugar.</span>
                 </span>
               </div>
@@ -1103,7 +1021,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
               </div>
             )}
           </div>
-          <div ref={scrollRef} className="no-sb" style={{ overflowY: 'auto', overscrollBehavior: 'contain', flex: 1 }}>
+          <div ref={scrollRef} className="no-sb" style={{ overflowY: 'auto', overscrollBehavior: 'contain', maxHeight: 'max(120px, 84vh - 300px)' }}>
             {isGuest ? (
               <>
                 {/* Self row: checkable, refund goes to payer */}
@@ -1214,12 +1132,14 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
             </>)}
           </div>
           <div style={{ padding: '12px 16px calc(12px + env(safe-area-inset-bottom))', borderTop: `1px solid ${HAIR}`, flexShrink: 0 }}>
-            {!within24h && (
+            {!refundReady ? (
+              <div style={{ fontSize: 13, color: SUB, marginBottom: 12, textAlign: 'center' }}>Calculando condiciones de cancelación…</div>
+            ) : (!within24h && (
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
                 <span style={{ fontSize: 14, color: SUB }}>Total a cancelar</span>
                 <span style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{fmt(totalRefund)}</span>
               </div>
-            )}
+            ))}
             <button onClick={canConfirm ? confirm : undefined} style={{ width: '100%', height: 50, borderRadius: 14, background: canConfirm ? DANGER : '#E8E8EC', color: canConfirm ? '#fff' : '#9A9AA0', border: 'none', cursor: canConfirm ? 'pointer' : 'not-allowed', fontSize: 15, fontWeight: 700, fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
               {within24h ? 'Cancelar asistencia' : 'Confirmar cancelación'}
             </button>
@@ -1261,6 +1181,59 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
             </button>
           </div>
         )}
+      </>
+  );
+}
+
+// ── MorphSheet: contenedor ÚNICO de "Gestionar mi reserva" (menú → detalles del pago /
+// cancelar). Un solo overlay + panel: al navegar entre vistas NO cae un sheet y sube
+// otro; el MISMO contenedor anima su altura hacia la del nuevo contenido y cruza el
+// contenido con un fade corto. Backdrop = cerrar TODO (onClose). ← Atrás lo maneja cada
+// vista (onBack → cambia de vista aquí). `busy` bloquea el cierre (cancelación en curso).
+// No fija alturas iguales: cada vista conserva su altura natural (medida en vivo).
+function useReducedMotion() {
+  const [r, setR] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    if (!mq) return;
+    setR(mq.matches);
+    const on = e => setR(e.matches);
+    mq.addEventListener?.('change', on);
+    return () => mq.removeEventListener?.('change', on);
+  }, []);
+  return r;
+}
+
+function MorphSheet({ view, busy = false, onClose, children }) {
+  const [open, setOpen]  = useState(false);
+  const contentRef       = useRef(null);
+  const [h, setH]        = useState(null);   // altura objetivo (px); null = auto (1er frame)
+  const reduced          = useReducedMotion();
+  const dismiss = () => { if (busy) return; setOpen(false); setTimeout(onClose, 220); };
+  const { rootRef, scrollRef, dragY, dragging } = useSheetPull({ onClose: dismiss });
+  useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
+  // Mide la altura natural del contenido (handle + vista activa) y la mantiene
+  // sincronizada ante cualquier cambio (cambio de vista, paso de cancelación, lista larga).
+  useLayoutEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const measure = () => setH(el.scrollHeight);
+    measure();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, [view]);
+  const heightTr = reduced ? '' : 'height .30s cubic-bezier(0.32,0.72,0,1)';
+  const slideTr  = 'transform .28s cubic-bezier(0.32,0.72,0,1)';
+  return (
+    <div onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease', pointerEvents: open ? 'auto' : 'none' }}>
+      <div ref={rootRef} onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', overflow: 'hidden', transform: open ? `translateY(${dragY}px)` : 'translateY(100%)', height: h != null ? h : 'auto', transition: dragging ? 'none' : [slideTr, heightTr].filter(Boolean).join(', ') }}>
+        <div ref={contentRef}>
+          <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '10px auto 6px' }} />
+          <div key={view} className="gd-morph-content" style={{ animation: reduced ? 'none' : 'gdFade .2s ease' }}>
+            {typeof children === 'function' ? children(scrollRef) : children}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1307,6 +1280,7 @@ export default function GameDetail() {
   const [sbRoster, setSbRoster] = useState(_cachedRoster ?? []);
   const [rosterReady, setRosterReady] = useState(_cachedRoster != null);
   const [spotsVerified, setSpotsVerified] = useState(false);
+  const [reserveBlock, setReserveBlock]   = useState(null);   // null | 'CAPACITY' | 'UNAVAILABLE'
 
   const stateGame = location.state?.game ?? null;
   // sbGame (canonical DB fetch) wins for game data; stateGame contributes reservation extras only
@@ -1338,6 +1312,8 @@ export default function GameDetail() {
   const guestCanceledView = location.state?.guestCanceledView ?? false;
   const infoMode  = (location.state?.infoMode ?? false) || isBooked || isHost;
   const isGuest   = !!g.paidBy;
+  const organizerPhone = useOrganizerPhone(g);   // resuelto (host vs algrass) o null → CTA off
+  const { freeInvitesLeadMin, attendanceLeadMin, matchRefundCutoffHours, captainReleaseHours, captainGoldReleaseHours } = useAppTimings();   // app_settings (null = cerrado)
 
   const confirmedRoster  = useMemo(() => sbRoster.filter(p => p.status === 'confirmed'), [sbRoster]);
 
@@ -1550,6 +1526,7 @@ export default function GameDetail() {
   }
   const [cancelOpen,  setCancelOpen]  = useState(false);
   const [paymentDetailOpen, setPaymentDetailOpen] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);   // cancelación en curso → MorphSheet bloquea cierre
   const [hostCancelInvitedOpen, setHostCancelInvitedOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [now, setNow] = useState(() => new Date());
@@ -1557,25 +1534,40 @@ export default function GameDetail() {
 
   const gameStart = useMemo(() => gameStartDate(g.dateKey, g.time24), [g.dateKey, g.time24]);
   const gameEnd   = useMemo(() => gameEndDate(g.dateKey, g.time24, g.durationMin), [g.dateKey, g.time24, g.durationMin]);
-  // Regla temporal de liberación (idéntica a reserve_slots): captain_gold → 24h, captain → 48h
+  // Regla temporal de liberación (idéntica a reserve_slots): captain(_gold)_release_hours
   // antes del inicio. Dentro de esa ventana los cupos pasan a público: no se crean ni modifican
   // reservas, exista o no una R1 (activa/cancelada/expirada). Se basa en el tiempo, no en la R1.
-  const releaseHours = isCaptainGold ? 24 : 48;
-  const slotReservationClosed = !!gameStart && now >= new Date(gameStart.getTime() - releaseHours * 3600_000);
-  // PRESENTACIÓN de la política de 24h (solo preview; la autoridad económica al ejecutar
-  // sigue siendo match_cancellation_window/realRefundAmount). Espeja el corte estricto del
-  // backend: refundable ⇔ now < (inicio - 24h); por tanto NO reembolsable (modo "gestionar
-  // asistencia") ⇔ now >= (inicio - 24h). Reutiliza gameStart + now ya existentes; sin query
-  // ni helper nuevos. Si no hay gameStart, se asume reembolsable (flujo actual intacto).
-  const cancelWithin24h = !!gameStart && now >= new Date(gameStart.getTime() - 24 * 3600_000);
-  // Attendance window: [game_start - 15min, game_end)
-  const attendanceOpen = infoMode && !!gameStart && !!gameEnd
-    && now >= new Date(gameStart.getTime() - 15 * 60_000)
+  // Config desde app_settings (SIN fallback 24/48): null ⇒ reservar CERRADO. 0 es VÁLIDO
+  // (== null distingue "no disponible" de 0; 0 ⇒ solo cierra tras el inicio).
+  const releaseHours = isCaptainGold ? captainGoldReleaseHours : captainReleaseHours;
+  const slotReservationClosed = releaseHours == null || (!!gameStart && now >= new Date(gameStart.getTime() - releaseHours * 3600_000));
+  // Veredicto de reembolso Match desde el RPC EXISTENTE match_cancellation_window (autoridad
+  // del preview). NO se recalcula ninguna regla de horas en frontend. matchWin=null →
+  // veredicto DESCONOCIDO (cargando/error): no se asume refundable true/false y la confirmación
+  // queda bloqueada. Se re-consulta al montar → un cambio del cutoff en Admin se refleja al
+  // reabrir/recargar. La cancelación real vuelve a consultar el RPC al confirmar (flujo actual).
+  const [matchWin, setMatchWin] = useState(null);
+  useEffect(() => {
+    if (!gameId) { setMatchWin(null); return; }
+    let alive = true;
+    setMatchWin(null);
+    getMatchCancellationWindow(gameId).then(({ data }) => {
+      if (alive && data && typeof data.refundable === 'boolean') setMatchWin(data);
+    });
+    return () => { alive = false; };
+  }, [gameId]);
+  const matchRefundReady = matchWin != null;
+  const cancelWithin24h  = matchWin?.refundable === false;   // within24h = !refundable (backend)
+  // Attendance window: [game_start - attendanceLeadMin, game_end). El lead viene de
+  // app_settings; si aún no cargó (null) la ventana queda CERRADA (no se puede marcar).
+  const attendanceOpen = infoMode && !!gameStart && !!gameEnd && attendanceLeadMin != null
+    && now >= new Date(gameStart.getTime() - attendanceLeadMin * 60_000)
     && now <  gameEnd;
 
-  // Host action window: [game_start - 60min, game_end)
-  const hostWindowOpen = isHost && !!gameStart && !!gameEnd
-    && now >= new Date(gameStart.getTime() - 60 * 60_000)
+  // Host action window (invitados gratis): [game_start - freeInvitesLeadMin, game_end).
+  // Lead de app_settings; null → CERRADA (no se habilita invitar gratis por hardcode).
+  const hostWindowOpen = isHost && !!gameStart && !!gameEnd && freeInvitesLeadMin != null
+    && now >= new Date(gameStart.getTime() - freeInvitesLeadMin * 60_000)
     && now <  gameEnd;
 
   useEffect(() => {
@@ -1862,6 +1854,29 @@ export default function GameDetail() {
     && (guestCanceledView ? guestOwnGuests.length : guestsInRoster.length) > 0
     && !isBooked;
 
+  // Validación UX anticipada al pulsar "Reservar": reconsulta el estado/disponibilidad
+  // REAL (NO confía en lo cargado en GameDetail) reutilizando getGameById (la misma que
+  // usa el montaje). create_order sigue siendo la validación autoritativa posterior.
+  async function handleReservePress() {
+    const fresh = await getGameById(gameId);
+    if (fresh) setSbGame(fresh);   // refresca la disponibilidad mostrada en GameDetail
+    const reservable = !!fresh
+      && (fresh.status === 'published' || fresh.status === 'reserved')
+      && !isGameStarted(fresh.dateKey, fresh.time24);
+    if (!reservable) { setReserveBlock('UNAVAILABLE'); return; }
+    // Selección del CTA principal = 1 (titular). Cupos = público FRESCO + remanente R1 propio.
+    const freshAvail = Math.max(0, fresh.openSpots ?? 0) + myReservedRemaining;
+    if (freshAvail < 1) { setReserveBlock('CAPACITY'); return; }
+    const checkoutGame = {
+      id: g.id, city: g.city ?? null, field: g.field, date: g.date, dateKey: g.dateKey,
+      time: g.time, ampm: g.ampm, time24: g.time24, durationMin: g.durationMin, format: g.format,
+      price: g.price, priceNumber: g.priceNumber, currency: g.currency, source: 'match', type: g.type,
+      openSpots: freshAvail, wasInWaitlist: inWaitlist, backPath: id ? `/game/${id}` : '/games',
+      gameDetailBackPath: backPath, hostUserId: g.hostUserId,
+    };
+    navigate('/checkout', { state: { game: checkoutGame, referral: sharedLink.getReferral(id) } });
+  }
+
   function handleAddGuests() {
     setModifyOpen(false);
     // "Agregar invitados" navega a checkout (pantalla completa). Si el usuario cancela allí,
@@ -2069,7 +2084,8 @@ export default function GameDetail() {
               icon={I.cal()}
               primary={g.date}
               secondary={`${g.time} ${g.ampm} · ${g.duration}`}
-              action={(isHost || isBooked || isGuest || guestsInRoster.length > 0 || infoMode) ? <WAChatButton /> : undefined}
+              action={(isHost || isBooked || isGuest || guestsInRoster.length > 0 || infoMode)
+                ? <OrganizerContactButton phone={organizerPhone} /> : undefined}
             />
             <Pressable
               onPress={() => navigate('/venue', { state: { venue: { venueName: g.venueName, name: g.fieldNumber, address: g.address, district: g.venueDistrict, lat: g.venueLat, lng: g.venueLng, chips: g.chips, fieldCoverPath: g.fieldCoverPath ?? null, fieldCoverVersion: g.fieldCoverVersion ?? null, venueCoverPath: g.venueCoverPath ?? null, venueCoverVersion: g.venueCoverVersion ?? null } } })}
@@ -2228,31 +2244,7 @@ export default function GameDetail() {
               price={g.price}
               disabled={isFull || !spotsVerified}
               hideTopBorder={isFull || isCanceledWithGuests}
-              onPress={() => {
-                const checkoutGame = {
-                  id:          g.id,
-                  city:        g.city ?? null,
-                  field:       g.field,
-                  date:        g.date,
-                  dateKey:     g.dateKey,
-                  time:        g.time,
-                  ampm:        g.ampm,
-                  time24:      g.time24,
-                  durationMin: g.durationMin,
-                  format:      g.format,
-                  price:       g.price,
-                  priceNumber: g.priceNumber,
-                  currency:    g.currency,
-                  source:      'match',
-                  type:        g.type,
-                  openSpots:   effectiveAvailability,
-                  wasInWaitlist: inWaitlist,
-                  backPath:    id ? `/game/${id}` : '/games',
-                  gameDetailBackPath: backPath,
-                  hostUserId:  g.hostUserId,
-                };
-                navigate('/checkout', { state: { game: checkoutGame, referral: sharedLink.getReferral(id) } });
-              }}
+              onPress={handleReservePress}
             />}
           </>
         )}
@@ -2286,28 +2278,97 @@ export default function GameDetail() {
           </div>
         </div>
       )}
-      {modifyOpen && (
-        <ModifySheet
-          canAddGuests={effectiveAvailability > 0}
-          openSpots={effectiveAvailability}
-          onClose={() => setModifyOpen(false)}
-          onAddGuests={handleAddGuests}
-          onCancel={() => { setModifyOpen(false); isHost ? setHostCancelInvitedOpen(true) : setCancelOpen(true); }}
-          onPaymentDetail={() => { setModifyOpen(false); setPaymentDetailOpen(true); }}
-          isHost={isHost}
-          canAddPlayers={hostWindowOpen}
-          invitedCount={invitedByHost.length}
-          showReserveSlots={!isHost && (isCaptain || isCaptainGold)}
-          reserveSlotsDisabled={mySlotCanceled || slotReservationClosed || effectiveAvailability === 0}
-          releaseHours={releaseHours}
-          slotCanceled={mySlotCanceled}
-          windowClosed={slotReservationClosed}
-          noSlots={effectiveAvailability === 0}
-          onReserveSlots={() => openReserveSlots(true)}
-          reservedUsed={slotRes?.reserved_slots_used ?? 0}
-          reservedTotal={slotRes?.reserved_slots_total ?? 0}
-          within24h={cancelWithin24h}
-        />
+      {reserveBlock && (() => {
+        const isCap = reserveBlock === 'CAPACITY';
+        const u = gameUnavailableCopy(false);   // GameDetail es Match-only
+        // CAPACITY: sigue disponible → "Entendido" cierra y deja al usuario en el detalle
+        // (ya refrescado). UNAVAILABLE: ya NO reservable → "Volver a partidos" → /games.
+        const onCta = isCap ? () => setReserveBlock(null) : () => navigate(u.path);
+        return (
+          <div
+            onClick={onCta}
+            style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 32px' }}>
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{ background: '#fff', borderRadius: 20, width: '100%', maxWidth: 340, padding: '24px 22px 18px', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: TEXT, letterSpacing: -0.2, marginBottom: 8 }}>
+                {isCap ? 'No hay suficientes cupos disponibles' : u.title}
+              </div>
+              <div style={{ fontSize: 14.5, color: SUB, lineHeight: 1.5, marginBottom: 20 }}>
+                {isCap
+                  ? 'Mientras realizabas la reserva, uno o más cupos fueron reservados. Vuelve para consultar la disponibilidad actual.'
+                  : u.message}
+              </div>
+              <button
+                onClick={onCta}
+                style={{ width: '100%', height: 46, borderRadius: 14, border: 'none', background: BLUE, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                {isCap ? 'Entendido' : u.cta}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+      {(modifyOpen || paymentDetailOpen || cancelOpen) && (
+        <MorphSheet
+          view={cancelOpen ? 'cancel' : paymentDetailOpen ? 'payment' : 'menu'}
+          busy={cancelBusy}
+          onClose={() => { setModifyOpen(false); setPaymentDetailOpen(false); setCancelOpen(false); }}
+        >
+          {(scrollRef) => (
+            cancelOpen ? (
+              <CancelSheet
+                gameId={gameId}
+                breakdown={guestCanceledView ? g.guestSubBreakdown : histBreakdown}
+                price={histPrice}
+                guestList={isGuest ? guestOwnGuests : (guestCanceledView ? guestOwnGuests : guestsInRoster)}
+                userName={user?.name || 'Usuario'}
+                isGuest={isGuest}
+                guestId={guestId}
+                guestSelfName={user?.name || 'Usuario'}
+                payerName={g.paidBy}
+                payerCode={g.paidByCode}
+                titularAlreadyCanceled={guestCanceledView || titularCanceled}
+                guestSubBreakdown={g.guestSubBreakdown}
+                slotAmounts={myAmounts}
+                selfUserId={user?.id}
+                within24h={cancelWithin24h}
+                refundReady={matchRefundReady}
+                matchRefundCutoffHours={matchRefundCutoffHours}
+                scrollRef={scrollRef}
+                onBusyChange={setCancelBusy}
+                onBack={() => { setCancelOpen(false); setModifyOpen(true); }}
+                onDone={handleCancelDone}
+              />
+            ) : paymentDetailOpen ? (
+              <PaymentDetailSheet
+                price={histPrice}
+                ready={histReady}
+                breakdown={guestCanceledView ? g.guestSubBreakdown : histBreakdown}
+                paidBy={livePaidBy}
+                userName={user?.name || 'Usuario'}
+                titularCanceled={titularCanceled || guestCanceledView || mySlotCanceled}
+                activeGuestCount={isGuest ? guestOwnGuests.length : (isCanceledWithGuests ? activeList.length : guestsInRoster.length)}
+                guestSubBreakdown={isGuest ? g.guestSubBreakdown : null}
+                onBack={() => { setPaymentDetailOpen(false); setModifyOpen(true); }}
+              />
+            ) : (
+              <ModifySheet
+                canAddGuests={effectiveAvailability > 0}
+                openSpots={effectiveAvailability}
+                onAddGuests={handleAddGuests}
+                onCancel={() => { setModifyOpen(false); isHost ? setHostCancelInvitedOpen(true) : setCancelOpen(true); }}
+                onPaymentDetail={() => { setModifyOpen(false); setPaymentDetailOpen(true); }}
+                isHost={isHost}
+                canAddPlayers={hostWindowOpen}
+                freeInvitesLeadMin={freeInvitesLeadMin}
+                invitedCount={invitedByHost.length}
+                showReserveSlots={!isHost && (isCaptain || isCaptainGold)}
+                hasInvited={guestsInRoster.length > 0}
+                within24h={cancelWithin24h}
+              />
+            )
+          )}
+        </MorphSheet>
       )}
       {reserveSlotsOpen && slotRes && (
         <ReserveSlotsSheet
@@ -2347,40 +2408,6 @@ export default function GameDetail() {
           unitPrice={liveUnitPrice}
           onClose={() => { setHostCancelInvitedOpen(false); setModifyOpen(true); }}
           onDone={() => { setHostCancelInvitedOpen(false); fetchRoster(); }}
-        />
-      )}
-      {paymentDetailOpen && (
-        <PaymentDetailSheet
-          price={histPrice}
-          ready={histReady}
-          breakdown={guestCanceledView ? g.guestSubBreakdown : histBreakdown}
-          paidBy={livePaidBy}
-          userName={user?.name || 'Usuario'}
-          titularCanceled={titularCanceled || guestCanceledView || mySlotCanceled}
-          activeGuestCount={isGuest ? guestOwnGuests.length : (isCanceledWithGuests ? activeList.length : guestsInRoster.length)}
-          guestSubBreakdown={isGuest ? g.guestSubBreakdown : null}
-          onClose={() => { setPaymentDetailOpen(false); setModifyOpen(true); }}
-        />
-      )}
-      {cancelOpen && (
-        <CancelSheet
-          gameId={gameId}
-          breakdown={guestCanceledView ? g.guestSubBreakdown : histBreakdown}
-          price={histPrice}
-          guestList={isGuest ? guestOwnGuests : (guestCanceledView ? guestOwnGuests : guestsInRoster)}
-          userName={user?.name || 'Usuario'}
-          isGuest={isGuest}
-          guestId={guestId}
-          guestSelfName={user?.name || 'Usuario'}
-          payerName={g.paidBy}
-          payerCode={g.paidByCode}
-          titularAlreadyCanceled={guestCanceledView || titularCanceled}
-          guestSubBreakdown={g.guestSubBreakdown}
-          slotAmounts={myAmounts}
-          selfUserId={user?.id}
-          within24h={cancelWithin24h}
-          onClose={() => { setCancelOpen(false); setModifyOpen(true); }}
-          onDone={handleCancelDone}
         />
       )}
       {linkCopied && (
