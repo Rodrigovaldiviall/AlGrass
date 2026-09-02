@@ -360,7 +360,7 @@ function AddPlayersScreen({ alreadySelected, onCancel, onConfirm, paidPlayers, m
 
       </div>
 
-      <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '12px 16px calc(12px + env(safe-area-inset-bottom))' }}>
+      <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '12px 16px max(12px, env(safe-area-inset-bottom))' }}>
         <CtaButton onPress={() => onConfirm(selectedPlayers)} disabled={!dirty}>
           {ctaLabel}
         </CtaButton>
@@ -1979,7 +1979,7 @@ export default function ConfirmReservation() {
         <div style={{ height: 8 }} />
       </div>
 
-      <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '10px 16px calc(12px + env(safe-area-inset-bottom))' }}>
+      <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '10px 16px max(12px, env(safe-area-inset-bottom))' }}>
         {!promoOpen && !promoApplied && !addGuestsMode && !invitedMode && (
           <button onClick={() => setPromoOpen(true)} style={{ padding: '6px 4px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, color: ORANGE, letterSpacing: -0.1, display: 'inline-flex', alignItems: 'center', gap: 6, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
