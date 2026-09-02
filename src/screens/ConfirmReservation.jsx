@@ -1594,7 +1594,7 @@ export default function ConfirmReservation() {
 
   if (subView === 'addplayers') {
     return (
-      <div className="screen-shell" style={{ position: 'relative', overflow: 'hidden', background: '#fff', display: 'flex', flexDirection: 'column' }}>
+      <div className="screen-shell cr-shell-fill" style={{ overflow: 'hidden', background: '#fff', display: 'flex', flexDirection: 'column' }}>
         <AddPlayersScreen
           alreadySelected={guests}
           onCancel={() => setSubView('confirm')}
@@ -1623,7 +1623,7 @@ export default function ConfirmReservation() {
   }
 
   return (
-    <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden', position: 'relative' }}>
+    <div className="screen-shell cr-shell-fill" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
       <TopBar
         title={invitedMode ? 'Agregar jugadores' : armaListaMode ? 'Gestionar mi lista' : addGuestsMode ? 'Agregar invitados' : isRental ? 'Reservar cancha' : 'Confirmación de reserva'}
         rightNode={armaListaMode ? (

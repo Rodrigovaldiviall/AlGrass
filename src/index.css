@@ -118,6 +118,17 @@ input:-webkit-autofill:hover {
 /* Screen fills full viewport on mobile */
 .screen-shell { height: 100dvh; }
 
+/* Pantallas internas SIN bottom navigation (Checkout/Confirmar reserva, Gestionar mi
+   lista / Invitar jugadores): en móvil/tablet se ANCLAN al viewport (position:fixed +
+   inset:0) para ocupar toda la altura real hasta el borde inferior físico. Corrige el
+   hueco blanco que dejaba height:100dvh al no llegar al fondo en la PWA iOS
+   (viewport-fit=cover + status bar translúcida). El footer del CTA conserva su safe-area
+   (queda pegado abajo). En ≥1024px NO aplica → desktop mantiene .screen-shell (zoom,
+   centrado). No afecta pantallas con bottom navigation (no llevan esta clase). */
+@media (max-width: 1023px) {
+  .cr-shell-fill { position: fixed; inset: 0; height: auto; }
+}
+
 /* ── Desktop ≥ 1024 px ─────────────────────────────────── */
 @media (min-width: 1024px) {
   .legal-standalone {
