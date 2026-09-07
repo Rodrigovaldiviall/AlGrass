@@ -4,8 +4,9 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, RED, DANGER } from '../constants';
 import { POSITIONS, detectPrefix, MONTH_LABELS, calcAge } from '../utils/profileData';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faHeadset, faCoins, faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';
+import { faHeadset, faCoins, faTowerBroadcast, faStar } from '@fortawesome/free-solid-svg-icons';
 import { SupportMenu } from '../components/SupportMenu';
+import RewardsSheet from '../components/RewardsSheet';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
 import { useStaff } from '../context/StaffContext';
@@ -96,6 +97,16 @@ const RENTAL_GAMES_KEY = 'pichanga_rental_games';
 const HOSTED_GAMES_KEY = 'pichanga_hosted_games';
 const WAITLIST_KEY_P   = 'pichanga_waitlist';
 const CREDIT_KEY       = 'pichanga_credit';
+
+// Caché de sesión SOLO visual de wallet_summary (evita el layout shift al remontar Profile
+// al cambiar de tab). NO es fuente de verdad: Supabase revalida en cada montaje y este valor
+// NUNCA se usa para checkout/cálculos. Vive en memoria de módulo (se pierde al recargar).
+let _walletVisualCache = null; // { uid, credit, reward }
+
+// Caché de sesión SOLO visual del bloque de capitán (mismo patrón, separado de wallet).
+// Evita el layout shift al montar/remontar mientras se resuelven rol + horas de release.
+// NO se usa para permisos/lógica: la verdad sigue en useGlobalRoles/app_settings.
+let _captainVisualCache = null; // { uid, isCaptain, isCaptainGold, releaseH }
 
 function waitlistGameToRow(gameId) {
   const g = GAMES.find(gm => gm.id === gameId);
@@ -299,6 +310,7 @@ function sbReservationToRow(r) {
       unitPrice:     r.unit_price,
       promoDiscount: r.promo_discount  || 0,
       creditApplied: r.credit_applied  || 0,
+      rewardApplied: r.reward_applied  || 0,
       discount:      (r.promo_discount || 0) + (r.credit_applied || 0),
       guestsCount:   0,
       guestsTotal:   0,
@@ -342,6 +354,7 @@ function sbRentalFromGameRow(g, fin) {
       unitPrice:     fin.unit_price,
       promoDiscount: fin.promo_discount || 0,
       creditApplied: fin.credit_applied || 0,
+      rewardApplied: fin.reward_applied || 0,
       discount:      (fin.promo_discount || 0) + (fin.credit_applied || 0),
       guestsCount:   0,
       guestsTotal:   0,
@@ -530,9 +543,24 @@ function StatItem({ value, label }) {
 
 function ProfileCard({ user, gamesPlayedCount, onEdit, onEditEmail, onConfirmEmail, isProfileComplete = false, isHostOrStaff = false, hasActivity = false }) {
   // Estado de capitán desde la fuente de verdad V6 (roles ya existentes), no de lógica antigua.
-  const { isCaptain, isCaptainGold } = useGlobalRoles();
+  const { user: _authUser } = useAuth();
+  const _uid = _authUser?.id ?? null;
+  const { isCaptain, isCaptainGold, ready: _rolesReady } = useGlobalRoles();
   const { captainReleaseHours, captainGoldReleaseHours } = useAppTimings();   // app_settings (misma fuente que reserve_slots)
   const captainReleaseH = isCaptainGold ? captainGoldReleaseHours : captainReleaseHours;   // null = no disponible
+
+  // Cache visual de sesión del bloque de capitán: resuelto = rol listo y (no-capitán, o releaseH conocido).
+  // Al remontar se usa el último valor conocido inmediatamente y se revalida en background sin ocultarlo.
+  const _capIsCaptain = isCaptain || isCaptainGold;
+  const _liveResolved = _rolesReady && (!_capIsCaptain || captainReleaseH != null);
+  const _capHit = _captainVisualCache != null && _captainVisualCache.uid === _uid;
+  useEffect(() => {
+    if (_liveResolved && _uid) _captainVisualCache = { uid: _uid, isCaptain, isCaptainGold, releaseH: captainReleaseH };
+  }, [_liveResolved, _uid, isCaptain, isCaptainGold, captainReleaseH]);
+  const _capKnown = _liveResolved || _capHit;
+  const _showCap  = _liveResolved ? _capIsCaptain  : (_capHit ? (_captainVisualCache.isCaptain || _captainVisualCache.isCaptainGold) : false);
+  const _showGold = _liveResolved ? isCaptainGold  : (_capHit ? _captainVisualCache.isCaptainGold : false);
+  const _showRelH = _liveResolved ? captainReleaseH : (_capHit ? _captainVisualCache.releaseH : null);
   // Revisión VISUAL del correo de acceso (sin verificación real ni cambio de auth). Fuente de verdad:
   // users.confirmed_email (ligada a la cuenta, no al dispositivo). Confirmado ⇔ confirmed_email == email.
   const _emailReviewed = !!user.email && user.confirmedEmail === user.email;
@@ -639,15 +667,20 @@ function ProfileCard({ user, gamesPlayedCount, onEdit, onEditEmail, onConfirmEma
           )}
         </div>
       )}
-      {(isCaptain || isCaptainGold) && captainReleaseH != null && (
+      {!_capKnown ? (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${HAIR}`, display: 'flex', alignItems: 'center', gap: 5 }}>
+          <div style={{ width: 18, height: 18, borderRadius: 9, background: SOFT, flexShrink: 0 }} />
+          <div style={{ width: 210, height: 12.5, borderRadius: 6, background: SOFT }} />
+        </div>
+      ) : (_showCap && _showRelH != null) ? (
         <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${HAIR}`, display: 'flex', alignItems: 'center', gap: 5 }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.3))' }}>
-            <path d="M12 3l7 3v5c0 4.2-2.9 7.6-7 8.8-4.1-1.2-7-4.6-7-8.8V6l7-3z" fill={isCaptainGold ? '#F5B301' : '#E5383B'} stroke={isCaptainGold ? '#F5B301' : '#E5383B'} strokeWidth="1.2" strokeLinejoin="round"/>
+            <path d="M12 3l7 3v5c0 4.2-2.9 7.6-7 8.8-4.1-1.2-7-4.6-7-8.8V6l7-3z" fill={_showGold ? '#F5B301' : '#E5383B'} stroke={_showGold ? '#F5B301' : '#E5383B'} strokeWidth="1.2" strokeLinejoin="round"/>
             <path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
-          <span style={{ fontSize: 12.5, color: RED, lineHeight: 1.4, whiteSpace: 'nowrap' }}>{`Capitán. Reserva cupos hasta ${captainReleaseH}h antes del partido.`}</span>
+          <span style={{ fontSize: 12.5, color: RED, lineHeight: 1.4, whiteSpace: 'nowrap' }}>{`Capitán. Reserva cupos hasta ${_showRelH}h antes del partido.`}</span>
         </div>
-      )}
+      ) : null}
 
       {/* El diálogo de revisión del correo se dispara desde el elemento del bloque de identidad
           (junto al @código). Aquí solo el overlay; la lógica de Confirmar/Modificar no cambia. */}
@@ -2140,8 +2173,14 @@ export default function Profile() {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; }
   });
   const [creditBalance, setCreditBalance] = useState(() => {
+    if (_walletVisualCache) return _walletVisualCache.credit;
     try { const c = JSON.parse(localStorage.getItem(CREDIT_KEY)); return (c?.balance || 0) > 0 ? c.balance : 0; } catch { return 0; }
   });
+  const [rewardBalance, setRewardBalance] = useState(() => _walletVisualCache ? _walletVisualCache.reward : 0);
+  // Conocemos el wallet si ya hay caché de sesión → sin skeleton ni salto al volver a Profile.
+  const [walletKnown, setWalletKnown]     = useState(() => _walletVisualCache != null);
+  const [rewardsOpen, setRewardsOpen]     = useState(false);
+  const [rewardTip, setRewardTip]         = useState(false);
   const [waitlistEntries, setWaitlistEntries] = useState(() => {
     try { const w = JSON.parse(localStorage.getItem(WAITLIST_KEY_P)); return Array.isArray(w) ? w : []; } catch { return []; }
   });
@@ -2254,14 +2293,20 @@ export default function Profile() {
 
       supabase
         .from('wallet_summary')
-        .select('credit_balance')
+        .select('credit_balance, reward_balance')
         .eq('user_id', uid)
         .maybeSingle()
         .then(({ data }) => {
+          const credit = data?.credit_balance ?? 0;
+          const reward = data?.reward_balance ?? 0;
           if (data?.credit_balance != null) {
-            setCreditBalance(data.credit_balance);
-            try { localStorage.setItem(CREDIT_KEY, JSON.stringify({ balance: data.credit_balance })); } catch {}
+            setCreditBalance(credit);
+            try { localStorage.setItem(CREDIT_KEY, JSON.stringify({ balance: credit })); } catch {}
           }
+          if (data?.reward_balance != null) setRewardBalance(reward);
+          // Caché visual de sesión + fin del skeleton (revalidación en background no oculta la tarjeta).
+          _walletVisualCache = { uid, credit, reward };
+          setWalletKnown(true);
         });
 
       // V4: rentals from games.booked_by_user_id (operational SoT)
@@ -2285,7 +2330,7 @@ export default function Profile() {
           const rentalGameIds = rentalGameData.map(g => g.id);
           const { data: finRows } = await supabase
             .from('reservations')
-            .select('game_id, unit_price, promo_discount, credit_applied, total_amount')
+            .select('game_id, unit_price, promo_discount, credit_applied, reward_applied, total_amount')
             .eq('user_id', uid).eq('status', 'spend')
             .in('game_id', rentalGameIds);
           const finMap = {};
@@ -2301,7 +2346,7 @@ export default function Profile() {
       supabase
         .from('reservations')
         .select(`
-          game_id, source, unit_price, promo_discount, credit_applied, total_amount,
+          game_id, source, unit_price, promo_discount, credit_applied, reward_applied, total_amount,
           games:game_id ( type, date_key, time, format, total_spots, current_players, duration_min, host_user_id, game_amenities:amenities, fields:field_id ( name, format, total_spots, duration_min, field_amenities:amenities, venues:venue_id ( name, address, district, cover_image_path, cover_updated_at, venue_amenities:amenities ) ) )
         `)
         .eq('user_id', uid)
@@ -2457,7 +2502,7 @@ export default function Profile() {
         const rentalGameIds = rentalGameData.map(g => g.id);
         const { data: finRows } = await supabase
           .from('reservations')
-          .select('game_id, unit_price, promo_discount, credit_applied, total_amount')
+          .select('game_id, unit_price, promo_discount, credit_applied, reward_applied, total_amount')
           .eq('user_id', uid).eq('status', 'spend')
           .in('game_id', rentalGameIds);
         const finMap = {};
@@ -2914,16 +2959,71 @@ export default function Profile() {
   // Complete profile: position + birth date + phone + nationality + occupation
   const isProfileComplete = hasPosition && hasBirthDate && !!cardUser.phone && !!cardUser.nationality && !!cardUser.occupation && !!(cardUser.avatarPath || cardUser.photoDataUrl);
 
-  const creditEl = creditBalance > 0 ? (
-    <div style={{ margin: '4px 16px 0', padding: '14px 16px', borderRadius: 14, background: '#fff', border: `1px solid ${HAIR}`, boxShadow: '0 1px 6px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: 14 }}>
-      <div style={{ width: 42, height: 42, borderRadius: 21, background: '#F0FBF4', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-        <FontAwesomeIcon icon={faCoins} style={{ fontSize: 18, color: GREEN }} />
+  // Skeleton con EXACTAMENTE el mismo footprint que la tarjeta (mismo contenedor + fila de 38px).
+  const walletSkeleton = (
+    <div style={{ margin: '4px 16px 0', padding: '14px 16px', borderRadius: 14, background: '#fff', border: `1px solid ${HAIR}`, boxShadow: '0 1px 6px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'stretch' }}>
+      {[0, 1].map(i => (
+        <div key={i} style={{ display: 'contents' }}>
+          {i === 1 && <div style={{ width: 1, background: HAIR, margin: '2px 12px', flexShrink: 0 }} />}
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 38, height: 38, borderRadius: 19, background: SOFT, flexShrink: 0 }} />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ width: '55%', height: 15, borderRadius: 6, background: SOFT, marginBottom: 2 }} />
+              <div style={{ width: '72%', height: 22, borderRadius: 6, background: SOFT }} />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const creditEl = !walletKnown ? walletSkeleton : (creditBalance > 0 || rewardBalance > 0) ? (
+    <div style={{ margin: '4px 16px 0', padding: '14px 16px', borderRadius: 14, background: '#fff', border: `1px solid ${HAIR}`, boxShadow: '0 1px 6px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'stretch' }}>
+      {/* Crédito */}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ width: 38, height: 38, borderRadius: 19, background: '#F0FBF4', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <FontAwesomeIcon icon={faCoins} style={{ fontSize: 16, color: GREEN }} />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 500, color: SUB, marginBottom: 2 }}>Crédito</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, letterSpacing: -0.5 }}>S/. {Number(creditBalance).toFixed(2)}</div>
+        </div>
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12.5, fontWeight: 500, color: SUB, marginBottom: 1 }}>Crédito disponible</div>
-        <div style={{ fontSize: 12, color: SUB, opacity: 0.75 }}>Se aplica en tu próxima reserva</div>
-      </div>
-      <div style={{ fontSize: 20, fontWeight: 800, color: TEXT, letterSpacing: -0.5, flexShrink: 0 }}>S/. {Number(creditBalance).toFixed(2)}</div>
+
+      <div style={{ width: 1, background: HAIR, margin: '2px 12px', flexShrink: 0 }} />
+
+      {/* Recompensas — tocable, abre "Mis Recompensas" */}
+      <button onClick={() => setRewardsOpen(true)} style={{
+        flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 12,
+        background: 'transparent', border: 'none', padding: 0, textAlign: 'left', cursor: 'pointer',
+        fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none',
+      }}>
+        <div style={{ width: 38, height: 38, borderRadius: 19, background: '#F1EFFB', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <FontAwesomeIcon icon={faStar} style={{ fontSize: 16, color: '#6D5AE6' }} />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 500, color: SUB, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 5, position: 'relative' }}>
+            <span>Recompensas</span>
+            <span
+              role="button" aria-label="Información de Recompensas"
+              onClick={(e) => { e.stopPropagation(); setRewardTip(v => !v); }}
+              style={{
+                width: 14, height: 14, borderRadius: 7, border: `1px solid ${HAIR}`, background: SOFT,
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 9.5, fontWeight: 700, color: SUB, lineHeight: 1, flexShrink: 0,
+              }}>?</span>
+            {rewardTip && (
+              <span style={{
+                position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, zIndex: 30,
+                width: 190, padding: '8px 10px', borderRadius: 10, background: TEXT, color: '#fff',
+                fontSize: 11.5, fontWeight: 500, lineHeight: 1.4, letterSpacing: 0,
+                boxShadow: '0 4px 14px rgba(0,0,0,0.18)',
+              }}>Las Recompensas solo se aplican al pago del titular.</span>
+            )}
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, letterSpacing: -0.5 }}>S/. {Number(rewardBalance).toFixed(2)}</div>
+        </div>
+      </button>
     </div>
   ) : null;
 
@@ -3002,6 +3102,8 @@ export default function Profile() {
           )}
 
           {creditEl}
+          {rewardTip && <div onClick={() => setRewardTip(false)} style={{ position: 'fixed', inset: 0, zIndex: 29 }} />}
+          {rewardsOpen && <RewardsSheet balance={rewardBalance} onClose={() => setRewardsOpen(false)} />}
 
           <SectionHeader title="Próximos eventos" count={upcoming.length} />
           {upcoming.length === 0 ? (

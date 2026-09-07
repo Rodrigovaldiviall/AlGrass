@@ -9,7 +9,7 @@ import { addPlayers as addPlayersToRoster, createRoster } from '../services/game
 import { supabase } from '../lib/supabase';
 import aprobarComprasYape from '../assets/Aprobar compras yape.webp';
 import codigoYape from '../assets/Código yape.webp';
-import { createReservation, createGamePlayer, createInvitedReservation, validatePromoCode, searchUsers, getWalletBalance } from '../services/reservationService';
+import { createReservation, createGamePlayer, createInvitedReservation, validatePromoCode, searchUsers, getWalletBalance, getRewardBalance } from '../services/reservationService';
 import { resolveCaptainGroupAssignment } from '../services/captainGroupService';
 import { markWaitlistReserved } from '../services/waitlistService';
 import { materializeReservation } from '../services/materializeReservation';
@@ -838,6 +838,8 @@ export default function ConfirmReservation() {
     getWalletBalance()
       .then(balance => setCreditBalance(Math.max(0, balance)))
       .finally(() => setCreditLoading(false));
+    // Rewards: saldo promocional, separado del Credit (no combinar). Solo lectura.
+    getRewardBalance().then(balance => setRewardBalance(Math.max(0, balance)));
   }, []);
 
   const [promoOpen, setPromoOpen]       = useState(false);
@@ -1050,10 +1052,15 @@ export default function ConfirmReservation() {
   })();
   const unitPrice = game?.priceNumber ?? 0;
   const [creditBalance, setCreditBalance] = useState(0);
+  const [rewardBalance, setRewardBalance] = useState(0);   // saldo Rewards (promocional)
+  const [usingReward, setUsingReward]     = useState(false); // Promo y Reward EXCLUYENTES por UX
   const currency  = game?.currency ?? 'S/.';
   const fmt = n => `${currency} ${Number(n || 0).toFixed(2)}`;
 
-  const titularNet   = unitPrice - (promoApplied?.discount ?? 0);
+  // Reward: SOLO titular, tope unitPrice. Excluyente con Promo (no se compara cuál conviene).
+  // No aplica en invitedMode/addGuestsMode (no hay titular NUEVO al que descontar).
+  const rewardApplied = (!invitedMode && !addGuestsMode && usingReward) ? Math.min(rewardBalance, unitPrice) : 0;
+  const titularNet   = unitPrice - (rewardApplied > 0 ? rewardApplied : (promoApplied?.discount ?? 0));
   const guestsTotal  = guests.length * unitPrice;
   const subtotal     = invitedMode ? 0 : addGuestsMode ? Math.max(0, guestsTotal) : Math.max(0, titularNet + guestsTotal);
   const creditApplied = invitedMode ? 0 : Math.min(creditBalance, subtotal);
@@ -1096,7 +1103,7 @@ export default function ConfirmReservation() {
   const unitStr  = fmt(unitPrice);
   const totalStr = (addGuestsMode || invitedMode)
     ? fmt(total)
-    : (promoApplied || guests.length > 0 || creditApplied > 0) ? fmt(total) : unitStr;
+    : (promoApplied || guests.length > 0 || creditApplied > 0 || rewardApplied > 0) ? fmt(total) : unitStr;
   const seats = (addGuestsMode || invitedMode) ? guests.length : 1 + guests.length;
 
   async function applyCode() {
@@ -1156,6 +1163,9 @@ export default function ConfirmReservation() {
       unitPrice: invitedMode ? 0 : unitPrice,
       promoCode: promoApplied?.code ?? null, promoCodeId: promoApplied?.promoCodeId ?? null,
       promoDiscount: invitedMode ? 0 : (promoApplied?.discount ?? 0),
+      // Reward: descuento del titular (excluyente con promo; 0 en invited/addGuests). Viaja en
+      // el snapshot (fuente única) → materializeReservation lo consume vía consume_reward gate.
+      rewardApplied,
       totalAmount: invitedMode ? 0 : total, subtotalAmount: invitedMode ? 0 : subtotal,
       playersCount: noTitular ? guests.length : (isRental ? 1 : 1 + guests.length),
       guestTotal: invitedMode ? 0 : (isRental ? 0 : guestsTotal),
@@ -1980,7 +1990,7 @@ export default function ConfirmReservation() {
       </div>
 
       <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '10px 16px calc(12px + env(safe-area-inset-bottom))' }}>
-        {!promoOpen && !promoApplied && !addGuestsMode && !invitedMode && (
+        {!promoOpen && !promoApplied && !usingReward && !addGuestsMode && !invitedMode && (
           <button onClick={() => setPromoOpen(true)} style={{ padding: '6px 4px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, color: ORANGE, letterSpacing: -0.1, display: 'inline-flex', alignItems: 'center', gap: 6, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <path d="M2 7.5V2.5h5l7 7-5 5-7-7z" stroke={ORANGE} strokeWidth="1.4" strokeLinejoin="round"/>
@@ -1990,7 +2000,24 @@ export default function ConfirmReservation() {
           </button>
         )}
 
-        {promoOpen && !promoApplied && !addGuestsMode && !invitedMode && (
+        {/* Rewards: toggle EXCLUYENTE con Promo. Solo si hay saldo y es checkout de titular
+            (no invited/addGuests). Al activarlo se limpia/oculta Promo; no se compara cuál conviene. */}
+        {rewardBalance > 0 && !promoApplied && !addGuestsMode && !invitedMode && (
+          usingReward ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', marginBottom: 8, background: '#EEEBFB', border: '1px solid #D6CEF7', borderRadius: 10 }}>
+              <svg width="16" height="16" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="8" fill="#6D5AE6"/><path d="M5 9.2l2.6 2.6L13 6.4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              <div style={{ flex: 1, fontSize: 13, color: '#4B3BAF', fontWeight: 600 }}>Rewards aplicado (−{fmt(rewardApplied)})</div>
+              <button onClick={() => setUsingReward(false)} style={{ padding: '2px 6px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700, color: '#4B3BAF', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Quitar</button>
+            </div>
+          ) : (
+            <button onClick={() => { setUsingReward(true); setPromoOpen(false); setPromoApplied(null); setPromoInput(''); setPromoError(''); }} style={{ padding: '6px 4px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, color: '#6D5AE6', letterSpacing: -0.1, display: 'inline-flex', alignItems: 'center', gap: 6, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1.6l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.9 4.3 13.4l.7-4.3-3.1-3 4.3-.6z" stroke="#6D5AE6" strokeWidth="1.2" strokeLinejoin="round"/></svg>
+              Usar mis Rewards ({fmt(rewardBalance)})
+            </button>
+          )
+        )}
+
+        {promoOpen && !promoApplied && !usingReward && !addGuestsMode && !invitedMode && (
           <div style={{ padding: '4px 0 10px' }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <div style={{ flex: 1, height: 42, padding: '0 12px', borderRadius: 10, border: `1px solid ${promoError ? DANGER : HAIR}`, background: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2061,6 +2088,13 @@ export default function ConfirmReservation() {
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: '#1F6B36' }}>
               <span>Descuento{promoApplied.kind === 'percent' ? ` · ${promoApplied.value}%` : ''}</span>
               <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>−{fmt(promoApplied.discount)}</span>
+            </div>
+          )}
+          {/* Rewards: línea separada del Credit; solo se muestra si rewardApplied>0. */}
+          {!invitedMode && !addGuestsMode && rewardApplied > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: '#6D5AE6' }}>
+              <span>Rewards</span>
+              <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>−{fmt(rewardApplied)}</span>
             </div>
           )}
           {!invitedMode && guests.length > 0 && (

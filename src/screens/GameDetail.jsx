@@ -335,6 +335,7 @@ function PaymentDetail({ price, breakdown, paidBy, userName, titularCanceled = f
             row('Titular', fmt(breakdown.unitPrice))
           )}
           {!titularCanceled && bdPromoDisc > 0 && row('Descuento', `−${fmt(bdPromoDisc)}`, false, true)}
+          {!titularCanceled && (breakdown?.rewardApplied ?? 0) > 0 && row('Rewards', `−${fmt(breakdown.rewardApplied)}`, false, true)}
           {activeCount > 0 && row(`Invitados (${activeCount})`, fmt(activeGuestsTotal))}
           <div style={{ borderTop: `1px solid ${HAIR}`, paddingTop: 8 }}>
             {row('Total', fmt(computedTotal), true)}
@@ -881,7 +882,10 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
     ? checkedGuestsSum
     : (effectiveTitularChecked ? titularRefund : 0) + checkedGuestsSum;
   // refundReady=false → veredicto de reembolso aún desconocido: no se permite confirmar.
-  const canConfirm = refundReady && (isGuest ? (effectiveSelfChecked || checkedGuests.size > 0) : totalRefund > 0);
+  // Poder cancelar depende de una SELECCIÓN válida, no de que el reembolso sea > 0:
+  // un cupo cubierto 100% con Rewards (game_players.amount = 0) sigue siendo cancelable
+  // (refund S/0, Rewards NO se restauran, el cupo se libera igual — cancelGamePlayer intacto).
+  const canConfirm = refundReady && (isGuest ? (effectiveSelfChecked || checkedGuests.size > 0) : (effectiveTitularChecked || checkedGuests.size > 0));
   const fmt = n => `S/. ${Number(n).toFixed(2)}`;
 
   // 'processing' → el contenedor bloquea backdrop/drag (no se puede cerrar a medias).
@@ -1793,7 +1797,7 @@ export default function GameDetail() {
     if (!paymentDetailOpen || g.paymentBreakdown || myReservation || isGuest) return;
     if (!supabase || !myReservationId) return;
     supabase.from('reservations')
-      .select('unit_price, promo_discount')
+      .select('unit_price, promo_discount, reward_applied')
       .eq('id', myReservationId).maybeSingle()
       .then(({ data }) => { if (data) setMyReservation(data); });
   }, [paymentDetailOpen, g.paymentBreakdown, myReservation, isGuest, myReservationId]); // eslint-disable-line
@@ -1818,15 +1822,18 @@ export default function GameDetail() {
       // se usa el neto (game_players.amount) sin línea de descuento.
       const resPromo = !iAmGuest
         ? (myReservation
-            ? { unit_price: myReservation.unit_price, promo_discount: myReservation.promo_discount }
-            : (g.paymentBreakdown ? { unit_price: g.paymentBreakdown.unitPrice, promo_discount: g.paymentBreakdown.promoDiscount } : null))
+            ? { unit_price: myReservation.unit_price, promo_discount: myReservation.promo_discount, reward_applied: myReservation.reward_applied }
+            : (g.paymentBreakdown ? { unit_price: g.paymentBreakdown.unitPrice, promo_discount: g.paymentBreakdown.promoDiscount, reward_applied: g.paymentBreakdown.rewardApplied } : null))
         : null;
       const unitPrice     = resPromo?.unit_price != null ? (Number(resPromo.unit_price) || 0) : mySlotAmt;
       const promoDiscount = resPromo?.promo_discount != null ? (Number(resPromo.promo_discount) || 0) : 0;
-      const mySlotNet     = iAmGuest ? 0 : Math.max(0, unitPrice - promoDiscount);
+      // Rewards: descuento del titular (concepto SEPARADO de Promo y de Credit). Neto = bruto − promo − reward.
+      const rewardApplied = resPromo?.reward_applied != null ? (Number(resPromo.reward_applied) || 0) : 0;
+      const mySlotNet     = iAmGuest ? 0 : Math.max(0, unitPrice - promoDiscount - rewardApplied);
       return {
         unitPrice,                 // "Titular" (bruto de mi cupo)
-        promoDiscount,             // "Descuento"
+        promoDiscount,             // "Descuento" (promo)
+        rewardApplied,             // "Rewards" (descuento promocional)
         guestsCount,               // "Invitados (N)"
         guestsTotal,               // total de invitados (Σ game_players.amount)
         total: mySlotNet + guestsTotal,
@@ -1870,7 +1877,7 @@ export default function GameDetail() {
     const checkoutGame = {
       id: g.id, city: g.city ?? null, field: g.field, date: g.date, dateKey: g.dateKey,
       time: g.time, ampm: g.ampm, time24: g.time24, durationMin: g.durationMin, format: g.format,
-      price: g.price, priceNumber: g.priceNumber, currency: g.currency, source: 'match', type: g.type,
+      price: fresh?.price != null ? `S/. ${Number(fresh.price).toFixed(2)}` : g.price, priceNumber: fresh?.price ?? g.priceNumber, currency: g.currency, source: 'match', type: g.type,
       openSpots: freshAvail, wasInWaitlist: inWaitlist, backPath: id ? `/game/${id}` : '/games',
       gameDetailBackPath: backPath, hostUserId: g.hostUserId,
     };

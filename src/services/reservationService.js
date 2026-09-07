@@ -76,6 +76,17 @@ export async function getWalletBalance() {
   return data?.credit_balance ?? 0;
 }
 
+// Saldo de Rewards (promocional, no reembolsable). Separado de credit_balance en UX.
+// Solo lectura; no crea ni consume nada.
+export async function getRewardBalance() {
+  if (!supabase) return 0;
+  const session = await getSession();
+  if (!session?.user?.id) return 0;
+  await ensureWalletSummary(session.user.id);
+  const { data } = await supabase.from('wallet_summary').select('reward_balance').eq('user_id', session.user.id).single();
+  return data?.reward_balance ?? 0;
+}
+
 // ── promo codes ───────────────────────────────────────────────────────────────
 
 export async function validatePromoCode(code, unitPrice, gameType = null, userId = null, gameCity = null) {
@@ -195,60 +206,81 @@ async function setMatchPublishedIfEmpty(gameId) {
 // ── reserve ───────────────────────────────────────────────────────────────────
 
 // Appends a spend record to reservations (append-only ledger).
-export async function createReservation({ gameId, unitPrice, promoCode, promoCodeId, promoDiscount, totalAmount, subtotalAmount, playersCount, guestTotal, paymentMethod, creditApplied, source, invited = false }, ctx) {
+// rewardApplied: descuento de Reward al TITULAR (0 si no aplica). rewardGate: callback que
+// consume Reward (consume_reward) — SOLO se pasa cuando rewardApplied>0. Cuando hay gate, el
+// orden se REORDENA (insert reserva → gate → applySpend) para consumir Reward ANTES de
+// materializar el descuento; si el gate lanza, se borra la reserva provisional y se aborta.
+// Con rewardApplied===0 (sin gate) el flujo y el ORDEN son idénticos a hoy.
+export async function createReservation({ gameId, unitPrice, promoCode, promoCodeId, promoDiscount, totalAmount, subtotalAmount, playersCount, guestTotal, paymentMethod, creditApplied, source, invited = false, rewardApplied = 0 }, ctx, rewardGate = null) {
   const db = ctx?.db ?? supabase;
   if (!db) return { skipped: true };
   const actor = ctx?.actor ?? (await getSession())?.user?.id;
   if (!actor) return { skipped: true };
 
-  // invited (invitación gratis del host): registro operativo SIN movimiento económico.
-  // NO se ejecuta applySpend (no toca credit_balance ni reserved_balance).
+  const spendArgs = { totalAmount, subtotalAmount: subtotalAmount || totalAmount, creditApplied: creditApplied || 0 };
+  const reservationRow = {
+    game_id:             gameId,
+    user_id:             actor,
+    status:              'spend',
+    unit_price:          unitPrice,
+    promo_code:          promoCode || null,
+    promo_code_id:       promoCodeId || null,
+    promo_discount:      promoDiscount || 0,
+    credit_applied:      creditApplied || 0,
+    reward_applied:      rewardApplied || 0,   // informativo (Fase 1); no participa en refunds
+    total_amount:        totalAmount > 0 ? totalAmount : null,
+    subtotal_amount:     subtotalAmount || totalAmount,
+    players_count:       playersCount || 1,
+    guest_total:         guestTotal || 0,
+    payment_method:      totalAmount > 0 ? paymentMethod : null,
+    source:              source || 'match',
+    reserved_at:         new Date().toISOString(),
+    // invited (invitación gratis del host): el ledger se identifica como 'invited'
+    // desde el origen, con economía 0 (importes ya vienen en 0 en el snapshot).
+    reservation_type:    invited ? 'invited' : 'normal',
+    invited_by_user_id:  invited ? actor : null,
+    // Proveniencia (Etapa 4): solo cuando se materializa desde una Order (camino externo).
+    ...(ctx?.orderId != null ? { order_id: ctx.orderId } : {}),
+  };
+
+  // Claim transaccional Doble-salida-aware (idéntico a hoy). Devuelve el resultado a
+  // retornar si aplica (error o rentalTaken), o null si no hay rental / claim OK.
+  const claimRentalIfNeeded = async (data, error) => {
+    if (source === 'rental' && gameId) {
+      const { data: claimedId, error: gameErr } = await db
+        .rpc('claim_rental_double_out_aware', { p_game_id: gameId, p_actor: actor });
+      if (gameErr) { console.error('[createReservation] rental claim rpc failed:', gameErr); return { data, error: gameErr }; }
+      if (claimedId == null) return { data, error, rentalTaken: true };
+    }
+    return null;
+  };
+
+  // ── Rama REWARD (rewardApplied>0): reserva PRIMERO → gate consume_reward → applySpend → resto.
+  if (rewardGate) {
+    const { data, error } = await db.from('reservations').insert(reservationRow).select('id').single();
+    if (error) { console.error('[createReservation] (reward) insert:', error); return { data, error }; }
+    try {
+      await rewardGate(data.id);   // consume Reward; lanza si INSUFFICIENT_REWARD/REWARD_CONFLICT/error
+    } catch (gateErr) {
+      await db.from('reservations').delete().eq('id', data.id);   // borra la reserva provisional
+      console.warn('[createReservation] reward gate abort:', gateErr?.message);
+      return { data: null, error: gateErr };                       // aborta: NO applySpend, NO resto
+    }
+    if (!invited) await applySpend(actor, spendArgs, ctx);         // recién ahora se materializa el descuento
+    const claim = await claimRentalIfNeeded(data, error);
+    if (claim) return claim;
+    return { data, error };
+  }
+
+  // ── Rama SIN Reward (rewardApplied===0): comportamiento y ORDEN actuales, intactos ──
+  // invited: registro operativo SIN movimiento económico (no applySpend).
   if (!invited) {
-    await applySpend(actor, { totalAmount, subtotalAmount: subtotalAmount || totalAmount, creditApplied: creditApplied || 0 }, ctx);
+    await applySpend(actor, spendArgs, ctx);
   }
-
-  const { data, error } = await db
-    .from('reservations')
-    .insert({
-      game_id:             gameId,
-      user_id:             actor,
-      status:              'spend',
-      unit_price:          unitPrice,
-      promo_code:          promoCode || null,
-      promo_code_id:       promoCodeId || null,
-      promo_discount:      promoDiscount || 0,
-      credit_applied:      creditApplied || 0,
-      total_amount:        totalAmount > 0 ? totalAmount : null,
-      subtotal_amount:     subtotalAmount || totalAmount,
-      players_count:       playersCount || 1,
-      guest_total:         guestTotal || 0,
-      payment_method:      totalAmount > 0 ? paymentMethod : null,
-      source:              source || 'match',
-      reserved_at:         new Date().toISOString(),
-      // invited (invitación gratis del host): el ledger se identifica como 'invited'
-      // desde el origen, con economía 0 (importes ya vienen en 0 en el snapshot).
-      reservation_type:    invited ? 'invited' : 'normal',
-      invited_by_user_id:  invited ? actor : null,
-      // Proveniencia (Etapa 4): solo cuando se materializa desde una Order (camino externo).
-      // El camino interno NO pasa ctx.orderId → la columna ni se referencia (queda NULL por
-      // default), así que esta línea no depende de reservations.order_id hasta usarse en externo.
-      ...(ctx?.orderId != null ? { order_id: ctx.orderId } : {}),
-    })
-    .select('id')
-    .single();
+  const { data, error } = await db.from('reservations').insert(reservationRow).select('id').single();
   if (error) { console.error('[createReservation]', error); return { data, error }; }
-
-  if (source === 'rental' && gameId) {
-    // Claim transaccional Doble-salida-aware: lockea R (+gemelo por id si hay pareja) y
-    // ejecuta el MISMO claim (published→reserved+booked, o reserved-sin-booking→booked).
-    // Devuelve el id reclamado, o NULL si 0 filas (rentalTaken). Paso 1 (dentro de la
-    // RPC) bloquea el gemelo. Error de la RPC → error de materialización.
-    const { data: claimedId, error: gameErr } = await db
-      .rpc('claim_rental_double_out_aware', { p_game_id: gameId, p_actor: actor });
-    if (gameErr) { console.error('[createReservation] rental claim rpc failed:', gameErr); return { data, error: gameErr }; }
-    if (claimedId == null) return { data, error, rentalTaken: true };
-  }
-
+  const claim = await claimRentalIfNeeded(data, error);
+  if (claim) return claim;
   return { data, error };
 }
 

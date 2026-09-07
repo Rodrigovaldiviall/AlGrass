@@ -28,17 +28,34 @@ export async function materializeReservation(ctx, snapshot) {
     gameId, gameType, unitPrice, promoCode, promoCodeId, promoDiscount, totalAmount, subtotalAmount,
     playersCount, guestTotal, paymentMethod, creditApplied, source,
     guests = [], reservedSlots = 0, referral = null, titularNet, titular, invited = false,
-    hostUserId = null, venueId = null, releaseHours, payerName,
+    hostUserId = null, venueId = null, releaseHours, payerName, rewardApplied = 0,
   } = snapshot;
   const db = ctx.db;
   const actor = ctx.actor;
+
+  // Gate de consumo de Reward: SOLO cuando rewardApplied>0. Consume Reward (RPC consume_reward)
+  // ANTES de que createReservation materialice el descuento (applySpend). Cualquier fallo real
+  // (INSUFFICIENT_REWARD / REWARD_CONFLICT / error de RPC) LANZA → createReservation borra la
+  // reserva provisional y aborta (no se aplica descuento). ALREADY_CONSUMED es válido porque la
+  // RPC ya verifica coincidencia estricta (user/reserva/monto/type). rewardApplied===0 → sin gate.
+  const rewardGate = rewardApplied > 0
+    ? async (reservationId) => {
+        const { data, error: rwErr } = await db.rpc('consume_reward', {
+          p_user_id: actor, p_reservation_id: reservationId, p_amount: rewardApplied,
+        });
+        if (rwErr) throw new Error('REWARD_CONSUME_ERROR: ' + rwErr.message);
+        const row = Array.isArray(data) ? data[0] : data;
+        if (!row?.applied) throw new Error('REWARD_' + (row?.reason ?? 'UNAVAILABLE'));
+      }
+    : null;
 
   // 1) Asiento en el ledger (spend). La proveniencia order_id viaja en el ctx.
   const { data: resData, error, skipped, rentalTaken } = await createReservation({
     gameId, unitPrice, promoCode, promoCodeId, promoDiscount,
     totalAmount, subtotalAmount, playersCount, guestTotal,
     paymentMethod, creditApplied, source, invited,   // invited → sin applySpend (sin wallet)
-  }, ctx);
+    rewardApplied,                                    // reward → columna informativa + gate
+  }, ctx, rewardGate);
   if (rentalTaken) return { code: 'RENTAL_TAKEN' };
   if (skipped || error) return { error, skipped };
   const reservationId = resData?.id ?? null;
