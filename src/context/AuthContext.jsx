@@ -75,11 +75,15 @@ async function reconcileEmailFromAuth() {
 
 export function AuthProvider({ children }) {
   const [user, setUserState] = useState(() => getUser());
-  // true SOLO durante la inicialización del PRIMER login OAuth (evento SIGNED_IN con provider
-  // google/facebook): mientras se completan confirmed_email + avatar. La pantalla de callback
-  // (Auth.jsx) espera a que baje a false antes de navegar, así el primer render de Perfil ya
-  // lee el estado canónico desde la BD. El login por email nunca lo activa.
-  const [oauthInitPending, setOauthInitPending] = useState(false);
+  // true durante la inicialización del PRIMER login OAuth (google/facebook): mientras se
+  // completan confirmed_email + avatar. Arranca en true YA en el primer render del callback
+  // (bandera 'oauth_init_pending' que puso socialLogin antes del redirect), así el guard de
+  // Auth.jsx NO navega a Perfil aunque INITIAL_SESSION llegue antes que SIGNED_IN. La pantalla
+  // de callback mantiene el loader neutro hasta que baje a false. El login por email nunca lo
+  // activa (la bandera solo la pone el flujo OAuth).
+  const [oauthInitPending, setOauthInitPending] = useState(() => {
+    try { return sessionStorage.getItem('oauth_init_pending') === '1'; } catch { return false; }
+  });
 
   function login(userData) {
     setUserState(userData);
@@ -269,6 +273,23 @@ export function AuthProvider({ children }) {
         // Independiente del fetch de perfil de abajo (corre para OAuth nuevos y existentes).
         // El login tradicional por email NO entra aquí (provider === 'email').
         const isOAuth = provider === 'google' || provider === 'facebook';
+        // ¿Es el PRIMER login OAuth (callback fresco)? La bandera la puso socialLogin antes del
+        // redirect. Se consume UNA vez aquí (se elimina de inmediato) para que, si llegan dos
+        // eventos (INITIAL_SESSION + SIGNED_IN), solo el primero active el bloqueo. Los reloads
+        // posteriores (sin bandera) NO bloquean: la init es idempotente.
+        let doInitBlocking = false;
+        if (isOAuth) {
+          try { doInitBlocking = sessionStorage.getItem('oauth_init_pending') === '1'; } catch { doInitBlocking = false; }
+          if (doInitBlocking) {
+            try { sessionStorage.removeItem('oauth_init_pending'); } catch {}
+            setOauthInitPending(true);   // ya viene true del initializer; se reafirma por seguridad
+            console.log('[OAUTH DEBUG] init OAuth BLOQUEANTE activada (callback fresco) · id =', su.id, '· event =', event);
+          }
+        } else {
+          // Login por email (u otro no-OAuth): si quedó una bandera OAuth obsoleta, limpiarla y
+          // NO bloquear (el login por email nunca espera la init OAuth).
+          try { if (sessionStorage.getItem('oauth_init_pending')) { sessionStorage.removeItem('oauth_init_pending'); setOauthInitPending(false); } } catch {}
+        }
         // confirmed_email: para OAuth (nuevos y existentes). Se captura la promesa para poder
         // ESPERARLA antes de navegar en el primer login (abajo). Idempotente (skip si ya coincide).
         let confirmP = Promise.resolve();
@@ -347,12 +368,10 @@ export function AuthProvider({ children }) {
             await maybeSeedOAuthAvatar(su, data.avatar_path);
           });
 
-        // Primer login OAuth (SIGNED_IN): NO marcar la app como lista hasta que confirmed_email
-        // y avatar terminen (éxito o fallo). allSettled → nunca queda colgado; el login continúa
-        // aunque el avatar falle. INITIAL_SESSION (reloads) NO bloquea: la sesión ya está lista y
-        // ambas operaciones son idempotentes.
-        if (isOAuth && event === 'SIGNED_IN') {
-          setOauthInitPending(true);
+        // Primer login OAuth (callback fresco): NO marcar la app como lista hasta que
+        // confirmed_email y avatar terminen (éxito o fallo). allSettled → nunca queda colgado;
+        // el login continúa aunque el avatar falle. Reloads posteriores no entran aquí.
+        if (doInitBlocking) {
           Promise.allSettled([confirmP, canonicalP]).then(() => {
             console.log('[OAUTH DEBUG] init OAuth COMPLETA (confirmed_email + avatar) → oauthInitPending=false');
             setOauthInitPending(false);
@@ -364,6 +383,13 @@ export function AuthProvider({ children }) {
       // No es la garantía (esa es getUser en la hidratación), solo evita esperar a la próxima apertura.
       if (event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') {
         reconcileEmailFromAuth().then(applyAuthoritativeEmail);
+      }
+      // Callback OAuth SIN sesión (el usuario canceló/falló en el proveedor): limpiar la bandera
+      // y el loader para no quedar colgados. INITIAL_SESSION refleja la sesión ya tras detectar
+      // la URL, así que null aquí = no hay sesión (no es un estado intermedio del callback OK).
+      if (event === 'INITIAL_SESSION' && !session) {
+        try { if (sessionStorage.getItem('oauth_init_pending')) sessionStorage.removeItem('oauth_init_pending'); } catch {}
+        setOauthInitPending(false);
       }
       if (event === 'SIGNED_OUT') {
         setUserState(null);

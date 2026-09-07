@@ -587,11 +587,15 @@ export default function AuthScreen() {
     // correo (game → /checkout, backPath, waitlistMode…). Se guarda {} si no había state,
     // para marcar que hubo un callback OAuth (activa el loader neutro).
     try { sessionStorage.setItem('oauth_resume', JSON.stringify(state ?? {})); } catch {}
+    // Bandera de "callback OAuth en curso": la lee AuthContext para arrancar oauthInitPending=true
+    // desde el PRIMER render del callback, sin depender de qué evento (INITIAL_SESSION/SIGNED_IN)
+    // llegue primero. AuthContext la limpia al completar la init.
+    try { sessionStorage.setItem('oauth_init_pending', '1'); } catch {}
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
       options: { redirectTo: window.location.origin + '/auth' },
     });
-    if (error) { try { sessionStorage.removeItem('oauth_resume'); } catch {} setSocialError(error.message); setSocialLoading(null); }
+    if (error) { try { sessionStorage.removeItem('oauth_resume'); sessionStorage.removeItem('oauth_init_pending'); } catch {} setSocialError(error.message); setSocialLoading(null); }
   }
 
 
