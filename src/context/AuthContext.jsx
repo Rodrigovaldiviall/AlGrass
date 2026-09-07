@@ -2,8 +2,13 @@ import { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { getUser, setUser, removeUser } from '../services/userService';
 import { ensureUserCode } from '../utils/format';
+import { importOAuthAvatar } from '../utils/avatar';
 
 const AuthContext = createContext(null);
+
+// Guard de proceso: evita que dos eventos de sesión (INITIAL_SESSION + SIGNED_IN, etc.)
+// disparen dos importaciones/subidas de avatar simultáneas para el mismo usuario.
+const _avatarSeedInFlight = new Set();
 
 // Keys that belong to the device, not the user — preserved across logout.
 const _DEVICE_KEYS = new Set(['algrass_intro_seen', 'pichanga_welcome_seen', 'pichanga_coach_seen']);
@@ -85,6 +90,57 @@ export function AuthProvider({ children }) {
     setUserState(prev => (prev && prev.email !== email) ? { ...prev, email } : prev);
     const cur = getUser();
     if (cur && cur.email !== email) setUser({ ...cur, email });
+  }
+
+  // Marca como confirmado el email de una sesión OAuth: escribe confirmed_email = email
+  // AUTORITATIVO del servidor (getUser, no metadata arbitraria). Idempotente: solo escribe
+  // si difiere del actual (nunca reescribe si ya coincide, nunca lo pone a null). Falla en
+  // silencio; no bloquea el login.
+  async function maybeConfirmOAuthEmail(userId, authEmailP) {
+    const email = await authEmailP;                               // email real y confirmado del servidor
+    if (!email) return;                                           // getUser falló → no tocar nada
+    const { data: row } = await supabase
+      .from('users').select('confirmed_email').eq('id', userId).maybeSingle();
+    if (row?.confirmed_email === email) return;                   // ya coincide → no reescribir
+    const { error } = await supabase
+      .from('users').update({ confirmed_email: email }).eq('id', userId);
+    if (error) console.warn('[auth] confirmed_email OAuth:', error.message);
+  }
+
+  // Siembra el avatar del proveedor OAuth como foto inicial de AlGrass, SOLO si el
+  // usuario aún no tiene una (avatar_path null/vacío). Si ya tiene foto → no hace nada
+  // (así una foto subida en AlGrass jamás se sobrescribe). Falla en silencio: cualquier
+  // error (CORS, red, subida) deja el onboarding intacto, sin avatar.
+  async function maybeSeedOAuthAvatar(su, currentAvatarPath) {
+    if (currentAvatarPath) return;                                   // ya hay foto → nunca tocar
+    const url = su.user_metadata?.avatar_url || su.user_metadata?.picture || null;
+    if (!url) return;
+    if (_avatarSeedInFlight.has(su.id)) return;                      // evita subidas duplicadas
+    _avatarSeedInFlight.add(su.id);
+    try {
+      const path = await importOAuthAvatar(supabase, su.id, url);
+      const nowIso = new Date().toISOString();
+      // Guard anti-carrera server-side: escribe SOLO si avatar_path SIGUE null (otro evento
+      // o dispositivo pudo sembrar entremedias). Si ya no es null → no se sobrescribe.
+      const { data: upRows, error: upErr } = await supabase
+        .from('users')
+        .update({ avatar_path: path, avatar_updated_at: nowIso })
+        .eq('id', su.id)
+        .is('avatar_path', null)
+        .select('avatar_path');
+      if (upErr || !upRows?.length) return;                         // ya había foto o falló → no tocar estado
+      const version = new Date(nowIso).getTime();
+      setUserState(prev => prev ? { ...prev, avatarPath: path, avatarVersion: version } : prev);
+      try {
+        const stored = JSON.parse(localStorage.getItem('pichanga_profile') || '{}');
+        if (stored.userId === su.id || !stored.userId) {
+          stored.userId = su.id; stored.avatarPath = path; stored.avatarVersion = version;
+          localStorage.setItem('pichanga_profile', JSON.stringify(stored));
+        }
+      } catch { /* localStorage no disponible → estado ya actualizado en memoria */ }
+    } catch {
+      /* CORS/red/subida falló → continúa sin avatar; el login nunca se bloquea */
+    }
   }
 
   function logout() {
@@ -172,10 +228,18 @@ export function AuthProvider({ children }) {
         // en vuelo; su promesa se reutiliza abajo para dejar el user React con el email real.
         const authEmailP = reconcileEmailFromAuth();
 
+        // Solo OAuth (Google/Facebook): el email de la sesión ya viene autenticado por el
+        // proveedor, así que AlGrass lo considera confirmado → confirmed_email = ese email.
+        // Independiente del fetch de perfil de abajo (corre para OAuth nuevos y existentes).
+        // El login tradicional por email NO entra aquí (provider === 'email').
+        if (provider === 'google' || provider === 'facebook') {
+          maybeConfirmOAuthEmail(su.id, authEmailP);
+        }
+
         // Fetch canonical full_name + user_code from public.users — overrides auth metadata
         supabase
           .from('users')
-          .select('full_name, user_code, city, email')
+          .select('full_name, user_code, city, email, avatar_path')
           .eq('id', su.id)
           .maybeSingle()
           .then(async ({ data: initialData }) => {
@@ -186,7 +250,7 @@ export function AuthProvider({ children }) {
               await new Promise(r => setTimeout(r, 1500));
               const { data: retried } = await supabase
                 .from('users')
-                .select('full_name, user_code, city, email')
+                .select('full_name, user_code, city, email, avatar_path')
                 .eq('id', su.id)
                 .maybeSingle();
               data = retried;
@@ -229,6 +293,9 @@ export function AuthProvider({ children }) {
               if (resolvedCity) stored.city     = resolvedCity;
               localStorage.setItem('pichanga_profile', JSON.stringify(stored));
             } catch {}
+            // Siembra el avatar del proveedor si aún no hay foto (fire-and-forget: no
+            // bloquea el login). El guard avatar_path==null vive dentro del helper.
+            maybeSeedOAuthAvatar(su, data.avatar_path);
           });
       }
       // Complemento en TIEMPO REAL para la sesión ya abierta: si el cambio se confirma mientras
