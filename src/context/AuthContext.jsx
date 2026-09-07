@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { getUser, setUser, removeUser } from '../services/userService';
 import { ensureUserCode } from '../utils/format';
@@ -84,6 +84,10 @@ export function AuthProvider({ children }) {
   const [oauthInitPending, setOauthInitPending] = useState(() => {
     try { return sessionStorage.getItem('oauth_init_pending') === '1'; } catch { return false; }
   });
+  // Corre-una-sola-vez: la init OAuth bloqueante arranca en el PRIMER evento con sesión OAuth,
+  // sin depender de si es INITIAL_SESSION o SIGNED_IN el que llega primero. Evita dobles
+  // ejecuciones y que el evento equivocado consuma la bandera dejándolo colgado.
+  const oauthInitStartedRef = useRef(false);
 
   function login(userData) {
     setUserState(userData);
@@ -277,18 +281,19 @@ export function AuthProvider({ children }) {
         // redirect. Se consume UNA vez aquí (se elimina de inmediato) para que, si llegan dos
         // eventos (INITIAL_SESSION + SIGNED_IN), solo el primero active el bloqueo. Los reloads
         // posteriores (sin bandera) NO bloquean: la init es idempotente.
-        let doInitBlocking = false;
-        if (isOAuth) {
-          try { doInitBlocking = sessionStorage.getItem('oauth_init_pending') === '1'; } catch { doInitBlocking = false; }
-          if (doInitBlocking) {
-            try { sessionStorage.removeItem('oauth_init_pending'); } catch {}
-            setOauthInitPending(true);   // ya viene true del initializer; se reafirma por seguridad
-            console.log('[OAUTH DEBUG] init OAuth BLOQUEANTE activada (callback fresco) · id =', su.id, '· event =', event);
-          }
-        } else {
-          // Login por email (u otro no-OAuth): si quedó una bandera OAuth obsoleta, limpiarla y
-          // NO bloquear (el login por email nunca espera la init OAuth).
-          try { if (sessionStorage.getItem('oauth_init_pending')) { sessionStorage.removeItem('oauth_init_pending'); setOauthInitPending(false); } } catch {}
+        let flagPresent = false;
+        try { flagPresent = sessionStorage.getItem('oauth_init_pending') === '1'; } catch { /* sin sessionStorage → queda false */ }
+        // Bloqueo SOLO si: es OAuth + hay bandera de callback fresco + no arrancó ya (ref).
+        const doInitBlocking = isOAuth && flagPresent && !oauthInitStartedRef.current;
+        if (doInitBlocking) {
+          oauthInitStartedRef.current = true;
+          try { sessionStorage.removeItem('oauth_init_pending'); } catch {}
+          setOauthInitPending(true);   // ya viene true del initializer; se reafirma por seguridad
+          console.log('[OAUTH DEBUG] init OAuth BLOQUEANTE activada (callback fresco) · id =', su.id, '· event =', event);
+        } else if (flagPresent && !isOAuth) {
+          // Login por email (u otro no-OAuth) con bandera OAuth obsoleta: limpiar y NO bloquear.
+          try { sessionStorage.removeItem('oauth_init_pending'); } catch {}
+          setOauthInitPending(false);
         }
         // confirmed_email: para OAuth (nuevos y existentes). Se captura la promesa para poder
         // ESPERARLA antes de navegar en el primer login (abajo). Idempotente (skip si ya coincide).
@@ -369,13 +374,18 @@ export function AuthProvider({ children }) {
           });
 
         // Primer login OAuth (callback fresco): NO marcar la app como lista hasta que
-        // confirmed_email y avatar terminen (éxito o fallo). allSettled → nunca queda colgado;
-        // el login continúa aunque el avatar falle. Reloads posteriores no entran aquí.
+        // confirmed_email y avatar terminen. GARANTÍA DE DESBLOQUEO: el finally corre pase lo que
+        // pase (éxito, rechazo o throw de cualquiera de las dos), así JAMÁS queda la app colgada
+        // si la init falla. Reloads posteriores no entran aquí (ref + sin bandera).
         if (doInitBlocking) {
-          Promise.allSettled([confirmP, canonicalP]).then(() => {
-            console.log('[OAUTH DEBUG] init OAuth COMPLETA (confirmed_email + avatar) → oauthInitPending=false');
-            setOauthInitPending(false);
-          });
+          (async () => {
+            try {
+              await Promise.allSettled([confirmP, canonicalP]);
+            } finally {
+              console.log('[OAUTH DEBUG] init OAuth COMPLETA (o fallida) → oauthInitPending=false');
+              setOauthInitPending(false);
+            }
+          })();
         }
       }
       // Complemento en TIEMPO REAL para la sesión ya abierta: si el cambio se confirma mientras
@@ -384,10 +394,11 @@ export function AuthProvider({ children }) {
       if (event === 'USER_UPDATED' || event === 'TOKEN_REFRESHED') {
         reconcileEmailFromAuth().then(applyAuthoritativeEmail);
       }
-      // Callback OAuth SIN sesión (el usuario canceló/falló en el proveedor): limpiar la bandera
-      // y el loader para no quedar colgados. INITIAL_SESSION refleja la sesión ya tras detectar
-      // la URL, así que null aquí = no hay sesión (no es un estado intermedio del callback OK).
-      if (event === 'INITIAL_SESSION' && !session) {
+      // Callback OAuth SIN sesión (cancelación/fallo en el proveedor): limpiar bandera y loader
+      // para no quedar colgados. Guard con oauthInitStartedRef: si la init bloqueante YA arrancó
+      // (llegó antes un evento con sesión), NO tocamos nada aquí — el finally de arriba es quien
+      // desbloquea. Así este ramo no puede desbloquear a destiempo por ordering de eventos.
+      if (event === 'INITIAL_SESSION' && !session && !oauthInitStartedRef.current) {
         try { if (sessionStorage.getItem('oauth_init_pending')) sessionStorage.removeItem('oauth_init_pending'); } catch {}
         setOauthInitPending(false);
       }
