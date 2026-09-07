@@ -420,7 +420,7 @@ export default function AuthScreen() {
   });
   useEffect(() => { try { sessionStorage.removeItem('oauth_resume'); } catch {} }, []);
   const state = _locState ?? _resume.state;
-  const { user, login } = useAuth();
+  const { user, login, oauthInitPending } = useAuth();
   const game = state?.game;
 
   // Auto-redirect por Shared Link (solo si el guard lo usaría: sin game ni backPath). Antes de
@@ -532,7 +532,10 @@ export default function AuthScreen() {
 
   // Redirect guard — suspendido durante la recuperación (recoveryActive) para no
   // sacar al usuario de la pantalla entre verifyOtp (crea sesión) y el mensaje de éxito.
-  if (user && !recoveryActive) {
+  // También suspendido mientras oauthInitPending: en el PRIMER login OAuth no navegamos a
+  // Perfil hasta que confirmed_email + avatar estén escritos, para que el primer render ya
+  // los lea desde la BD (sin refrescar). El login por email nunca activa oauthInitPending.
+  if (user && !recoveryActive && !oauthInitPending) {
     // Marca persistente: este dispositivo ya completó un login/registro (cualquier método:
     // email, signup, Google…). Próxima vez que se vea Auth → arranca en "Iniciar sesión".
     try { localStorage.setItem('hasLoggedBefore', 'true'); } catch {}

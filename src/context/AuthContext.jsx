@@ -75,6 +75,11 @@ async function reconcileEmailFromAuth() {
 
 export function AuthProvider({ children }) {
   const [user, setUserState] = useState(() => getUser());
+  // true SOLO durante la inicialización del PRIMER login OAuth (evento SIGNED_IN con provider
+  // google/facebook): mientras se completan confirmed_email + avatar. La pantalla de callback
+  // (Auth.jsx) espera a que baje a false antes de navegar, así el primer render de Perfil ya
+  // lee el estado canónico desde la BD. El login por email nunca lo activa.
+  const [oauthInitPending, setOauthInitPending] = useState(false);
 
   function login(userData) {
     setUserState(userData);
@@ -98,12 +103,15 @@ export function AuthProvider({ children }) {
   // silencio; no bloquea el login.
   async function maybeConfirmOAuthEmail(userId, authEmailP) {
     const email = await authEmailP;                               // email real y confirmado del servidor
-    if (!email) return;                                           // getUser falló → no tocar nada
-    const { data: row } = await supabase
+    console.log('[OAUTH DEBUG] confirmed_email · getUser().email =', email, '· target public.users.id =', userId);
+    if (!email) { console.log('[OAUTH DEBUG] confirmed_email · SKIP: getUser().email vacío/null'); return; } // getUser falló → no tocar nada
+    const { data: row, error: selErr } = await supabase
       .from('users').select('confirmed_email').eq('id', userId).maybeSingle();
-    if (row?.confirmed_email === email) return;                   // ya coincide → no reescribir
-    const { error } = await supabase
-      .from('users').update({ confirmed_email: email }).eq('id', userId);
+    console.log('[OAUTH DEBUG] confirmed_email · fila leída id =', userId, '· confirmed_email actual =', row?.confirmed_email, '· selError =', selErr);
+    if (row?.confirmed_email === email) { console.log('[OAUTH DEBUG] confirmed_email · SKIP: ya coincide, no reescribe'); return; } // ya coincide → no reescribir
+    const { data: upData, error } = await supabase
+      .from('users').update({ confirmed_email: email }).eq('id', userId).select('id, confirmed_email');
+    console.log('[OAUTH DEBUG] confirmed_email · UPDATE result · data =', upData, '· error =', error);
     if (error) console.warn('[auth] confirmed_email OAuth:', error.message);
   }
 
@@ -112,13 +120,20 @@ export function AuthProvider({ children }) {
   // (así una foto subida en AlGrass jamás se sobrescribe). Falla en silencio: cualquier
   // error (CORS, red, subida) deja el onboarding intacto, sin avatar.
   async function maybeSeedOAuthAvatar(su, currentAvatarPath) {
-    if (currentAvatarPath) return;                                   // ya hay foto → nunca tocar
+    const rawAvatarUrl = su.user_metadata?.avatar_url;
+    const rawPicture   = su.user_metadata?.picture;
+    console.log('[OAUTH DEBUG] avatar · id =', su.id, '· avatar_path actual =', currentAvatarPath,
+      '· typeof avatar_url =', typeof rawAvatarUrl, '· avatar_url =', rawAvatarUrl,
+      '· typeof picture =', typeof rawPicture, '· picture =', rawPicture);
+    if (currentAvatarPath) { console.log('[OAUTH DEBUG] avatar · SKIP: ya hay avatar_path'); return; } // ya hay foto → nunca tocar
     const url = su.user_metadata?.avatar_url || su.user_metadata?.picture || null;
-    if (!url) return;
-    if (_avatarSeedInFlight.has(su.id)) return;                      // evita subidas duplicadas
+    if (!url) { console.log('[OAUTH DEBUG] avatar · SKIP: sin avatar_url/picture usable'); return; }
+    if (_avatarSeedInFlight.has(su.id)) { console.log('[OAUTH DEBUG] avatar · SKIP: subida ya en curso'); return; } // evita subidas duplicadas
     _avatarSeedInFlight.add(su.id);
+    console.log('[OAUTH DEBUG] avatar · intentando importar desde url =', url);
     try {
       const path = await importOAuthAvatar(supabase, su.id, url);
+      console.log('[OAUTH DEBUG] avatar · importOAuthAvatar OK · path =', path);
       const nowIso = new Date().toISOString();
       // Guard anti-carrera server-side: escribe SOLO si avatar_path SIGUE null (otro evento
       // o dispositivo pudo sembrar entremedias). Si ya no es null → no se sobrescribe.
@@ -128,6 +143,7 @@ export function AuthProvider({ children }) {
         .eq('id', su.id)
         .is('avatar_path', null)
         .select('avatar_path');
+      console.log('[OAUTH DEBUG] avatar · UPDATE result · id =', su.id, '· data =', upRows, '· error =', upErr);
       if (upErr || !upRows?.length) return;                         // ya había foto o falló → no tocar estado
       const version = new Date(nowIso).getTime();
       setUserState(prev => prev ? { ...prev, avatarPath: path, avatarVersion: version } : prev);
@@ -138,7 +154,9 @@ export function AuthProvider({ children }) {
           localStorage.setItem('pichanga_profile', JSON.stringify(stored));
         }
       } catch { /* localStorage no disponible → estado ya actualizado en memoria */ }
-    } catch {
+    } catch (e) {
+      // [OAUTH DEBUG] TEMPORAL: se expone el error real (antes era catch silencioso).
+      console.error('[OAUTH DEBUG] avatar · ERROR real en import/upload:', e);
       /* CORS/red/subida falló → continúa sin avatar; el login nunca se bloquea */
     }
   }
@@ -217,6 +235,24 @@ export function AuthProvider({ children }) {
         const providers = (su.identities ?? []).map(i => i.provider);
         const identities = (su.identities ?? []).map(({ id, provider: p }) => ({ id, provider: p }));
 
+        // ── [OAUTH DEBUG] TEMPORAL: instrumentación del objeto de sesión ──────────────
+        console.log('[OAUTH DEBUG] === session ·', event, '===');
+        console.log('[OAUTH DEBUG] su.id =', su.id);
+        console.log('[OAUTH DEBUG] su.email =', su.email);
+        console.log('[OAUTH DEBUG] app_metadata.provider =', su.app_metadata?.provider);
+        console.log('[OAUTH DEBUG] app_metadata.providers =', su.app_metadata?.providers);
+        console.log('[OAUTH DEBUG] app_metadata (full) =', su.app_metadata);
+        console.log('[OAUTH DEBUG] identities =', (su.identities ?? []).map(i => ({
+          provider: i.provider, identity_id: i.identity_id ?? i.id, email: i.identity_data?.email ?? null,
+        })));
+        console.log('[OAUTH DEBUG] user_metadata.full_name =', su.user_metadata?.full_name,
+          '· name =', su.user_metadata?.name,
+          '· avatar_url =', su.user_metadata?.avatar_url,
+          '· picture =', su.user_metadata?.picture);
+        console.log('[OAUTH DEBUG] provider gate (computado) =', provider,
+          '· ¿pasa gate OAuth? =', (provider === 'google' || provider === 'facebook'));
+        // ─────────────────────────────────────────────────────────────────────────────
+
         const baseUser = { id: su.id, name, email, provider, providers, identities };
         login(baseUser);
 
@@ -232,17 +268,29 @@ export function AuthProvider({ children }) {
         // proveedor, así que AlGrass lo considera confirmado → confirmed_email = ese email.
         // Independiente del fetch de perfil de abajo (corre para OAuth nuevos y existentes).
         // El login tradicional por email NO entra aquí (provider === 'email').
-        if (provider === 'google' || provider === 'facebook') {
-          maybeConfirmOAuthEmail(su.id, authEmailP);
+        const isOAuth = provider === 'google' || provider === 'facebook';
+        // confirmed_email: para OAuth (nuevos y existentes). Se captura la promesa para poder
+        // ESPERARLA antes de navegar en el primer login (abajo). Idempotente (skip si ya coincide).
+        let confirmP = Promise.resolve();
+        if (isOAuth) {
+          console.log('[OAUTH DEBUG] gate OAuth PASA → ejecutando maybeConfirmOAuthEmail para id =', su.id);
+          confirmP = maybeConfirmOAuthEmail(su.id, authEmailP);
+        } else {
+          console.log('[OAUTH DEBUG] gate OAuth NO pasa (provider =', provider, ') → maybeConfirmOAuthEmail OMITIDO');
         }
 
-        // Fetch canonical full_name + user_code from public.users — overrides auth metadata
-        supabase
+        // Fetch canonical full_name + user_code from public.users — overrides auth metadata.
+        // canonicalP resuelve DESPUÉS de hidratar perfil Y sembrar avatar (await interno), para
+        // poder esperar ambos antes de navegar en el primer login OAuth.
+        const canonicalP = supabase
           .from('users')
           .select('full_name, user_code, city, email, avatar_path')
           .eq('id', su.id)
           .maybeSingle()
           .then(async ({ data: initialData }) => {
+            console.log('[OAUTH DEBUG] public.users leído · id consultado =', su.id,
+              '· ¿fila existe? =', !!initialData, '· full_name =', initialData?.full_name,
+              '· email(fila) =', initialData?.email, '· avatar_path(fila) =', initialData?.avatar_path);
             // For brand-new users the trigger that creates the users row may not
             // have run yet — retry once after a short delay.
             let data = initialData;
@@ -293,10 +341,23 @@ export function AuthProvider({ children }) {
               if (resolvedCity) stored.city     = resolvedCity;
               localStorage.setItem('pichanga_profile', JSON.stringify(stored));
             } catch {}
-            // Siembra el avatar del proveedor si aún no hay foto (fire-and-forget: no
-            // bloquea el login). El guard avatar_path==null vive dentro del helper.
-            maybeSeedOAuthAvatar(su, data.avatar_path);
+            // Siembra el avatar del proveedor si aún no hay foto. AWAIT (ya no fire-and-forget):
+            // así canonicalP no resuelve hasta que el avatar esté sembrado (o haya fallado sin
+            // bloquear). El guard avatar_path==null vive dentro del helper.
+            await maybeSeedOAuthAvatar(su, data.avatar_path);
           });
+
+        // Primer login OAuth (SIGNED_IN): NO marcar la app como lista hasta que confirmed_email
+        // y avatar terminen (éxito o fallo). allSettled → nunca queda colgado; el login continúa
+        // aunque el avatar falle. INITIAL_SESSION (reloads) NO bloquea: la sesión ya está lista y
+        // ambas operaciones son idempotentes.
+        if (isOAuth && event === 'SIGNED_IN') {
+          setOauthInitPending(true);
+          Promise.allSettled([confirmP, canonicalP]).then(() => {
+            console.log('[OAUTH DEBUG] init OAuth COMPLETA (confirmed_email + avatar) → oauthInitPending=false');
+            setOauthInitPending(false);
+          });
+        }
       }
       // Complemento en TIEMPO REAL para la sesión ya abierta: si el cambio se confirma mientras
       // la app está activa (sin reload), estos eventos disparan la MISMA reconciliación autoritativa.
@@ -315,7 +376,7 @@ export function AuthProvider({ children }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, linkProvider, unlinkProvider }}>
+    <AuthContext.Provider value={{ user, login, logout, linkProvider, unlinkProvider, oauthInitPending }}>
       {children}
     </AuthContext.Provider>
   );
