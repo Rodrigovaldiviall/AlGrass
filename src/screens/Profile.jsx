@@ -19,7 +19,7 @@ import { getVisibleBottom } from '../utils/layout';
 import { GameMetaLine } from '../components/GameMetaLine';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import { buildGameShareUrl } from '../utils/share';
-import { fetchPendingSlotExpiry, markSlotReservationNotified, getPendingReferralRewards, markReferralRewardsCommunicated } from '../services/reservationService';
+import { fetchPendingSlotExpiry, markSlotReservationNotified, getPendingRewards, markRewardsCommunicated } from '../services/reservationService';
 import { saveRating, fetchMyRatings, upsertRatingRows, markPopupShown, getLocalRatings, setLocalRatings } from '../services/ratingService';
 import { getMyWaitlistGamesFull } from '../services/waitlistService';
 import { useForegroundTick } from '../hooks/useForegroundTick';
@@ -1945,6 +1945,26 @@ function StarIcon({ filled, size = 30 }) {
   );
 }
 
+// Copy de la comunicación de recompensas según composición (referral / manual / mixto).
+// Reutilizado por el bloque del RatingModal y por el banner de Perfil.
+function rewardMessageLines(info) {
+  const total = Number(info?.total) || 0;
+  const title = `¡Ganaste S/ ${total % 1 === 0 ? total : total.toFixed(2)} en Recompensas!`;
+  const { referralCount = 0, manualCount = 0, firstName } = info || {};
+  let main; let tail = null;
+  if (referralCount > 0 && manualCount > 0) {
+    main = 'Tienes nuevas recompensas de AlGrass y de tus invitaciones.';
+  } else if (manualCount > 0) {
+    main = manualCount === 1 ? 'AlGrass te ha otorgado una recompensa.' : 'AlGrass te ha otorgado nuevas recompensas.';
+  } else {
+    main = referralCount === 1
+      ? `${firstName || 'Un jugador'} completó su primer partido gracias a tu invitación.`
+      : `${referralCount} jugadores que invitaste completaron su primer partido.`;
+    tail = 'Sigue invitando amigos y acumula más.';   // solo referral (copy actual intacto)
+  }
+  return { title, main, tail };
+}
+
 function RatingModal({ game, onRate, onSkip, rewardInfo = null }) {
   const [open, setOpen]       = useState(false);
   const [stars, setStars]     = useState(0);
@@ -1988,25 +2008,19 @@ function RatingModal({ game, onRate, onSkip, rewardInfo = null }) {
           </svg>
         </button>
 
-        {rewardInfo && (
+        {rewardInfo && (() => { const m = rewardMessageLines(rewardInfo); return (
           <div style={{
             padding: '14px 16px', borderRadius: 14, background: '#F1EFFB',
             border: '1px solid #E4DFF7', display: 'flex', flexDirection: 'column', gap: 4,
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <FontAwesomeIcon icon={faStar} style={{ fontSize: 16, color: '#6D5AE6' }} />
-              <span style={{ fontSize: 16, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>
-                ¡Ganaste S/ {Number(rewardInfo.total) % 1 === 0 ? Number(rewardInfo.total) : Number(rewardInfo.total).toFixed(2)} en Recompensas!
-              </span>
+              <span style={{ fontSize: 16, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>{m.title}</span>
             </div>
-            <div style={{ fontSize: 13, color: TEXT, lineHeight: 1.4 }}>
-              {rewardInfo.count === 1
-                ? `${rewardInfo.firstName || 'Un jugador'} completó su primer partido gracias a tu invitación.`
-                : `${rewardInfo.count} jugadores que invitaste completaron su primer partido.`}
-            </div>
-            <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.4 }}>Sigue invitando amigos y acumula más.</div>
+            <div style={{ fontSize: 13, color: TEXT, lineHeight: 1.4 }}>{m.main}</div>
+            {m.tail && <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.4 }}>{m.tail}</div>}
           </div>
-        )}
+        ); })()}
 
         <div style={{ textAlign: 'center', paddingRight: 24 }}>
           <div style={{ fontSize: 20, fontWeight: 800, color: TEXT, letterSpacing: -0.4 }}>¿Cómo estuvo tu partido?</div>
@@ -2781,7 +2795,7 @@ export default function Profile() {
     setRewardCommReady(false);
     if (!user?.id) { setRewardComm(null); setRewardCommReady(true); return; }
     let alive = true;
-    getPendingReferralRewards().then(res => { if (alive) { setRewardComm(res); setRewardCommReady(true); } });
+    getPendingRewards().then(res => { if (alive) { setRewardComm(res); setRewardCommReady(true); } });
     return () => { alive = false; };
   }, [user?.id]);
 
@@ -2789,7 +2803,7 @@ export default function Profile() {
   // animación. En error NO se asume éxito (podrá re-mostrarse). Se usa al cerrar el rating.
   async function communicateShownRewards(info) {
     if (!info?.ids?.length) return;
-    const { error } = await markReferralRewardsCommunicated(info.ids);
+    const { error } = await markRewardsCommunicated(info.ids);
     if (!error) { setRewardComm(null); setAnimateReward(true); }
   }
 
@@ -2804,7 +2818,7 @@ export default function Profile() {
     const info = rewardComm;
     setRewardBanner(info);                 // congela el texto visible en la sesión
     (async () => {
-      const { error } = await markReferralRewardsCommunicated(info.ids);
+      const { error } = await markRewardsCommunicated(info.ids);
       if (!error) { setRewardComm(null); setAnimateReward(true); }
       // si error: el banner ya se ve, pero communicated_at sigue NULL → se re-mostrará luego.
     })();
@@ -3187,16 +3201,10 @@ export default function Profile() {
               </button>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <FontAwesomeIcon icon={faStar} style={{ fontSize: 16, color: '#6D5AE6' }} />
-                <span style={{ fontSize: 16, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>
-                  ¡Ganaste S/ {Number(rewardBanner.total) % 1 === 0 ? Number(rewardBanner.total) : Number(rewardBanner.total).toFixed(2)} en Recompensas!
-                </span>
+                <span style={{ fontSize: 16, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>{rewardMessageLines(rewardBanner).title}</span>
               </div>
-              <div style={{ fontSize: 13, color: TEXT, lineHeight: 1.4 }}>
-                {rewardBanner.count === 1
-                  ? `${rewardBanner.firstName || 'Un jugador'} completó su primer partido gracias a tu invitación.`
-                  : `${rewardBanner.count} jugadores que invitaste completaron su primer partido.`}
-              </div>
-              <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.4 }}>Sigue invitando amigos y acumula más.</div>
+              <div style={{ fontSize: 13, color: TEXT, lineHeight: 1.4 }}>{rewardMessageLines(rewardBanner).main}</div>
+              {rewardMessageLines(rewardBanner).tail && <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.4 }}>{rewardMessageLines(rewardBanner).tail}</div>}
             </div>
           )}
 

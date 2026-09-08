@@ -87,39 +87,41 @@ export async function getRewardBalance() {
   return data?.reward_balance ?? 0;
 }
 
-// Recompensas por referido AÚN NO comunicadas al usuario (grant_referral con
-// communicated_at IS NULL). Fuente persistente y cross-dispositivo (reward_transactions).
-// Devuelve el agregado listo para el mensaje, o null si no hay ninguna.
-//   { ids, total, count, firstName }
-export async function getPendingReferralRewards() {
+// Recompensas AÚN NO comunicadas al usuario: grant_referral + grant_manual con
+// communicated_at IS NULL ('spend' nunca). Fuente persistente y cross-dispositivo
+// (reward_transactions). Devuelve la composición para elegir el copy, o null si no hay.
+//   { ids, total, referralCount, manualCount, firstName }
+export async function getPendingRewards() {
   if (!supabase) return null;
   const session = await getSession();
   const uid = session?.user?.id;
   if (!uid) return null;
   const { data, error } = await supabase
     .from('reward_transactions')
-    .select('id, amount, referred_user_id, created_at')
+    .select('id, type, amount, referred_user_id, created_at')
     .eq('user_id', uid)
-    .eq('type', 'grant_referral')
+    .in('type', ['grant_referral', 'grant_manual'])
     .is('communicated_at', null)
     .order('created_at', { ascending: true });
   if (error || !data?.length) return null;
-  const ids   = data.map(r => r.id);
-  const total = data.reduce((s, r) => s + (Number(r.amount) || 0), 0);
-  const count = data.length;
+  const ids           = data.map(r => r.id);
+  const total         = data.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const referral      = data.filter(r => r.type === 'grant_referral');
+  const referralCount = referral.length;
+  const manualCount   = data.length - referralCount;
   let firstName = null;
-  const firstRef = data[0].referred_user_id;
+  const firstRef = referral[0]?.referred_user_id;
   if (firstRef) {
     const { data: u } = await supabase.from('users').select('full_name').eq('id', firstRef).maybeSingle();
     firstName = u?.full_name || null;
   }
-  return { ids, total, count, firstName };
+  return { ids, total, referralCount, manualCount, firstName };
 }
 
 // Marca como comunicadas SOLO los IDs indicados (vía RPC SECURITY DEFINER: propias,
-// grant_referral, communicated_at IS NULL). Devuelve { count } o { error }. En error NO
-// se asume éxito → la recompensa podrá volver a mostrarse después.
-export async function markReferralRewardsCommunicated(ids) {
+// grant_referral|grant_manual, communicated_at IS NULL). Devuelve { count } o { error }.
+// En error NO se asume éxito → la recompensa podrá volver a mostrarse después.
+export async function markRewardsCommunicated(ids) {
   if (!supabase || !ids?.length) return { error: 'no-ids' };
   const { data, error } = await supabase.rpc('mark_referral_rewards_communicated', { p_ids: ids });
   if (error) return { error };
