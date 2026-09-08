@@ -87,6 +87,45 @@ export async function getRewardBalance() {
   return data?.reward_balance ?? 0;
 }
 
+// Recompensas por referido AÚN NO comunicadas al usuario (grant_referral con
+// communicated_at IS NULL). Fuente persistente y cross-dispositivo (reward_transactions).
+// Devuelve el agregado listo para el mensaje, o null si no hay ninguna.
+//   { ids, total, count, firstName }
+export async function getPendingReferralRewards() {
+  if (!supabase) return null;
+  const session = await getSession();
+  const uid = session?.user?.id;
+  if (!uid) return null;
+  const { data, error } = await supabase
+    .from('reward_transactions')
+    .select('id, amount, referred_user_id, created_at')
+    .eq('user_id', uid)
+    .eq('type', 'grant_referral')
+    .is('communicated_at', null)
+    .order('created_at', { ascending: true });
+  if (error || !data?.length) return null;
+  const ids   = data.map(r => r.id);
+  const total = data.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const count = data.length;
+  let firstName = null;
+  const firstRef = data[0].referred_user_id;
+  if (firstRef) {
+    const { data: u } = await supabase.from('users').select('full_name').eq('id', firstRef).maybeSingle();
+    firstName = u?.full_name || null;
+  }
+  return { ids, total, count, firstName };
+}
+
+// Marca como comunicadas SOLO los IDs indicados (vía RPC SECURITY DEFINER: propias,
+// grant_referral, communicated_at IS NULL). Devuelve { count } o { error }. En error NO
+// se asume éxito → la recompensa podrá volver a mostrarse después.
+export async function markReferralRewardsCommunicated(ids) {
+  if (!supabase || !ids?.length) return { error: 'no-ids' };
+  const { data, error } = await supabase.rpc('mark_referral_rewards_communicated', { p_ids: ids });
+  if (error) return { error };
+  return { count: data ?? 0 };
+}
+
 // ── promo codes ───────────────────────────────────────────────────────────────
 
 export async function validatePromoCode(code, unitPrice, gameType = null, userId = null, gameCity = null) {

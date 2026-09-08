@@ -19,7 +19,7 @@ import { getVisibleBottom } from '../utils/layout';
 import { GameMetaLine } from '../components/GameMetaLine';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import { buildGameShareUrl } from '../utils/share';
-import { fetchPendingSlotExpiry, markSlotReservationNotified } from '../services/reservationService';
+import { fetchPendingSlotExpiry, markSlotReservationNotified, getPendingReferralRewards, markReferralRewardsCommunicated } from '../services/reservationService';
 import { saveRating, fetchMyRatings, upsertRatingRows, markPopupShown, getLocalRatings, setLocalRatings } from '../services/ratingService';
 import { getMyWaitlistGamesFull } from '../services/waitlistService';
 import { useForegroundTick } from '../hooks/useForegroundTick';
@@ -1945,7 +1945,7 @@ function StarIcon({ filled, size = 30 }) {
   );
 }
 
-function RatingModal({ game, onRate, onSkip }) {
+function RatingModal({ game, onRate, onSkip, rewardInfo = null }) {
   const [open, setOpen]       = useState(false);
   const [stars, setStars]     = useState(0);
   const [hovered, setHovered] = useState(0);
@@ -1987,6 +1987,26 @@ function RatingModal({ game, onRate, onSkip }) {
             <path d="M1 1l10 10M11 1L1 11" stroke={TEXT} strokeWidth="1.8" strokeLinecap="round"/>
           </svg>
         </button>
+
+        {rewardInfo && (
+          <div style={{
+            padding: '14px 16px', borderRadius: 14, background: '#F1EFFB',
+            border: '1px solid #E4DFF7', display: 'flex', flexDirection: 'column', gap: 4,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <FontAwesomeIcon icon={faStar} style={{ fontSize: 16, color: '#6D5AE6' }} />
+              <span style={{ fontSize: 16, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>
+                ¡Ganaste S/ {Number(rewardInfo.total) % 1 === 0 ? Number(rewardInfo.total) : Number(rewardInfo.total).toFixed(2)} en Recompensas!
+              </span>
+            </div>
+            <div style={{ fontSize: 13, color: TEXT, lineHeight: 1.4 }}>
+              {rewardInfo.count === 1
+                ? `${rewardInfo.firstName || 'Un jugador'} completó su primer partido gracias a tu invitación.`
+                : `${rewardInfo.count} jugadores que invitaste completaron su primer partido.`}
+            </div>
+            <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.4 }}>Sigue invitando amigos y acumula más.</div>
+          </div>
+        )}
 
         <div style={{ textAlign: 'center', paddingRight: 24 }}>
           <div style={{ fontSize: 20, fontWeight: 800, color: TEXT, letterSpacing: -0.4 }}>¿Cómo estuvo tu partido?</div>
@@ -2172,15 +2192,21 @@ export default function Profile() {
   const [extraGames, setExtraGames] = useState(() => {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; }
   });
+  // El caché de sesión SOLO se usa si pertenece al usuario actual (evita filtrar wallet del anterior).
   const [creditBalance, setCreditBalance] = useState(() => {
-    if (_walletVisualCache) return _walletVisualCache.credit;
+    if (_walletVisualCache && _walletVisualCache.uid === user?.id) return _walletVisualCache.credit;
     try { const c = JSON.parse(localStorage.getItem(CREDIT_KEY)); return (c?.balance || 0) > 0 ? c.balance : 0; } catch { return 0; }
   });
-  const [rewardBalance, setRewardBalance] = useState(() => _walletVisualCache ? _walletVisualCache.reward : 0);
-  // Conocemos el wallet si ya hay caché de sesión → sin skeleton ni salto al volver a Profile.
-  const [walletKnown, setWalletKnown]     = useState(() => _walletVisualCache != null);
+  const [rewardBalance, setRewardBalance] = useState(() => (_walletVisualCache && _walletVisualCache.uid === user?.id) ? _walletVisualCache.reward : 0);
+  // Conocemos el wallet si ya hay caché de sesión DEL usuario actual → sin skeleton ni salto al volver a Profile.
+  const [walletKnown, setWalletKnown]     = useState(() => _walletVisualCache != null && _walletVisualCache.uid === user?.id);
   const [rewardsOpen, setRewardsOpen]     = useState(false);
-  const [rewardTip, setRewardTip]         = useState(false);
+  // Recompensas por referido pendientes de comunicar (grant_referral, communicated_at IS NULL).
+  const [rewardComm, setRewardComm]       = useState(null);   // { ids, total, count, firstName } | null (loaded-empty vs pending)
+  const [rewardCommReady, setRewardCommReady] = useState(false); // false = cargando; true = resuelto (con o sin pendientes)
+  const [rewardBanner, setRewardBanner]   = useState(null);   // snapshot mostrado en el banner de Perfil (fallback)
+  const [rewardBannerClosed, setRewardBannerClosed] = useState(false); // cierre VISUAL con X (el marcado es independiente)
+  const [animateReward, setAnimateReward] = useState(false);  // celebración one-shot en la estrella
   const [waitlistEntries, setWaitlistEntries] = useState(() => {
     try { const w = JSON.parse(localStorage.getItem(WAITLIST_KEY_P)); return Array.isArray(w) ? w : []; } catch { return []; }
   });
@@ -2732,6 +2758,9 @@ export default function Profile() {
     });
   }, [dataReady, ratingsReady]); // eslint-disable-line
 
+  // Ambas cargas resueltas → decisión atómica de modal vs fallback (evita carrera:
+  // gameToRate null por "cargando" NO debe disparar el fallback de recompensas).
+  const ratingsResolved = dataReady && !!user && ratingsReady;
   const gameToRate = (dataReady && user && ratingsReady)
     ? past.find(g => {
         if (!(g.type === 'match' || g.type === 'rental')) return false;
@@ -2744,6 +2773,49 @@ export default function Profile() {
         return r.stars == null && r.popup_shown_at == null && within14;
       }) ?? null
     : null;
+
+  // ── Recompensas por referido: pendientes de comunicar ─────────────────────
+  // Se leen una vez por entrada a Perfil (persistente en BD, cross-dispositivo). NO se
+  // vinculan a gameToRate: el rating es solo el momento de comunicación.
+  useEffect(() => {
+    setRewardCommReady(false);
+    if (!user?.id) { setRewardComm(null); setRewardCommReady(true); return; }
+    let alive = true;
+    getPendingReferralRewards().then(res => { if (alive) { setRewardComm(res); setRewardCommReady(true); } });
+    return () => { alive = false; };
+  }, [user?.id]);
+
+  // Marca EXACTAMENTE los IDs mostrados; solo ante éxito limpia el pendiente y dispara la
+  // animación. En error NO se asume éxito (podrá re-mostrarse). Se usa al cerrar el rating.
+  async function communicateShownRewards(info) {
+    if (!info?.ids?.length) return;
+    const { error } = await markReferralRewardsCommunicated(info.ids);
+    if (!error) { setRewardComm(null); setAnimateReward(true); }
+  }
+
+  // Fallback (Caso B): sin rating activo y con recompensas pendientes → banner inline UNA vez.
+  // Se marca SOLO después de fijar el snapshot (banner realmente renderizado).
+  const rewardBannerMarkedRef = useRef(false);
+  // Fallback SOLO cuando ambas cargas están resueltas y, ya resueltas, no hay gameToRate.
+  const showRewardBanner = ratingsResolved && rewardCommReady && !confirmedGame && !slotExpiry && !gameToRate && !!rewardComm;
+  useEffect(() => {
+    if (!showRewardBanner || rewardBannerMarkedRef.current) return;
+    rewardBannerMarkedRef.current = true;
+    const info = rewardComm;
+    setRewardBanner(info);                 // congela el texto visible en la sesión
+    (async () => {
+      const { error } = await markReferralRewardsCommunicated(info.ids);
+      if (!error) { setRewardComm(null); setAnimateReward(true); }
+      // si error: el banner ya se ve, pero communicated_at sigue NULL → se re-mostrará luego.
+    })();
+  }, [showRewardBanner]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Animación one-shot: se limpia sola (~1.2s) → vuelve al estado visual normal.
+  useEffect(() => {
+    if (!animateReward) return;
+    const t = setTimeout(() => setAnimateReward(false), 1300);
+    return () => clearTimeout(t);
+  }, [animateReward]);
 
   async function handleSave(updated) {
     const stamped = user?.id ? { ...updated, userId: user.id } : updated;
@@ -2895,6 +2967,7 @@ export default function Profile() {
 
   function handleRate({ stars, comment }) {
     if (!gameToRate) return;
+    communicateShownRewards(rewardComm);   // recompensas mostradas en este modal → marcar + animar
     const cleanComment = comment?.trim() || null;
     const gId = gameToRate.gameId ?? gameToRate.id;
     const ratedAt = new Date().toISOString();
@@ -2998,29 +3071,29 @@ export default function Profile() {
         background: 'transparent', border: 'none', padding: 0, textAlign: 'left', cursor: 'pointer',
         fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none',
       }}>
-        <div style={{ width: 38, height: 38, borderRadius: 19, background: '#F1EFFB', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <FontAwesomeIcon icon={faStar} style={{ fontSize: 16, color: '#6D5AE6' }} />
+        <div style={{ width: 38, height: 38, borderRadius: 19, background: '#F1EFFB', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, position: 'relative' }}>
+          <FontAwesomeIcon icon={faStar} style={{ fontSize: 16, color: '#6D5AE6', animation: animateReward ? 'rwdPulse 1.2s ease' : 'none' }} />
+          {animateReward && (
+            <>
+              <style>{`
+                @keyframes rwdPulse { 0%{transform:scale(1)} 25%{transform:scale(1.4)} 55%{transform:scale(0.9)} 100%{transform:scale(1)} }
+                @keyframes rwdSpark { 0%{opacity:0;transform:translate(0,0) scale(0.3)} 30%{opacity:1} 100%{opacity:0;transform:translate(var(--tx),var(--ty)) scale(1)} }
+              `}</style>
+              <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+                {[['-14px','-12px'],['14px','-12px'],['-16px','6px'],['16px','6px'],['0px','-18px'],['0px','16px']].map(([tx, ty], i) => (
+                  <span key={i} style={{
+                    position: 'absolute', left: '50%', top: '50%', width: 6, height: 6, marginLeft: -3, marginTop: -3,
+                    '--tx': tx, '--ty': ty, animation: `rwdSpark 1.1s ease ${i * 0.05}s both`,
+                  }}>
+                    <svg width="6" height="6" viewBox="0 0 24 24" fill="#F5B301"><path d="M12 2l2.9 6.9L22 9.3l-5.2 5 1.4 7.7L12 18.6 5.8 22l1.4-7.7L2 9.3l7.1-.4z"/></svg>
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
         </div>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 500, color: SUB, marginBottom: 2, display: 'flex', alignItems: 'center', gap: 5, position: 'relative' }}>
-            <span>Recompensas</span>
-            <span
-              role="button" aria-label="Información de Recompensas"
-              onClick={(e) => { e.stopPropagation(); setRewardTip(v => !v); }}
-              style={{
-                width: 14, height: 14, borderRadius: 7, border: `1px solid ${HAIR}`, background: SOFT,
-                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 9.5, fontWeight: 700, color: SUB, lineHeight: 1, flexShrink: 0,
-              }}>?</span>
-            {rewardTip && (
-              <span style={{
-                position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, zIndex: 30,
-                width: 190, padding: '8px 10px', borderRadius: 10, background: TEXT, color: '#fff',
-                fontSize: 11.5, fontWeight: 500, lineHeight: 1.4, letterSpacing: 0,
-                boxShadow: '0 4px 14px rgba(0,0,0,0.18)',
-              }}>Las Recompensas solo se aplican al pago del titular.</span>
-            )}
-          </div>
+          <div style={{ fontSize: 12.5, fontWeight: 500, color: SUB, marginBottom: 2 }}>Recompensas</div>
           <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, letterSpacing: -0.5 }}>S/. {Number(rewardBalance).toFixed(2)}</div>
         </div>
       </button>
@@ -3101,8 +3174,33 @@ export default function Profile() {
             </div>
           )}
 
+          {rewardBanner && !rewardBannerClosed && (
+            <div style={{ margin: '4px 16px 0', padding: '14px 40px 14px 16px', borderRadius: 14, background: '#F1EFFB', border: '1px solid #E4DFF7', display: 'flex', flexDirection: 'column', gap: 4, position: 'relative' }}>
+              <button onClick={() => setRewardBannerClosed(true)} aria-label="Cerrar" style={{
+                position: 'absolute', top: 10, right: 10, width: 26, height: 26, borderRadius: 13, border: 'none',
+                background: 'rgba(109,90,230,0.10)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                cursor: 'pointer', WebkitTapHighlightColor: 'transparent', outline: 'none', padding: 0,
+              }}>
+                <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+                  <path d="M1 1l10 10M11 1L1 11" stroke="#6D5AE6" strokeWidth="1.8" strokeLinecap="round"/>
+                </svg>
+              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <FontAwesomeIcon icon={faStar} style={{ fontSize: 16, color: '#6D5AE6' }} />
+                <span style={{ fontSize: 16, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>
+                  ¡Ganaste S/ {Number(rewardBanner.total) % 1 === 0 ? Number(rewardBanner.total) : Number(rewardBanner.total).toFixed(2)} en Recompensas!
+                </span>
+              </div>
+              <div style={{ fontSize: 13, color: TEXT, lineHeight: 1.4 }}>
+                {rewardBanner.count === 1
+                  ? `${rewardBanner.firstName || 'Un jugador'} completó su primer partido gracias a tu invitación.`
+                  : `${rewardBanner.count} jugadores que invitaste completaron su primer partido.`}
+              </div>
+              <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.4 }}>Sigue invitando amigos y acumula más.</div>
+            </div>
+          )}
+
           {creditEl}
-          {rewardTip && <div onClick={() => setRewardTip(false)} style={{ position: 'fixed', inset: 0, zIndex: 29 }} />}
           {rewardsOpen && <RewardsSheet balance={rewardBalance} onClose={() => setRewardsOpen(false)} />}
 
           <SectionHeader title="Próximos eventos" count={upcoming.length} />
@@ -3264,8 +3362,9 @@ export default function Profile() {
           }}
         />
       )}
-      {!confirmedGame && !slotExpiry && gameToRate && (
-        <RatingModal key={gameToRate.id} game={gameToRate} onRate={handleRate} onSkip={() => {
+      {!confirmedGame && !slotExpiry && gameToRate && rewardCommReady && (
+        <RatingModal key={gameToRate.id} game={gameToRate} rewardInfo={rewardComm} onRate={handleRate} onSkip={() => {
+          communicateShownRewards(rewardComm);   // recompensas mostradas → marcar + animar
           const gId = gameToRate.gameId ?? gameToRate.id;
           setRatings(prev => ({
             ...prev,
