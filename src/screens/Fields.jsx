@@ -1017,7 +1017,7 @@ export default function Fields() {
             // PWA standalone: la TabBar no reserva safe-area → anclar al borde del menú (px fijo,
             // sin sumar el inset que en iPhone lo hacía "flotar"). Navegador: comportamiento intacto.
             bottom: (typeof window !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches)
-              ? '66px'
+              ? '74px'
               : 'calc(env(safe-area-inset-bottom) + 70px)',
             zIndex: 50,
             display: 'inline-flex', alignItems: 'center', gap: 6,
