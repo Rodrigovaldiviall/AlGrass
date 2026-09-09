@@ -29,27 +29,26 @@ export function GameMetaLine({ format, totalSpots, durationMin, womenOnly, parki
           ? <span style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center' }}>{I.sub(SUB)}</span>
           : <span style={{ flexShrink: 0, lineHeight: 1.2, textAlign: 'center' }}>Con<br/>suplentes</span>
       )}
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0, overflow: 'hidden' }}>
-        {womenOnly ? (
-          <>
-            {I.female(SUB)}{!hasSubs && !is90min && <span style={{ whiteSpace: 'nowrap' }}>Femenino</span>}
-            {parking && <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 3 }}>{ParkingIcon()}</span>}
-            {covered && <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 3 }}>{I.roof(SUB)}</span>}
-          </>
-        ) : parking ? (
-          <>
-            {ParkingIcon()}{!hasSubs && <span style={{ whiteSpace: 'nowrap' }}>Est.</span>}
-            {covered && <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 3 }}>{I.roof(SUB)}</span>}
-          </>
-        ) : covered ? (
-          <>{I.roof(SUB)}{!hasSubs && <span style={{ whiteSpace: 'nowrap' }}>Cubierta</span>}</>
-        ) : null}
-      </span>
-      {filmed && (
-        <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
-          {I.camera(SUB)}
-        </span>
-      )}
+      {(() => {
+        // Prioridad de renderizado: Femenino → Filmado → Parking → Techado → resto.
+        // El primero presente muestra icono + texto (según espacio); los demás, solo icono.
+        const items = [];
+        if (womenOnly) items.push({ icon: I.female(SUB), text: 'Femenino', showText: !hasSubs && !is90min });
+        if (filmed)    items.push({ icon: I.camera(SUB), text: 'Filmado',  showText: !hasSubs });
+        if (parking)   items.push({ icon: ParkingIcon(), text: 'Est.',     showText: !hasSubs });
+        if (covered)   items.push({ icon: I.roof(SUB),   text: 'Cubierta', showText: !hasSubs });
+        if (!items.length) return null;
+        return (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0, overflow: 'hidden' }}>
+            {items.map((it, i) => (
+              <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                {it.icon}
+                {i === 0 && it.showText && <span style={{ whiteSpace: 'nowrap' }}>{it.text}</span>}
+              </span>
+            ))}
+          </span>
+        );
+      })()}
     </>
   );
 }
