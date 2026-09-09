@@ -1014,7 +1014,12 @@ export default function Fields() {
           onClick={() => { setView(v => v === 'list' ? 'map' : 'list'); resetSheet(); }}
           style={{
             position: 'fixed', left: '50%', transform: 'translateX(-50%)',
-            bottom: 'calc(env(safe-area-inset-bottom) + 70px)', zIndex: 50,
+            // PWA standalone: la TabBar no reserva safe-area → anclar al borde del menú (px fijo,
+            // sin sumar el inset que en iPhone lo hacía "flotar"). Navegador: comportamiento intacto.
+            bottom: (typeof window !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches)
+              ? '66px'
+              : 'calc(env(safe-area-inset-bottom) + 70px)',
+            zIndex: 50,
             display: 'inline-flex', alignItems: 'center', gap: 6,
             height: 34, padding: '0 14px', borderRadius: 999, border: 'none',
             background: view === 'list' ? '#222222' : '#fff', color: view === 'list' ? '#fff' : '#1B1B1F', fontSize: 12.5, fontWeight: 700,
