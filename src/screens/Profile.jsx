@@ -650,22 +650,25 @@ function ProfileCard({ user, gamesPlayedCount, onEdit, onEditEmail, onConfirmEma
           Una sola línea, azul 12px/600 (jerarquía del @código), con icono de alerta claramente pulsable.
           Desaparece al confirmar; reaparece si el correo cambia. No aparece en la tarjeta pública. */}
       {user.emailReady && (!_emailReviewed || _emailChecked) && user.email && (
-        <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${HAIR}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-          <span style={{ fontSize: 12, color: BLUE, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{user.email}</span>
-          {_emailChecked ? (
+        _emailChecked ? (
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${HAIR}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+            <span style={{ fontSize: 12, color: BLUE, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{user.email}</span>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }} aria-label="Correo revisado">
               <circle cx="12" cy="12" r="10" fill={GREEN}/>
               <path d="M8 12.5l2.5 2.5L16 9.5" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-          ) : (
-            <button onClick={() => setEmailDialog(true)} aria-label="Revisar correo" className="pressable" style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', padding: 0, background: ORANGE, border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.28)', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+          </div>
+        ) : (
+          <button onClick={() => setEmailDialog(true)} aria-label="Revisar correo" className="pressable" style={{ width: '100%', marginTop: 8, padding: '8px 0 0', border: 'none', borderTop: `1px solid ${HAIR}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+            <span style={{ fontSize: 12, color: BLUE, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{user.email}</span>
+            <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: ORANGE, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.28)' }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                 <path d="M12 7v6" stroke="#fff" strokeWidth="2.6" strokeLinecap="round"/>
                 <circle cx="12" cy="17" r="1.35" fill="#fff"/>
               </svg>
-            </button>
-          )}
-        </div>
+            </span>
+          </button>
+        )
       )}
       {!_capKnown ? (
         <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${HAIR}`, display: 'flex', alignItems: 'center', gap: 5 }}>
