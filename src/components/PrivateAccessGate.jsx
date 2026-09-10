@@ -20,7 +20,7 @@ export default function PrivateAccessGate({ children }) {
   // Google pueda revisarlas sin clave, incluso entrando directo por URL. El resto
   // de rutas sigue exigiendo clave. El gate vive fuera del router, así que se lee
   // la ruta desde window.location.
-  const PUBLIC_PATHS = ['/', '/privacy', '/terms'];
+  const PUBLIC_PATHS = ['/', '/privacy', '/terms', '/email-changed'];
   let pathname = '';
   try { pathname = window.location.pathname; } catch { /* no window */ }
 

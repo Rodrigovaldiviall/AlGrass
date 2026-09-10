@@ -15,13 +15,24 @@ document.addEventListener('touchstart', () => {}, { passive: true });
 // sessionStorage para que la pantalla /email-changed distinga éxito real de
 // enlace inválido/expirado/usado y de una visita manual (sin falso éxito).
 try {
-  if (window.location.pathname === '/email-changed') {
-    const raw = (window.location.hash || window.location.search || '').replace(/^[#?]/, '');
-    const p = new URLSearchParams(raw);
-    const verdict = (p.get('error') || p.get('error_description'))
+  const _path = window.location.pathname;
+  const _raw = (window.location.hash || window.location.search || '').replace(/^[#?]/, '');
+  const _p = new URLSearchParams(_raw);
+  // Discriminador EXCLUSIVO del callback de cambio de correo: type=email_change (NO afecta a
+  // OAuth ni recovery, que no llevan ese type). El callback puede aterrizar en /email-changed
+  // (si el redirect se honra) o en la raíz '/' (fallback al Site URL); en AMBOS casos debe
+  // terminar en EmailChanged.jsx.
+  if (_path === '/email-changed' || _p.get('type') === 'email_change') {
+    const verdict = (_p.get('error') || _p.get('error_description'))
       ? 'error'
-      : (p.get('type') === 'email_change' || p.get('access_token')) ? 'success' : 'invalid';
+      : (_p.get('type') === 'email_change' || _p.get('access_token')) ? 'success' : 'invalid';
     sessionStorage.setItem('email_change_callback', verdict);
+    // Si aterrizó fuera de /email-changed, encaminarlo ANTES de montar React (sin reload ni
+    // timeout) para que RootRedirect nunca lo mande a /games. Se conserva query+hash para que
+    // el cliente Supabase establezca la sesión exactamente igual que hoy.
+    if (_path !== '/email-changed') {
+      window.history.replaceState(null, '', '/email-changed' + window.location.search + window.location.hash);
+    }
   }
 } catch { /* URL/sessionStorage no disponible */ }
 
