@@ -1,14 +1,24 @@
+import { peruTodayParts } from '../lib/peruTime';
+
 export const ymd = (d) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-export const TODAY = new Date();
-TODAY.setHours(0, 0, 0, 0);
+// HOY en America/Lima (NO del dispositivo). Se construye un Date LOCAL con el calendario
+// de Lima (Y/M/D de peruTodayParts); ymd() usa getters locales sobre ese Date → el
+// date_key es el de Lima e independiente del timezone del dispositivo. Date solo se usa
+// como herramienta para sumar días (con normalización de mes/año).
+const _peru = peruTodayParts();
+export const TODAY = new Date(_peru.year, _peru.month - 1, _peru.day);
 export const TODAY_KEY    = ymd(TODAY);
 export const TOMORROW_KEY = ymd(new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate() + 1));
 
+// Largo del horizonte de la UX (días). Fuente ÚNICA: la usa DATE_WINDOW (chips) y el
+// filtro server-side de gameService (rango date_key), para no duplicar la definición.
+export const HORIZON_DAYS = 30;
+
 export const DATE_WINDOW = (() => {
   const out = [];
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < HORIZON_DAYS; i++) {
     const d = new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate() + i);
     out.push(d);
   }

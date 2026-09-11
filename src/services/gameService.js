@@ -1,6 +1,16 @@
 import { supabase } from '../lib/supabase';
+import { ymd, DATE_WINDOW } from '../data/games';
 
 const ROSTER_KEY = 'pichanga_game_rosters';
+
+// Rango del horizonte: EXACTAMENTE los extremos de DATE_WINDOW (la misma tira de chips),
+// ya anclada a HOY en America/Lima. Así query y chips comparten la misma definición de
+// "hoy Perú" y el mismo largo, por construcción. Granularidad por DÍA: no quita los
+// eventos de hoy ya finalizados — esos siguen llegando y los oculta isGamePast() en el
+// frontend, exactamente como antes.
+function horizonRange() {
+  return { from: ymd(DATE_WINDOW[0]), to: ymd(DATE_WINDOW[DATE_WINDOW.length - 1]) };
+}
 
 export async function testConnection() {
   const result = await supabase.from('games').select('*');
@@ -125,11 +135,14 @@ export async function getGameById(gameId) {
 }
 
 export async function getGames() {
+  const { from, to } = horizonRange();
   const { data, error } = await supabase
     .from('games')
     .select(GAME_SELECT)
     .eq('type', 'match')
-    .in('status', ['published', 'reserved']);
+    .in('status', ['published', 'reserved'])
+    .gte('date_key', from)
+    .lte('date_key', to);
 
   if (error) { console.error('getGames:', error); return []; }
   return data.map(mapGame);
@@ -147,11 +160,14 @@ function mapRentalGame(g) {
 }
 
 export async function getRentalGames() {
+  const { from, to } = horizonRange();
   const { data, error } = await supabase
     .from('games')
     .select(GAME_SELECT)
     .eq('type', 'rental')
-    .in('status', ['published', 'reserved']);
+    .in('status', ['published', 'reserved'])
+    .gte('date_key', from)
+    .lte('date_key', to);
   if (error) { console.error('getRentalGames:', error); return []; }
   return data.map(mapRentalGame);
 }
