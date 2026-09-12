@@ -13,6 +13,7 @@ import VenueLeadScreen from '../components/VenueLeadScreen';
 import { validateDeleteAccount, executeDeleteAccount } from '../services/deleteAccountService';
 import pkg from '../../package.json';
 import { TERMS_SUMMARY, PRIVACY_SUMMARY } from '../data/legalSummaries';
+import { activateIosScrim, deactivateIosScrim } from '../lib/iosScrim';
 
 const PROFILE_KEY = 'pichanga_profile';
 const PRIVACY_KEY = 'pichanga_privacy';
@@ -208,6 +209,14 @@ function Row({ label, sublabel, value, onPress, right, disabled, danger, accent,
 
 function LegalModal({ type, onClose }) {
   const navigate = useNavigate();
+  // Scrim de safe-area inferior mientras el modal legal (Términos/Privacidad desde Configuración)
+  // está montado. Backdrop rgba(0,0,0,0.45) sin transition → #8C8C8C/0s. Efecto ANTES del
+  // early-return (reglas de hooks); no-op si type es null. Cleanup al cerrar/desmontar.
+  useEffect(() => {
+    if (!type) return;
+    activateIosScrim('legal-modal', { color: '#8C8C8C', duration: '0s' });
+    return () => deactivateIosScrim('legal-modal');
+  }, [type]);
   if (!type) return null;
   const isTerms = type === 'terms';
   const title = isTerms ? 'Términos de Servicio' : 'Política de Privacidad';
@@ -545,6 +554,15 @@ function SecuritySheet({ onClose, onDeleteRequest }) {
 export default function Settings() {
   const navigate = useNavigate();
   const { logout, user } = useAuth();
+
+  // Mientras Settings está montado, la franja inferior (body) iguala el fondo real de esta pantalla
+  // (SOFT #F2F2F4, el background de .screen-shell) — solo iPhone PWA; ver index.css. El scrim
+  // (Términos/Privacidad) tiene prioridad por orden de cascada. Cleanup al desmontar → blanco.
+  useEffect(() => {
+    const el = document.documentElement;
+    el.classList.add('settings-open');
+    return () => el.classList.remove('settings-open');
+  }, []);
 
   const [profileData, setProfileData] = useState(() => {
     try { return JSON.parse(localStorage.getItem(PROFILE_KEY)) || {}; } catch { return {}; }

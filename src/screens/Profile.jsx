@@ -10,6 +10,7 @@ import RewardsSheet from '../components/RewardsSheet';
 import TabBar from '../components/TabBar';
 import { useAuth } from '../context/AuthContext';
 import { useStaff } from '../context/StaffContext';
+import { activateIosScrim, deactivateIosScrim } from '../lib/iosScrim';
 import { supabase } from '../lib/supabase';
 import { peruTodayParts } from '../lib/peruTime';
 import { abbreviateName, ensureUserCode, formatDateLabel } from '../utils/format';
@@ -1082,6 +1083,16 @@ function translateAuthError(msg) {
 function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, userProvider = 'email', userId = null, startEmailUnlocked = false }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
+
+  // Scrim de safe-area inferior (solo iPhone PWA; ver index.css + lib/iosScrim). Sigue al estado
+  // REAL `open`: al cerrar, `open` pasa a false y el scrim se retira de inmediato — sin esperar al
+  // unmount (220ms después vía onClose). #7A7A7A/.22s = fade sincronizado con el backdrop
+  // rgba(0,0,0,0.52). Cleanup en unmount por seguridad → nunca queda colgado.
+  useEffect(() => {
+    if (open) activateIosScrim('edit-profile', { color: '#7A7A7A', duration: '.22s' });
+    else deactivateIosScrim('edit-profile');
+    return () => deactivateIosScrim('edit-profile');
+  }, [open]);
 
   const [fullName,  setFullName]  = useState(profileData.fullName || userName || '');
   const [emailVal,  setEmailVal]  = useState(userEmail || profileData.email || '');

@@ -236,3 +236,39 @@ input:-webkit-autofill:hover {
 /* "Elige tu ciudad" abierto: ocultar los rellenos del safe-area superior para que
    el scrim cubra toda la pantalla. Se restaura al cerrar (se quita la clase). */
 html.city-sheet-open body::before { display: none !important; }
+
+/* ── iPhone PWA standalone: padding inferior de los footers Confirmar y Pagar ──────────
+   Doble gate: @media display-mode:standalone (solo PWA instalada) + @supports
+   (-webkit-touch-callout:none) (solo WebKit iOS; Android Chrome no lo soporta). Sobrescribe
+   SOLO padding-bottom a 8px; el resto del padding inline original queda intacto.
+   Safari iPhone / Android / desktop conservan su padding original. */
+@media all and (display-mode: standalone) {
+  @supports (-webkit-touch-callout: none) {
+    .cr-footer-ios-test { padding-bottom: 8px !important; }
+  }
+}
+
+/* ── iPhone PWA standalone: scrim de safe-area inferior (fondo de body) ────────────────
+   Un overlay oscuro de pantalla completa no alcanza la franja física inferior con
+   `position:fixed`; para que se vea como UNA superficie continua, pintamos el background de
+   body. Mecanismo común gobernado desde src/lib/iosScrim.js (clase + custom properties).
+   · Normal (sin scrim): body BLANCO. La transition usa --ios-scrim-dur (default .22s) → el
+     fade-OUT respeta la duración con la que entró cada overlay (0s instantáneo / .22s perfil).
+   · Settings montado: body #F2F2F4 (iguala el fondo real de la pantalla).
+   · .ios-scrim-open: body var(--ios-scrim) (color por contexto: #7A7A7A / #27272C / #8C8C8C).
+   Orden = prioridad: app-ready < settings-open < ios-scrim-open. No toca body::before,
+   backdrops reales, #root ni .screen-shell; no crea pseudo/fixed. Safari/Android excluidos. */
+@media all and (display-mode: standalone) {
+  @supports (-webkit-touch-callout: none) {
+    html.app-ready body {
+      background: #FFFFFF !important;
+      transition: background var(--ios-scrim-dur, .22s) ease;
+    }
+    html.settings-open body {
+      background: #F2F2F4 !important;
+    }
+    html.ios-scrim-open body {
+      background: var(--ios-scrim, #7A7A7A) !important;
+    }
+  }
+}

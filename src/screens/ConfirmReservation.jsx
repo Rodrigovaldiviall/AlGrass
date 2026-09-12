@@ -13,6 +13,7 @@ import { createReservation, createGamePlayer, createInvitedReservation, validate
 import { resolveCaptainGroupAssignment } from '../services/captainGroupService';
 import { markWaitlistReserved } from '../services/waitlistService';
 import { materializeReservation } from '../services/materializeReservation';
+import { activateIosScrim, deactivateIosScrim } from '../lib/iosScrim';
 import { createOrder, failOrder, confirmOrder, getOrderStatus } from '../services/orderService';
 import { useAppTimings } from '../hooks/useAppTimings';
 import SkeletonPill from '../components/SkeletonPill';
@@ -418,6 +419,15 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPreCharge, o
   const [yapeCode, setYapeCode] = useState('');
   const [paying, setPaying]     = useState('idle');
 
+  // Scrim de safe-area inferior SOLO durante "Estamos confirmando tu reserva…" (overlay
+  // rgba(10,10,15,0.88), instantáneo). NO en idle/loading/rejected (PaymentSheet = body BLANCO).
+  // #27272C/0s = gris equivalente a 0.88 sobre blanco, sin fade.
+  useEffect(() => {
+    if (paying === 'confirming') activateIosScrim('gateway-processing', { color: '#27272C', duration: '0s' });
+    else deactivateIosScrim('gateway-processing');
+    return () => deactivateIosScrim('gateway-processing');
+  }, [paying]);
+
   const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
   const nativeLabel = isIOS ? 'Apple Pay' : 'Google Pay';
   const fmt = n => `${currency} ${Number(n || 0).toFixed(2)}`;
@@ -656,7 +666,7 @@ function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPreCharge, o
         </div>
 
         {/* Sticky Pagar footer */}
-        <div style={{ padding: '12px 16px', paddingBottom: 'calc(16px + env(safe-area-inset-bottom))', borderTop: `1px solid ${HAIR}`, background: '#FAFAFA', flexShrink: 0 }}>
+        <div className="cr-footer-ios-test" style={{ padding: '12px 16px', paddingBottom: 'calc(16px + env(safe-area-inset-bottom))', borderTop: `1px solid ${HAIR}`, background: '#FAFAFA', flexShrink: 0 }}>
           <CtaButton onPress={pay} disabled={!canPay || paying !== 'idle'}>
             {paying === 'loading' ? (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
@@ -848,6 +858,15 @@ export default function ConfirmReservation() {
   const [promoError, setPromoError]     = useState('');
   const [promoLoading, setPromoLoading] = useState(false);
   const [freeConfirming, setFreeConfirming] = useState(false);
+  // Scrim de safe-area inferior SOLO durante freeConfirming ("Estamos confirmando tu reserva…" en
+  // pago con crédito; overlay rgba(10,10,15,0.88), instantáneo). NO creditLoading, NO capacityError,
+  // NO confirmedGame. #27272C/0s. Al navegar a /profile este efecto se desmonta (cleanup) → body
+  // queda blanco para "Reserva confirmada".
+  useEffect(() => {
+    if (freeConfirming) activateIosScrim('confirm-processing', { color: '#27272C', duration: '0s' });
+    else deactivateIosScrim('confirm-processing');
+    return () => deactivateIosScrim('confirm-processing');
+  }, [freeConfirming]);
   // Compartir/copiar el link del partido (icono del TopBar + cupo reservado en "Gestionar mi lista").
   const [linkCopied, setLinkCopied] = useState(false);
   const _flashCopied = () => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); };
@@ -1989,7 +2008,7 @@ export default function ConfirmReservation() {
         <div style={{ height: 8 }} />
       </div>
 
-      <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '10px 16px calc(12px + env(safe-area-inset-bottom))' }}>
+      <div className="cr-footer-ios-test" style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '10px 16px calc(12px + env(safe-area-inset-bottom))' }}>
         {!promoOpen && !promoApplied && !usingReward && !addGuestsMode && !invitedMode && (
           <button onClick={() => setPromoOpen(true)} style={{ padding: '6px 4px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, color: ORANGE, letterSpacing: -0.1, display: 'inline-flex', alignItems: 'center', gap: 6, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
