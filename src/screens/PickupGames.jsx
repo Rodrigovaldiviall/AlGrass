@@ -301,7 +301,7 @@ function FilterPanel({ open, onClose, flt, setFlt }) {
 function Header({ city, onCityTap }) {
   return (
     <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 20, paddingRight: 20 }}>
-      <div style={{ height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+      <div style={{ height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
         <div style={{ color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>Elije tu partido</div>
         {city && (
           <button onClick={onCityTap} style={{

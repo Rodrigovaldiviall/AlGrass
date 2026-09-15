@@ -452,10 +452,15 @@ function WaitlistRow({ inList, openSpots = 0, onToggle }) {
 // para reutilizarlos en RentalDetail. Comportamiento idéntico.
 
 // ── CTA
-function CTA({ price, disabled, onPress, hideTopBorder }) {
+function CTA({ price, disabled, onPress, hideTopBorder, floating }) {
   const [pressed, setPressed] = useState(false);
+  // floating (prueba visual, solo GameDetail): quita la superficie del holder (fondo blanco +
+  // borderTop) y lo posiciona absolute al fondo del contenedor relative, flotando sobre el scroll.
+  // Conserva el padding (spacing) y el botón EXACTO. pointerEvents deja pasar el scroll por los lados.
   return (
-    <div style={{ padding: '12px 16px 12px', background: '#fff', borderTop: hideTopBorder ? 'none' : `1px solid ${HAIR}` }}>
+    <div style={floating
+      ? { padding: '12px 16px 12px', pointerEvents: 'none' }
+      : { padding: '12px 16px 12px', background: '#fff', borderTop: hideTopBorder ? 'none' : `1px solid ${HAIR}` }}>
       <button
         onClick={disabled ? undefined : onPress}
         disabled={!!disabled}
@@ -463,6 +468,7 @@ function CTA({ price, disabled, onPress, hideTopBorder }) {
         onPointerUp={() => setPressed(false)}
         onPointerLeave={() => setPressed(false)}
         style={{
+          pointerEvents: floating ? 'auto' : undefined,
           width: '100%', height: 54, borderRadius: 18,
           background: disabled ? '#E8E8EC' : ORANGE,
           color: disabled ? '#9A9AA0' : '#1B1B1F',
@@ -1991,6 +1997,14 @@ export default function GameDetail() {
     return <Navigate to={_welcomeSeen ? '/games' : '/welcome'} replace state={_welcomeSeen ? { gameNotice: _notice } : undefined} />;
   }
 
+  // Solo para el aire inferior del scroll cuando el CTA "Únete" flota (prueba visual). Aproxima la
+  // rama no-reservado del condicional de acciones; si difiere, solo afecta al padding, nunca a la lógica.
+  const joinCtaActive = !isHost && spotsVerified && waitlistReady && availabilityResolved && !isBooked && !infoMode && !isStarted;
+  // Rama de carga (skeleton flotante inferior): mismo alto aproximado que 1 CTA.
+  const loadingCtaActive = !isHost && !(spotsVerified && waitlistReady && availabilityResolved);
+  // Rama reservado con "Gestionar mi reserva" flotante solo (1 CTA), sin Únete.
+  const manageCtaActive = !isHost && spotsVerified && waitlistReady && availabilityResolved && (isBooked || infoMode) && (isBooked || guestsInRoster.length > 0) && !isStarted;
+
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
         <Header field={g.field} openSpots={openSpots} spotsReady={availabilityResolved} slotsBadge={_slotsBadge} slotsGold={isCaptainGold} infoMode={infoMode} live={isStarted && !isPastGame} onBack={() => navigate(backPath, mapReturn ? { state: { mapReturn } } : undefined)}
@@ -1999,7 +2013,8 @@ export default function GameDetail() {
             if (!gameId) return;
             shareOrCopy({ url: buildGameShareUrl(gameId, { sharedByUserId: user?.id }), title: g.field, text: `${g.date} · ${g.time} ${g.ampm}`, onCopied: () => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); } });
           }} />
-        <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', background: '#fff' }}>
+        <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', background: '#fff', paddingBottom: joinCtaActive ? (isCanceledWithGuests ? 124 : 78) : ((loadingCtaActive || manageCtaActive) ? 78 : undefined) }}>
           <HeroImage coverPath={g?.venueCoverPath} coverVersion={g?.venueCoverVersion} />
 
           {showInheritedGroup && (
@@ -2213,48 +2228,57 @@ export default function GameDetail() {
           )
         ) : !(spotsVerified && waitlistReady && availabilityResolved) ? (
           /* ── Carga: mismo skeleton (pulse) del badge de la lista, hasta que el estado
-               de acciones sea DEFINITIVO. Evita el flash de espacio vacío / botón gris. ── */
-          <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '12px 16px' }}>
+               de acciones sea DEFINITIVO. Flotante (prueba visual): sin holder blanco ni
+               borderTop, absolute al fondo del contenedor relative, mismo sitio que el CTA →
+               la transición loading → Únete no inserta/quita una superficie blanca. ── */
+          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '12px 16px', pointerEvents: 'none' }}>
             <SkeletonPill className="" style={{ width: '100%', height: 46, borderRadius: 14, minWidth: 0 }} />
           </div>
         ) : (isBooked || infoMode) ? (
-          /* ── Player: payment + gestionar ────────────────── */
-          <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}` }}>
-            {(isPastGame || isStarted) && infoMode && <PaymentDetail price={histPrice} breakdown={histBreakdown} paidBy={livePaidBy} userName={user?.name || 'Usuario'} titularCanceled={titularCanceled || mySlotCanceled} activeGuestCount={isGuest ? guestOwnGuests.length : guestsInRoster.length} guestSubBreakdown={isGuest ? g.guestSubBreakdown : null} />}
+          /* ── Player: PaymentDetail queda EN FLUJO con su holder (sin cambios); "Gestionar mi
+               reserva" sale del holder y flota como CTA sólido. Son mutuamente excluyentes
+               (PaymentDetail exige isPastGame||isStarted; Gestionar exige !isStarted) → no coinciden. ── */
+          <>
+            {(isPastGame || isStarted) && infoMode && (
+              <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}` }}>
+                <PaymentDetail price={histPrice} breakdown={histBreakdown} paidBy={livePaidBy} userName={user?.name || 'Usuario'} titularCanceled={titularCanceled || mySlotCanceled} activeGuestCount={isGuest ? guestOwnGuests.length : guestsInRoster.length} guestSubBreakdown={isGuest ? g.guestSubBreakdown : null} />
+              </div>
+            )}
             {(isBooked || guestsInRoster.length > 0) && !isStarted && (
-              <div style={{ padding: '12px 16px' }}>
+              <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, pointerEvents: 'none', padding: '12px 16px' }}>
                 <button
                   onClick={openModify}
-                  style={{ width: '100%', padding: '8px 16px', background: 'transparent', border: `1.5px solid ${BLUE}`, borderRadius: 12, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 600, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                  style={{ pointerEvents: 'auto', width: '100%', padding: '8px 16px', background: '#fff', border: `1.5px solid ${BLUE}`, borderRadius: 12, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 600, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                   Gestionar mi reserva
                 </button>
               </div>
             )}
-          </div>
+          </>
         ) : !infoMode && (
-          /* ── Non-booked player: CTA / canceled-guests ────── */
-          <>
-            {isCanceledWithGuests && (() => (
-              <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}` }}>
-                {!isStarted && (
-                  <div style={{ padding: '12px 16px 0' }}>
-                    <button
-                      onClick={openModify}
-                      style={{ width: '100%', padding: '8px 16px', background: 'transparent', border: `1.5px solid ${BLUE}`, borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-                      Gestionar mi reserva
-                    </button>
-                  </div>
-                )}
+          /* ── Non-booked player: stack flotante (Gestionar mi reserva arriba + Únete abajo).
+               Prueba visual: sin holder blanco; el wrapper absolute (bottom:0 del contenedor
+               relative) queda encima del TabBar; el contenido scrollea por detrás. Condiciones
+               de render idénticas a antes; solo cambia presentación/posición. ── */
+          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, pointerEvents: 'none', display: 'flex', flexDirection: 'column' }}>
+            {isCanceledWithGuests && !isStarted && (
+              <div style={{ padding: '12px 16px 0' }}>
+                <button
+                  onClick={openModify}
+                  style={{ pointerEvents: 'auto', width: '100%', padding: '8px 16px', background: '#fff', border: `1.5px solid ${BLUE}`, borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, color: BLUE, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                  Gestionar mi reserva
+                </button>
               </div>
-            ))()}
+            )}
             {!isStarted && <CTA
               price={g.price}
               disabled={isFull || !spotsVerified}
               hideTopBorder={isFull || isCanceledWithGuests}
               onPress={handleReservePress}
+              floating
             />}
-          </>
+          </div>
         )}
+        </div>
         <TabBar />
       {selectedPlayer && <PlayerModal player={selectedPlayer} isHost={selectedPlayer.isHost ?? false} onClose={() => setSelectedPlayer(null)} />}
       {showWaitlistAuth && (

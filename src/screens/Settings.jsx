@@ -710,7 +710,7 @@ export default function Settings() {
         paddingTop: 'calc(env(safe-area-inset-top) + 9px)',
         paddingBottom: 9, paddingLeft: 20, paddingRight: 20, flexShrink: 0,
       }}>
-        <div style={{ height: 44, display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
+        <div style={{ height: 26, display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
           <button
             onClick={() => navigate(-1)}
             style={{ width: 36, height: 36, marginLeft: -8, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>

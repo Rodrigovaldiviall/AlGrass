@@ -73,6 +73,13 @@ const I = {
       <path d="M9 19.2c.3 1 1.1 1.6 2 1.6s1.7-.6 2-1.6" stroke={c} strokeWidth="1.6" strokeLinecap="round"/>
     </svg>
   ),
+  trophy: (c) => (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+      <path d="M7 4h10v5a5 5 0 0 1-10 0V4z" stroke={c} strokeWidth="1.6" strokeLinejoin="round"/>
+      <path d="M7 6H4.5v1.5A2.5 2.5 0 0 0 7 10M17 6h2.5v1.5A2.5 2.5 0 0 1 17 10" stroke={c} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M12 14v3M9 20.5h6M9.5 20.5c0-1.4.8-2.3 2.5-2.3s2.5.9 2.5 2.3" stroke={c} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  ),
   profile: (c) => (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
       <circle cx="12" cy="12" r="9.5" stroke={c} strokeWidth="1.6"/>

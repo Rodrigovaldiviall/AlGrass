@@ -4,14 +4,13 @@ import { BLUE, TAB_INACTIVE, RED } from '../constants';
 import I from '../icons';
 import { haptic } from '../utils/haptic';
 import { isGamePast } from '../utils/deriveGameState';
-import { readNotifBadgeLabel, badgeLabel } from '../utils/notifBadge';
 import { readWaitlistBadge } from '../utils/waitlistBadge';
 
 const TABS = [
-  { id: 'partidos',       icon: I.search,  label: 'Partidos',       route: '/games' },
-  { id: 'campos',         icon: I.fields,  label: 'Canchas',         route: '/fields' },
-  { id: 'notificaciones', icon: I.bell,    label: 'Notificaciones', route: '/notifications' },
-  { id: 'perfil',         icon: I.profile, label: 'Perfil',         route: '/profile' },
+  { id: 'partidos',    icon: I.search,  label: 'Partidos',    route: '/games' },
+  { id: 'campos',      icon: I.fields,  label: 'Canchas',     route: '/fields' },
+  { id: 'campeonatos', icon: I.trophy,  label: 'Campeonatos', route: '/championships' },
+  { id: 'perfil',      icon: I.profile, label: 'Perfil',      route: '/profile' },
 ];
 
 function getUpcomingBadge() {
@@ -25,7 +24,9 @@ function getUpcomingBadge() {
 
 function tabFromPath(pathname, backPath) {
   if (pathname.startsWith('/profile')) return 'perfil';
-  if (pathname.startsWith('/notifications')) return 'notificaciones';
+  // Notificaciones ahora se accede desde el header de Perfil → el TabBar resalta Perfil.
+  if (pathname.startsWith('/notifications')) return 'perfil';
+  if (pathname.startsWith('/championships')) return 'campeonatos';
   if ((pathname.startsWith('/game/') || pathname.startsWith('/field/') || pathname.startsWith('/rental/')) && backPath === '/profile') return 'perfil';
   if (pathname.startsWith('/fields') || pathname.startsWith('/field/') || pathname.startsWith('/rental/')) return 'campos';
   return 'partidos';
@@ -81,15 +82,7 @@ export default function TabBar({ activeTab: activeProp }) {
   const activeTab = activeProp ?? tabFromPath(pathname, state?.backPath);
   const isDetailScreen = pathname.startsWith('/game/') || pathname.startsWith('/field/') || pathname.startsWith('/rental/');
 
-  const [notifBadge, setNotifBadgeState] = useState(readNotifBadgeLabel);
   const [waitlistDot, setWaitlistDot] = useState(readWaitlistBadge);
-
-  useEffect(() => {
-    setNotifBadgeState(readNotifBadgeLabel());
-    function onBadge(e) { setNotifBadgeState(badgeLabel(e.detail)); }
-    window.addEventListener('notif-badge', onBadge);
-    return () => window.removeEventListener('notif-badge', onBadge);
-  }, []);
 
   useEffect(() => {
     setWaitlistDot(readWaitlistBadge());
@@ -98,7 +91,7 @@ export default function TabBar({ activeTab: activeProp }) {
     return () => window.removeEventListener('waitlist-badge', onWl);
   }, []);
 
-  const badges = { notificaciones: notifBadge, perfil: getUpcomingBadge() };
+  const badges = { perfil: getUpcomingBadge() };
 
   return (
     <>
@@ -117,7 +110,10 @@ export default function TabBar({ activeTab: activeProp }) {
           onClick={() => {
             haptic();
             if (activeTab === t.id) {
-              if (isDetailScreen) {
+              // Solo scroll-to-top si estamos EXACTAMENTE en la raíz del tab; en cualquier
+              // subpantalla (detalle, /notifications, /championships/organize, /review) → navegar
+              // a la raíz del tab (que restaura su scroll vía sessionStorage, como el botón atrás).
+              if (isDetailScreen || pathname !== t.route) {
                 navigate(t.route);
               } else {
                 window.dispatchEvent(new CustomEvent('tab-scroll-top', { detail: t.id }));

@@ -198,10 +198,15 @@ function NotificationRow({ n, expanded, onPress, highlighted = false }) {
 }
 
 // ── Header
-function Header({ hasUnread, onMarkAll }) {
+function Header({ hasUnread, onMarkAll, onBack }) {
   return (
     <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 16, paddingRight: 16, flexShrink: 0 }}>
       <div style={{ height: 44, display: 'flex', alignItems: 'center', position: 'relative' }}>
+        <button
+          onClick={onBack}
+          style={{ position: 'absolute', left: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </button>
         <div style={{ flex: 1, color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2, textAlign: 'center' }}>
           Notificaciones
         </div>
@@ -570,7 +575,7 @@ export default function Notifications() {
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
-      <Header hasUnread={hasUnread} onMarkAll={markAll} />
+      <Header hasUnread={hasUnread} onMarkAll={markAll} onBack={() => navigate('/profile')} />
 
       <div ref={notifScrollRef} className="no-sb" style={{ flex: 1, overflowY: 'auto', background: SOFT, WebkitOverflowScrolling: 'touch', overscrollBehaviorY: 'contain' }}>
         <div style={{ minHeight: 'calc(100% + 1px)', display: 'flex', flexDirection: 'column' }}>

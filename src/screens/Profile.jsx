@@ -8,6 +8,8 @@ import { faHeadset, faCoins, faTowerBroadcast, faStar } from '@fortawesome/free-
 import { SupportMenu } from '../components/SupportMenu';
 import RewardsSheet from '../components/RewardsSheet';
 import TabBar from '../components/TabBar';
+import I from '../icons';
+import { readNotifBadgeLabel, badgeLabel } from '../utils/notifBadge';
 import { useAuth } from '../context/AuthContext';
 import { useStaff } from '../context/StaffContext';
 import { activateIosScrim, deactivateIosScrim } from '../lib/iosScrim';
@@ -2138,6 +2140,15 @@ export default function Profile() {
     } catch { initPfScrollRef.current = null; }
   }
   const [supportOpen,    setSupportOpen]    = useState(false);
+  // Badge de Notificaciones: misma fuente que usaba TabBar (utils/notifBadge). El acceso a
+  // Notificaciones se movió aquí (header de Perfil); la lógica/ruta de /notifications no cambia.
+  const [notifBadge, setNotifBadge] = useState(readNotifBadgeLabel);
+  useEffect(() => {
+    setNotifBadge(readNotifBadgeLabel());
+    function onBadge(e) { setNotifBadge(badgeLabel(e.detail)); }
+    window.addEventListener('notif-badge', onBadge);
+    return () => window.removeEventListener('notif-badge', onBadge);
+  }, []);
   const [editOpen,       setEditOpen]       = useState(() => state?.openEdit === true);
   const [editEmailUnlock, setEditEmailUnlock] = useState(false); // abrir Editar Perfil con el campo correo ya desbloqueado (desde "Modificar")
   useEffect(() => {
@@ -3140,6 +3151,23 @@ export default function Profile() {
         <div style={{ height: 44, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4, pointerEvents: 'auto' }}>
           {user && (
             <>
+              <button
+                onClick={() => { try { sessionStorage.setItem('pf_back', '1'); } catch {} navigate('/notifications'); }}
+                style={{
+                  width: 36, height: 36, background: 'transparent', border: 'none', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  WebkitTapHighlightColor: 'transparent', outline: 'none', padding: 0, position: 'relative',
+                }}>
+                {I.bell(TEXT)}
+                {notifBadge !== undefined && (
+                  <div style={{
+                    position: 'absolute', top: 2, right: 2,
+                    minWidth: 16, height: 16, padding: '0 4px', borderRadius: 999,
+                    background: RED, color: '#fff', fontSize: 10, fontWeight: 700,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box',
+                  }}>{notifBadge}</div>
+                )}
+              </button>
               <div style={{ position: 'relative' }}>
                 <button onClick={() => setSupportOpen(v => !v)} style={{
                   width: 36, height: 36, background: 'transparent', border: 'none', cursor: 'pointer',
