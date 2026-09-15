@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN } from '../constants';
 import TabBar from '../components/TabBar';
 import { useSheetPull } from '../hooks/useSheetPull';
@@ -44,6 +44,8 @@ function DateCell({ top, bottom, active, isToday, onClick, check }) {
 }
 
 const CARD = { background: '#fff', border: `1px solid ${HAIR}`, borderRadius: 16, padding: 16, marginBottom: 14 };
+// Etiquetas de amenities (para el resumen de "Ver mi campeonato").
+const AMENITY_LABEL = { parking: 'Estacionamiento', showers: 'Duchas', covered: 'Techado' };
 const SECTION_TITLE = { fontSize: 15, fontWeight: 800, color: TEXT, letterSpacing: -0.2, marginBottom: 10 };
 
 // ── Chip toggle (blanco/borde inactivo, azul claro/texto azul activo) ─────────
@@ -131,23 +133,27 @@ function CheckboxCard({ checked, onToggle, label, expanded }) {
 
 export default function ChampionshipOrganize() {
   const navigate = useNavigate();
+  const location = useLocation();
+  // Estado restaurado al volver desde "Ver mi campeonato" (frontend, sin persistencia).
+  const restore = location.state?.organizeState || null;
 
-  const [mode, setMode] = useState('oneday');            // 'oneday' | 'liga'
-  const [format, setFormat] = useState(DEFAULT_FORMAT);  // 7v7 por defecto
-  const [groupId, setGroupId] = useState(null);          // rango de tamaño (uno de los 4 grupos)
-  const [contactMe, setContactMe] = useState(false);
-  const [leagueTeams, setLeagueTeams] = useState('');
-  const [leaguePlayers, setLeaguePlayers] = useState('');
+  const [mode, setMode] = useState(restore?.mode ?? 'oneday');            // 'oneday' | 'liga'
+  const [format, setFormat] = useState(restore?.format ?? DEFAULT_FORMAT);  // 7v7 por defecto
+  const [groupId, setGroupId] = useState(restore?.groupId ?? null);         // rango de tamaño (uno de los 4 grupos)
+  const [contactMe, setContactMe] = useState(restore?.contactMe ?? false);
+  const [leagueTeams, setLeagueTeams] = useState(restore?.leagueTeams ?? '');
+  const [leaguePlayers, setLeaguePlayers] = useState(restore?.leaguePlayers ?? '');
 
-  const [districts, setDistricts] = useState(() => new Set());
-  const [venueFilter, setVenueFilter] = useState(() => new Set());
-  const [amenities, setAmenities] = useState(() => new Set());
-  const [dateKey, setDateKey] = useState(TODAY_KEY);
-  const [venueIdx, setVenueIdx] = useState(0);
-  const [slotIdx, setSlotIdx] = useState(0);
-  const [courtCustom, setCourtCustom] = useState(false); // "que me contacten" en Cancha
+  const [districts, setDistricts] = useState(() => new Set(restore?.districts ?? []));
+  const [venueFilter, setVenueFilter] = useState(() => new Set(restore?.venueFilter ?? []));
+  const [amenities, setAmenities] = useState(() => new Set(restore?.amenities ?? []));
+  const [dateKey, setDateKey] = useState(restore?.dateKey ?? TODAY_KEY);
+  const [venueIdx, setVenueIdx] = useState(restore?.venueIdx ?? 0);
+  const [slotIdx, setSlotIdx] = useState(restore?.slotIdx ?? 0);
+  const [courtCustom, setCourtCustom] = useState(restore?.courtCustom ?? false); // "que me contacten" en Cancha
   const [districtSheet, setDistrictSheet] = useState(false);
   const [venueSheet, setVenueSheet] = useState(false);
+  const didMount = useRef(false); // evita que los resets de venue/slot pisen el estado restaurado
 
   const group = RECOMMENDATION_GROUPS.find(g => g.id === groupId) || null;
 
@@ -208,9 +214,36 @@ export default function ChampionshipOrganize() {
   useEffect(() => { const id = requestAnimationFrame(updateGridThumb); return () => cancelAnimationFrame(id); }, [resolvedVenue, dateKey]); // eslint-disable-line
 
   // Cambiar filtros o fecha → mostrar el primer venue (que, para la fecha, es el primero que cumple).
-  useEffect(() => { setVenueIdx(0); }, [format, districts, amenities, venueFilter, dateKey]);
+  useEffect(() => { if (didMount.current) setVenueIdx(0); }, [format, districts, amenities, venueFilter, dateKey]);
   // Cambiar de venue/fecha/filtros/rango → seleccionar automáticamente el primer horario válido.
-  useEffect(() => { setSlotIdx(0); }, [format, districts, amenities, venueFilter, dateKey, groupId, venueIdx]);
+  useEffect(() => { if (didMount.current) setSlotIdx(0); }, [format, districts, amenities, venueFilter, dateKey, groupId, venueIdx]);
+  useEffect(() => { didMount.current = true; }, []);
+
+  // Navega a "Ver mi campeonato" (modo demostración). Pasa (a) el estado para restaurar Organiza al
+  // volver y (b) el resumen resuelto para pintar. Sin persistencia (frontend/mock).
+  function goToView() {
+    const organizeState = {
+      mode, format, groupId, contactMe, courtCustom, leagueTeams, leaguePlayers,
+      districts: [...districts], amenities: [...amenities], venueFilter: [...venueFilter],
+      dateKey, venueIdx, slotIdx,
+    };
+    const dsel = DATE_WINDOW.find(d => ymd(d) === dateKey);
+    const lab = dsel ? dateChip(dsel) : null;
+    const summary = {
+      mode, contactMe, courtCustom,
+      formatLabel: format,
+      group: group ? { min: group.min, max: group.max } : null,
+      dateLabel: lab ? `${lab.top} ${lab.bottom}` : null,
+      venueName: resolvedVenue?.name ?? null,
+      venueDistrict: resolvedVenue?.district ?? null,
+      venueAddress: resolvedVenue?.address ?? null,
+      slotLabel: activeSlot ? `${clockLabel(activeSlot.startHour)} – ${clockLabel(activeSlot.endHour)}` : null,
+      configLabel: complies ? configLabel : null,
+      complies,
+      venueAmenities: resolvedVenue?.amenities?.map(a => AMENITY_LABEL[a] || a) ?? [],
+    };
+    navigate('/championships/view', { state: { organizeState, summary } });
+  }
 
   function toggleSet(setter, value) {
     setter(prev => { const n = new Set(prev); n.has(value) ? n.delete(value) : n.add(value); return n; });
@@ -468,7 +501,7 @@ export default function ChampionshipOrganize() {
           </div>
         )}
         <button
-          onClick={() => { /* "Ver mi campeonato" pendiente: se implementará desde docs/campeonatos-ux.md */ }}
+          onClick={canContinue ? goToView : undefined}
           disabled={!canContinue}
           className={canContinue ? 'pressable' : undefined}
           style={{

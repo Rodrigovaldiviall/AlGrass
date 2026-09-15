@@ -130,6 +130,7 @@ const VenueDetail   = lazy(() => import('./screens/VenueDetail'));
 const Notifications = lazy(() => import('./screens/Notifications'));
 const Championships = lazy(() => import('./screens/Championships'));
 const ChampionshipOrganize = lazy(() => import('./screens/ChampionshipOrganize'));
+const ChampionshipView = lazy(() => import('./screens/ChampionshipView'));
 const LegalPage     = lazy(() => import('./screens/LegalPage'));
 const EmailChanged  = lazy(() => import('./screens/EmailChanged'));
 const CaptainRequest = lazy(() => import('./screens/CaptainRequest'));
@@ -263,6 +264,7 @@ function AppBody() {
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/championships" element={<Championships />} />
             <Route path="/championships/organize" element={<ChampionshipOrganize />} />
+            <Route path="/championships/view" element={<ChampionshipView />} />
             <Route path="/email-changed" element={<EmailChanged />} />
             <Route path="/captain-request" element={<CaptainRequest />} />
             <Route path="/privacy" element={<LegalPage type="privacy" />} />
