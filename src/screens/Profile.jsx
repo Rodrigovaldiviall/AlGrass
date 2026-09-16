@@ -7,6 +7,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faHeadset, faCoins, faTowerBroadcast, faStar } from '@fortawesome/free-solid-svg-icons';
 import { SupportMenu } from '../components/SupportMenu';
 import RewardsSheet from '../components/RewardsSheet';
+import ChampConfirmOverlay from '../components/ChampConfirmOverlay';
 import TabBar from '../components/TabBar';
 import I from '../icons';
 import { readNotifBadgeLabel, badgeLabel } from '../utils/notifBadge';
@@ -96,6 +97,16 @@ const COUNTRIES = [
 
 const PROFILE_KEY      = 'pichanga_profile';
 const STORAGE_KEY      = 'pichanga_reservations';
+// Card compacta de campeonato/solicitud en Próximos eventos (mismo ritmo vertical que las filas actuales).
+const champRowStyle = { width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' };
+const champCrest = { width: 44, height: 44, borderRadius: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' };
+// "3:00 pm" → "15:00" (para ordenar el campeonato junto a partidos/rentals con la lógica existente).
+function champTo24(str) {
+  const m = /(\d{1,2}):(\d{2})\s*(am|pm)/i.exec(str || '');
+  if (!m) return null;
+  let h = Number(m[1]) % 12; if (/pm/i.test(m[3])) h += 12;
+  return `${String(h).padStart(2, '0')}:${m[2]}`;
+}
 const RENTAL_GAMES_KEY = 'pichanga_rental_games';
 const HOSTED_GAMES_KEY = 'pichanga_hosted_games';
 const WAITLIST_KEY_P   = 'pichanga_waitlist';
@@ -2199,6 +2210,17 @@ export default function Profile() {
     setConfirmedGame(cg);
   }, [location.state]); // eslint-disable-line
 
+  // Confirmación de Campeonatos (pago 'created' / solicitud 'request') mostrada SOBRE Profile.
+  // El tipo llega por location.state (transitorio); no se persiste en cv.championship/contactRequest.
+  const [champConfirm, setChampConfirm] = useState(location.state?.champConfirm ?? null);
+  useEffect(() => {
+    const cc = location.state?.champConfirm;
+    if (!cc) return;
+    setChampConfirm(cc);
+    // Consumir el state transitorio: al salir/volver no debe reaparecer el overlay (test D25).
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.key]); // eslint-disable-line
+
   // R1 PROPIAS y ACTIVAS del capitán (fuente de verdad V6 del badge de cupos).
   // El badge aparece con la reserva activa (total>0) aunque no haya inscritos.
   const [captainR1Rows, setCaptainR1Rows] = useState([]);
@@ -2330,6 +2352,10 @@ export default function Profile() {
             setSbProfile({ ...data, user_code: userCode });
             setProfileData(prev => {
               const patch = {};
+              // Estado de email (correo + confirmación) al caché → en revisitas el aviso se decide desde
+              // el primer frame real, sin esperar a sbProfile (evita el salto de layout).
+              patch.email = data.email ?? null;
+              patch.confirmedEmail = data.confirmed_email ?? null;
               if (data.full_name)          { patch.fullName = data.full_name; patch.firstName = data.full_name.split(' ')[0] || ''; patch.lastName = data.full_name.split(' ').slice(1).join(' '); }
               if (data.birth_date)         { const [y, m, d] = data.birth_date.split('-').map(Number); patch.birthYear = y; patch.birthMonth = m; patch.birthDay = d; }
               if (data.sex)                { patch.gender = data.sex; }
@@ -2763,7 +2789,36 @@ export default function Profile() {
     || myPlayerRows.some(r => r.user_id === user?.id && r.status === 'confirmed')
     || isGameHost;
   const visiblePast     = pastExpanded     ? past     : past.slice(0, 4);
-  const visibleUpcoming = upcomingExpanded ? upcoming : upcoming.slice(0, 10);
+
+  // Campeonatos/solicitudes mock (sessionStorage). MOCK: 1 campeonato + 1 solicitud (se reemplazan; no arrays).
+  const _champCv = (() => { try { return JSON.parse(sessionStorage.getItem('championship_view_state')); } catch { return null; } })();
+  const champ = _champCv?.championship || null;                 // { status, ... } (pago confirmado)
+  const champReq = _champCv?.contactRequest || null;            // { status:'pending', ... } (solicitud)
+  const champName = _champCv?.name || champReq?.championshipName || 'Campeonato';
+  const champTheme = _champCv?.coverTheme || '#E24A4A';
+  const _champSum = _champCv?.summary || {};
+  const _champStart = (_champSum.slotLabel || '').split('–')[0].trim(); // "3:00 pm"
+  const champTime = _champStart.split(' ')[0] || '';
+  const champAmpm = _champStart.split(' ')[1] || '';
+  const _champLe = _champSum.leagueEstimate;
+  const champTeamsLabel = _champSum.mode === 'liga'
+    ? (_champLe?.quantity ? `${_champLe.quantity} ${_champLe.type === 'people' ? 'personas' : 'equipos'}` : '')
+    : (_champSum.group ? (_champSum.group.min === _champSum.group.max ? `${_champSum.group.min} equipos` : `${_champSum.group.min}–${_champSum.group.max} equipos`) : '');
+  const champVenueLine = [_champSum.venueName, champTeamsLabel].filter(Boolean).join(' · ');
+  const champStatusLabel = champ?.status === 'registration_closed' ? 'Inscripciones cerradas'
+    : champ?.status === 'registration_open' ? 'Publicado'
+    : 'Pendiente publicar';
+  const openChampionship = () => navigate('/championships/view', { state: { summary: _champCv?.summary, organizeState: _champCv?.organizeState, cvReturn: true, from: 'profile' } });
+  const openChampRequest = () => navigate('/championships/contact', { state: { summary: champReq?.originalSummary, organizeState: champReq?.originalOrganizeState, championshipName: champReq?.championshipName, existingRequest: true } });
+
+  // El campeonato pagado se INTEGRA como evento en la agrupación por fecha existente (misma cabecera/orden).
+  const _champDateKey = _champCv?.organizeState?.dateKey || null;
+  const _champT24 = champTo24(_champStart);
+  const champEvent = (champ && (champ.status === 'pending_publish' || champ.status === 'registration_open' || champ.status === 'registration_closed') && _champDateKey && _champT24)
+    ? { __champ: true, id: '__champ', dateKey: _champDateKey, time24: _champT24, date: formatDateLabel(_champDateKey), time: champTime, ampm: champAmpm }
+    : null;
+  const upcomingAll     = champEvent ? sortByDt([...upcoming, champEvent], false) : upcoming;
+  const visibleUpcoming = upcomingExpanded ? upcomingAll : upcomingAll.slice(0, 10);
 
   useEffect(() => {
     if (!dataReady) return;
@@ -3033,9 +3088,9 @@ export default function Profile() {
   const cardUser = {
     ...USER,
     name:        displayName,
-    email:       sbProfile?.email || user?.email || USER.email,
-    confirmedEmail: sbProfile?.confirmed_email ?? null, // fuente de verdad de la confirmación (users.confirmed_email)
-    emailReady:  !!sbProfile,                           // solo decidir el aviso cuando la fila users ya cargó
+    email:       sbProfile?.email || user?.email || profileData.email || USER.email,
+    confirmedEmail: sbProfile?.confirmed_email ?? profileData.confirmedEmail ?? null, // fuente: users.confirmed_email (con fallback a caché)
+    emailReady:  !!sbProfile || profileData.email != null, // decidir el aviso con sbProfile O con el caché (evita el salto en revisitas)
     userCode:    profileData.userCode    ?? null,
     gender:      profileData.gender      ?? 'Hombre',
     position:    profileData.position    ?? '',
@@ -3062,6 +3117,8 @@ export default function Profile() {
     const { error } = await supabase.from('users').update({ confirmed_email: confirmed }).eq('id', session.user.id);
     if (error) { console.warn('[Profile] confirmed_email:', error.message); return; }
     setSbProfile(prev => (prev ? { ...prev, confirmed_email: confirmed } : prev));
+    // Reflejar la confirmación en el caché para que una revisita no muestre el aviso brevemente.
+    setProfileData(prev => { const next = { ...prev, confirmedEmail: confirmed }; try { localStorage.setItem(PROFILE_KEY, JSON.stringify(next)); } catch {} return next; });
   };
 
   const hasPosition  = (cardUser.positions?.length > 0) || !!cardUser.position;
@@ -3253,8 +3310,21 @@ export default function Profile() {
           {creditEl}
           {rewardsOpen && <RewardsSheet balance={rewardBalance} onClose={() => setRewardsOpen(false)} />}
 
-          <SectionHeader title="Próximos eventos" count={upcoming.length} />
-          {upcoming.length === 0 ? (
+          <SectionHeader title="Próximos eventos" count={upcomingAll.length} />
+
+          {/* Solicitud de campeonato (pending) — objeto independiente, SIN fecha/hora */}
+          {champReq?.status === 'pending' && (
+            <button ref={highlightedId === '__champreq' ? highlightedRef : null} onClick={openChampRequest} className={`pressable${highlightedId === '__champreq' ? ' game-row-highlighted' : ''}`} style={champRowStyle}>
+              <div style={{ ...champCrest, background: champTheme }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M7 4h10v5a5 5 0 0 1-10 0V4z" stroke="#fff" strokeWidth="1.7" strokeLinejoin="round"/><path d="M7 6H4.5v1.5A2.5 2.5 0 0 0 7 10M17 6h2.5v1.5A2.5 2.5 0 0 1 17 10" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/><path d="M12 14v3M9 20.5h6M9.5 20.5c0-1.4.8-2.3 2.5-2.3s2.5.9 2.5 2.3" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg></div>
+              <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{champReq.championshipName || 'Campeonato'}</div>
+                <div style={{ fontSize: 12.5, color: SUB, fontWeight: 600, marginTop: 1 }}>Solicitud de contacto enviada</div>
+              </div>
+              <ChevIcon />
+            </button>
+          )}
+
+          {upcomingAll.length === 0 ? (
             <div style={{ padding: '4px 16px 8px', fontSize: 14, color: SUB }}>No tienes ningún partido</div>
           ) : (
             <>
@@ -3269,6 +3339,29 @@ export default function Profile() {
                         <div style={{ padding: '4px 16px 8px', fontSize: 13.5, fontWeight: 500, color: SUB }}>{dateLabel}</div>
                       )}
                       {games.map(g => {
+                        if (g.__champ) return (
+                          /* Campeonato pagado como evento del día — misma geometría que GameRow (gap 12 + ChevIcon).
+                             El holder (flex:1) termina en la MISMA línea vertical que el badge de Partido. */
+                          <div key={g.id} ref={highlightedId === '__champ' ? highlightedRef : null} onClick={openChampionship} className={`pressable${highlightedId === '__champ' ? ' game-row-highlighted' : ''}`} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 16px', cursor: 'pointer' }}>
+                            <div style={{ width: 44, flexShrink: 0, textAlign: 'center' }}>
+                              <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, lineHeight: 1.1 }}>{g.time || '—'}</div>
+                              {g.ampm && <div style={{ fontSize: 11, color: SUB, fontWeight: 500, lineHeight: 1.1 }}>{g.ampm}</div>}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10, background: champTheme, borderRadius: 12, padding: '8px 12px' }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 15, fontWeight: 800, color: '#fff', letterSpacing: -0.2, textShadow: '0 1px 2px rgba(0,0,0,0.25)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{champName}</div>
+                                {(_champSum.venueName || champTeamsLabel) && (
+                                  <div style={{ display: 'flex', alignItems: 'baseline', minWidth: 0, marginTop: 2 }}>
+                                    {_champSum.venueName && <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.9)', textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>{_champSum.venueName}</span>}
+                                    {champTeamsLabel && <span style={{ flexShrink: 0, whiteSpace: 'nowrap', fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.9)', textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>{_champSum.venueName ? ' · ' : ''}{champTeamsLabel}</span>}
+                                  </div>
+                                )}
+                              </div>
+                              <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 700, color: '#fff', textAlign: 'right', lineHeight: 1.2, maxWidth: 90, textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>{champStatusLabel}</span>
+                            </div>
+                            <ChevIcon />
+                          </div>
+                        );
                         const isHighlighted = g.id === highlightedId || g.gameId === highlightedId;
                         return (
                         <div
@@ -3283,7 +3376,7 @@ export default function Profile() {
                   );
                 });
               })()}
-              {!upcomingExpanded && upcoming.length > 10 && (
+              {!upcomingExpanded && upcomingAll.length > 10 && (
                 <button onClick={() => setUpcomingExpanded(true)} style={{
                   display: 'block', width: '100%', padding: '10px 16px',
                   background: 'none', border: 'none', cursor: 'pointer',
@@ -3385,6 +3478,25 @@ export default function Profile() {
           ) : ''}
           shareLink={buildGameShareUrl(confirmedGame.id, { sharedByUserId: user?.id })}
           onOK={handleOK}
+        />
+      )}
+
+      {/* Confirmación de Campeonatos SOBRE Profile → al Continuar enfoca el target correcto (Games UX) */}
+      {champConfirm === 'created' && (
+        <ChampConfirmOverlay
+          title="¡Campeonato creado!"
+          lines={[
+            'Ya puedes encontrarlo en Próximos eventos. Cuando estés listo, entra para prepararlo y publicarlo.',
+            'Comparte la clave con los jugadores cuando abras las inscripciones.',
+          ]}
+          onContinue={() => { setChampConfirm(null); setHighlightedId('__champ'); }}
+        />
+      )}
+      {champConfirm === 'request' && (
+        <ChampConfirmOverlay
+          title="Solicitud enviada"
+          lines={['Nos pondremos en contacto contigo para organizar tu campeonato.']}
+          onContinue={() => { setChampConfirm(null); setHighlightedId('__champreq'); }}
         />
       )}
       {!confirmedGame && slotExpiry && (

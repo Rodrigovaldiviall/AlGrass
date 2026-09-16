@@ -45,7 +45,7 @@ function formatDuration(min) {
 function Header({ title, onBack, onShare }) {
   return (
     <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 16, paddingRight: 16 }}>
-      <div style={{ height: 44, display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ height: 26, display: 'flex', alignItems: 'center', gap: 8 }}>
         <button
           onClick={onBack}
           style={{ width: 36, height: 36, marginLeft: -8, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, flexShrink: 0, WebkitTapHighlightColor: 'transparent' }}>

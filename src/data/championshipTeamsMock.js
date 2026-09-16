@@ -3,11 +3,48 @@
 
 export const PALETTE = ['#3F5FE0', '#E24A4A', '#2E9E5B', '#F5A524', '#8E44AD', '#16A0A0', '#D6336C', '#5B6470', '#B8860B', '#1F6B36'];
 
+// Diseño del escudo (mock, simple y extensible): 5 sólidos + 5 patrones. type + colors[].
+// Se renderiza igual en el selector (swatch) y en el Shield (grande y pequeños).
+export const TEAM_DESIGNS = [
+  { id: 'solid-blue', type: 'solid', colors: ['#3F5FE0'] },
+  { id: 'solid-red', type: 'solid', colors: ['#E24A4A'] },
+  { id: 'solid-green', type: 'solid', colors: ['#2E9E5B'] },
+  { id: 'solid-orange', type: 'solid', colors: ['#F5A524'] },
+  { id: 'solid-purple', type: 'solid', colors: ['#8E44AD'] },
+  { id: 'stripes-blue', type: 'stripes', colors: ['#3F5FE0', '#FFFFFF'] },   // franjas verticales azul/blanco
+  { id: 'diagonal-blue', type: 'diagonal', colors: ['#3F5FE0', '#FFFFFF'] }, // franjas diagonales azul/blanco
+  { id: 'stripes-red', type: 'stripes', colors: ['#E24A4A', '#FFFFFF'] },    // franjas verticales rojo/blanco
+  { id: 'checker-red', type: 'checker', colors: ['#E24A4A', '#FFFFFF'] },    // damero rojo/blanco
+  { id: 'split-bw', type: 'split', colors: ['#1B1B1F', '#FFFFFF'] },         // mitad y mitad negro/blanco
+];
+export const DEFAULT_DESIGN = TEAM_DESIGNS[0];
+
+// Compat: un equipo antiguo con solo `color` → diseño sólido equivalente.
+export function designFromColor(color) {
+  return TEAM_DESIGNS.find(d => d.type === 'solid' && d.colors[0] === color) || { id: 'solid', type: 'solid', colors: [color || '#5B6470'] };
+}
+// Diseño efectivo de un equipo: design > color > default.
+export function teamDesign(team) {
+  if (team && team.design) return team.design;
+  if (team && team.color) return designFromColor(team.color);
+  return DEFAULT_DESIGN;
+}
+export function sameDesign(a, b) {
+  if (!a || !b) return false;
+  return a.type === b.type && (a.colors || []).join(',').toLowerCase() === (b.colors || []).join(',').toLowerCase();
+}
+
 const FIRST = ['Carlos', 'Diego', 'Luis', 'Jorge', 'Miguel', 'Andrés', 'Marco', 'Iván', 'Pablo', 'Renzo', 'Bruno', 'Gabriel', 'Álvaro', 'Nicolás', 'Sebastián', 'Rodrigo'];
 const LAST = ['Rojas', 'Quispe', 'Torres', 'Vega', 'Ramos', 'Flores', 'Castro', 'Núñez', 'Salas', 'Mendoza', 'Ríos', 'Chávez', 'Paredes', 'Cárdenas', 'Loayza', 'Ponce'];
 const TEAM_NAMES = ['Los Tigres', 'Real Cayma', 'Atlético Sur', 'Depor Norte', 'FC Amigos', 'Los Cracks', 'Racing Borja', 'Unión Surco', 'Sporting Vega', 'Titanes', 'Halcones', 'Leones', 'Pumas', 'Dragones', 'Cóndores', 'Búhos'];
 
 function seeded(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
+
+// Regla de nombre de equipo: máximo 4 PALABRAS (no 4 caracteres). Reutilizable en la validación.
+export const MAX_TEAM_WORDS = 4;
+export function withinTeamNameWordLimit(name) {
+  return (name || '').trim().split(/\s+/).filter(Boolean).length <= MAX_TEAM_WORDS;
+}
 
 export function initials(name) {
   const p = (name || '').trim().split(/\s+/);
@@ -26,27 +63,49 @@ export function darken(hex, amt = 0.28) {
   return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
 }
 
-// Equipos mock: `count` equipos, 1 jugador cada uno (bajo ruido, como el .md).
+// Nombre del usuario actual (mock). El jugador id 'you' lo usa; en listas se muestra con "(tú)".
+export const CURRENT_USER_NAME = 'Rodrigo Valdivia Llosa';
+
+// Formato de nombre en listas: 2 palabras completas + inicial de la 3ª ("Rodrigo Valdivia L.").
+export function displayPlayerName(name) {
+  const w = (name || '').trim().split(/\s+/).filter(Boolean);
+  if (w.length <= 2) return w.join(' ');
+  return `${w[0]} ${w[1]} ${w[2][0].toUpperCase()}.`;
+}
+// Etiqueta de fila de jugador: formatea el nombre y marca al usuario actual con "(tú)".
+export function playerLabel(p) {
+  const base = displayPlayerName(p?.name);
+  return p?.id === 'you' ? `${base} (tú)` : base;
+}
+
+// Equipos mock: `count` equipos, 1 jugador cada uno (bajo ruido, como el .md). Nombre de 3 palabras
+// (nombre + 2 apellidos) para mostrar el formato "Nombre Apellido I.".
 export function buildTeams(count) {
-  return Array.from({ length: Math.max(0, count) }, (_, i) => ({
-    id: 't' + i,
-    name: TEAM_NAMES[i % TEAM_NAMES.length],
-    color: PALETTE[i % PALETTE.length],
-    players: [{ id: `p${i}`, name: `${FIRST[seeded('f' + i) % FIRST.length]} ${LAST[seeded('l' + i) % LAST.length]}` }],
-  }));
+  return Array.from({ length: Math.max(0, count) }, (_, i) => {
+    const design = TEAM_DESIGNS[i % TEAM_DESIGNS.length];
+    return {
+      id: 't' + i,
+      name: TEAM_NAMES[i % TEAM_NAMES.length],
+      color: design.colors[0], // compat con consumidores que aún leen color
+      design,
+      players: [{ id: `p${i}`, name: `${FIRST[seeded('f' + i) % FIRST.length]} ${LAST[seeded('l' + i) % LAST.length]} ${LAST[seeded('m' + i) % LAST.length]}` }],
+    };
+  });
 }
 
 // Jugadores sin equipo (lista general).
 export const NO_TEAM_PLAYERS = [
-  { id: 'n1', name: 'Andrés Salas' },
-  { id: 'n2', name: 'Renzo Paredes' },
+  { id: 'n1', name: 'Andrés Salas Rojas' },
+  { id: 'n2', name: 'Renzo Paredes Vega' },
 ];
 
 // Roster combinado: jugadores de todos los equipos + sin equipo. `you` (opcional) va primero.
-export function combinedRoster(teams, you) {
+// includeNoTeamPool: pool mock "sin equipo" SOLO en la demo previa. Campeonato REAL creado → false
+// (jugadores derivan únicamente de equipos reales + quien se une; sin fallback a mocks).
+export function combinedRoster(teams, you, includeNoTeamPool = true) {
   const rows = [];
-  teams.forEach(t => t.players.forEach(p => rows.push({ ...p, team: t })));
-  NO_TEAM_PLAYERS.forEach(p => rows.push({ ...p, team: null }));
+  teams.forEach(t => (t.players || []).forEach(p => rows.push({ ...p, team: t })));
+  if (includeNoTeamPool) NO_TEAM_PLAYERS.forEach(p => rows.push({ ...p, team: null }));
   rows.sort((a, b) => a.name.localeCompare(b.name, 'es'));
   return you ? [you, ...rows] : rows;
 }
@@ -106,20 +165,21 @@ export function mockScorers(teams) {
   return list.sort((a, b) => b.goals - a.goals);
 }
 
+// Partidos MOCK explícitos (NO fixture). `played` distingue pasado (con marcador) de próximo.
+// dateLabel ya viene formateado "Dom 19 de mayo"; time en línea aparte.
 export function mockMatches(teams) {
-  const times = ['4:00 pm', '5:00 pm', '6:00 pm', '7:00 pm'];
-  const days = ['Sáb 18', 'Dom 19'];
-  const m = [];
-  for (let i = 0; i + 1 < teams.length; i += 2) {
-    const k = i / 2;
-    const done = i === 0;
-    m.push({
-      a: teams[i], b: teams[i + 1], done,
-      sa: done ? 2 : null, sb: done ? 1 : null,
-      court: 'C' + ((k % 4) + 1),
-      day: days[k % days.length],
-      time: times[k % times.length],
-    });
-  }
-  return m;
+  if (teams.length < 2) return [];
+  const T = (i) => teams[i];
+  const base = [
+    { ai: 0, bi: 1, played: true,  sa: 3, sb: 1, court: 'C2', dateLabel: 'Sáb 18 de mayo', time: '4:00 pm' },
+    { ai: 2, bi: 3, played: true,  sa: 2, sb: 2, court: 'C1', dateLabel: 'Sáb 18 de mayo', time: '5:00 pm' },
+    { ai: 4, bi: 5, played: true,  sa: 0, sb: 2, court: 'C3', dateLabel: 'Sáb 18 de mayo', time: '6:00 pm' },
+    { ai: 0, bi: 2, played: false, sa: null, sb: null, court: 'C2', dateLabel: 'Dom 19 de mayo', time: '4:00 pm' },
+    { ai: 1, bi: 3, played: false, sa: null, sb: null, court: 'C1', dateLabel: 'Dom 19 de mayo', time: '5:00 pm' },
+    { ai: 4, bi: 6, played: false, sa: null, sb: null, court: 'C3', dateLabel: 'Dom 19 de mayo', time: '6:00 pm' },
+    { ai: 5, bi: 0, played: false, sa: null, sb: null, court: 'C2', dateLabel: 'Lun 20 de mayo', time: '7:00 pm' },
+  ];
+  return base
+    .filter(m => m.ai < teams.length && m.bi < teams.length)
+    .map((m, i) => ({ id: 'm' + i, a: T(m.ai), b: T(m.bi), played: m.played, sa: m.sa, sb: m.sb, court: m.court, dateLabel: m.dateLabel, time: m.time }));
 }

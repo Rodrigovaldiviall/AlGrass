@@ -135,7 +135,7 @@ function Header({ field, openSpots, onBack, onShare, infoMode, showShare, live =
   const cupoLabel = openSpots === 0 ? 'Lleno' : `${openSpots} ${openSpots === 1 ? 'cupo' : 'cupos'}`;
   return (
     <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 16, paddingRight: 16, position: 'relative' }}>
-      <div style={{ height: 44, display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
+      <div style={{ height: 26, display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
         <button
           onClick={onBack}
           style={{ width: 36, height: 36, marginLeft: -8, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, flexShrink: 0, WebkitTapHighlightColor: 'transparent' }}>
@@ -411,13 +411,14 @@ function Avatar({ name, size = 36, hue = null, avatarPath = null, avatarVersion 
 function WaitlistRow({ inList, openSpots = 0, onToggle }) {
   const spotFreed = inList && openSpots > 0;
   return (
-    <div style={{ padding: '10px', background: '#fff', borderTop: `1px solid ${HAIR}` }}>
+    <div style={{ padding: '12px 16px 0', pointerEvents: 'none' }}>
       <div style={{
         padding: '8px 10px 8px 12px',
         background: spotFreed ? '#F0FAF3' : '#FFF8EC',
         border: `1px solid ${spotFreed ? '#B2DFC0' : '#F4E4C2'}`,
         borderRadius: 14,
         display: 'flex', alignItems: 'center', gap: 10,
+        pointerEvents: 'auto',
       }}>
         <div style={{ flex: 1, fontSize: 13, color: TEXT, lineHeight: 1.35, fontWeight: 500 }}>
           {spotFreed
@@ -2004,6 +2005,8 @@ export default function GameDetail() {
   const loadingCtaActive = !isHost && !(spotsVerified && waitlistReady && availabilityResolved);
   // Rama reservado con "Gestionar mi reserva" flotante solo (1 CTA), sin Únete.
   const manageCtaActive = !isHost && spotsVerified && waitlistReady && availabilityResolved && (isBooked || infoMode) && (isBooked || guestsInRoster.length > 0) && !isStarted;
+  // Waitlist dentro del stack no-reservado (encima de Únete) → tratar como 2 CTAs (algo más alto).
+  const waitlistInStack = joinCtaActive && rosterReady && (isFull || inWaitlist);
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
@@ -2014,7 +2017,7 @@ export default function GameDetail() {
             shareOrCopy({ url: buildGameShareUrl(gameId, { sharedByUserId: user?.id }), title: g.field, text: `${g.date} · ${g.time} ${g.ampm}`, onCopied: () => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); } });
           }} />
         <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', background: '#fff', paddingBottom: joinCtaActive ? (isCanceledWithGuests ? 124 : 78) : ((loadingCtaActive || manageCtaActive) ? 78 : undefined) }}>
+        <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', background: '#fff', paddingBottom: joinCtaActive ? (waitlistInStack ? 150 : (isCanceledWithGuests ? 124 : 78)) : ((loadingCtaActive || manageCtaActive) ? 78 : undefined) }}>
           <HeroImage coverPath={g?.venueCoverPath} coverVersion={g?.venueCoverVersion} />
 
           {showInheritedGroup && (
@@ -2212,9 +2215,6 @@ export default function GameDetail() {
 
           <div style={{ height: 8 }} />
         </div>
-        {rosterReady && waitlistReady && availabilityResolved && !infoMode && !isStarted && !isHost && (isFull || inWaitlist) && (
-          <WaitlistRow inList={inWaitlist} openSpots={openSpots} onToggle={handleWaitlistToggle} />
-        )}
         {isHost ? (
           /* ── Host action bar ───────────────────────────── */
           (!isPastGame && !isStarted) && (
@@ -2260,6 +2260,11 @@ export default function GameDetail() {
                relative) queda encima del TabBar; el contenido scrollea por detrás. Condiciones
                de render idénticas a antes; solo cambia presentación/posición. ── */
           <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, pointerEvents: 'none', display: 'flex', flexDirection: 'column' }}>
+            {/* Waitlist/Lista de espera: mismo stack flotante, ocupa la posición SUPERIOR (encima de Únete).
+                Misma condición de render que antes (ahora dentro del stack); su holder blanco se eliminó. */}
+            {rosterReady && !isStarted && (isFull || inWaitlist) && (
+              <WaitlistRow inList={inWaitlist} openSpots={openSpots} onToggle={handleWaitlistToggle} />
+            )}
             {isCanceledWithGuests && !isStarted && (
               <div style={{ padding: '12px 16px 0' }}>
                 <button

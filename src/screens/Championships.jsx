@@ -2,9 +2,11 @@ import { useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BLUE, TEXT, SUB, ORANGE } from '../constants';
 import TabBar from '../components/TabBar';
-import { LIST_CHAMPIONSHIPS } from '../data/championshipsMock';
 
 const SCROLL_KEY = 'ch_list_scroll'; // mismo patrón que Partidos/Canchas (sessionStorage)
+const CV_KEY = 'championship_view_state'; // ÚNICA fuente del campeonato del owner (mock)
+// Estados que hacen visible el campeonato en el listado (pending_publish NO aparece aquí).
+const LISTED_STATUSES = new Set(['registration_open', 'registration_closed', 'in_progress']);
 
 // ── Iconos locales (mínimos para B1) ───────────────────────────────────────
 const PlusIcon = (c = '#fff') => (
@@ -75,7 +77,7 @@ function ChampionshipCard({ c, onPress }) {
           <span style={{ color: '#D1D1D6' }}>·</span>
           <span>{c.format}</span>
           <span style={{ flex: 1 }} />
-          {isOpen
+          {(isOpen || c.daysAgo == null)
             ? <span style={{ fontWeight: 600, color: isPrivate ? SUB : BLUE }}>{isPrivate ? 'Privado' : 'Público'}</span>
             : <span style={{ color: '#9A9AA0' }}>Hace {c.daysAgo} {c.daysAgo === 1 ? 'día' : 'días'}</span>}
         </div>
@@ -119,13 +121,27 @@ export default function Championships() {
     return () => window.removeEventListener('tab-scroll-top', onTabScrollTop);
   }, []);
 
-  const actives = LIST_CHAMPIONSHIPS.filter(c => c.status === 'open');
-  const historic = LIST_CHAMPIONSHIPS
-    .filter(c => c.status === 'results' && (c.daysAgo ?? 999) <= 14)
-    .sort((a, b) => (a.daysAgo ?? 0) - (b.daysAgo ?? 0));
+  // Única fuente: cv.championship. Sin campeonatos mock precargados. Solo aparece cuando su estado
+  // es "listable" (publicado en adelante). El mismo objeto que ve Profile/ChampionshipView.
+  const cv = (() => { try { return JSON.parse(sessionStorage.getItem(CV_KEY)); } catch { return null; } })();
+  const champ = cv?.championship || null;
+  const summary = cv?.summary || {};
+  const myChampCard = (champ && LISTED_STATUSES.has(champ.status)) ? {
+    id: '__mine',
+    name: cv.name || 'Campeonato',
+    teams: champ.teams?.length ?? 0,
+    format: summary.formatLabel || (summary.mode === 'liga' ? 'Liga' : ''),
+    status: champ.status === 'registration_open' ? 'open' : 'results', // pill: abiertas vs Resultados
+    visibility: champ.privacy === 'private' ? 'private' : 'public',
+    resultsPublic: cv.resultsPublic ?? true,
+    daysAgo: null,
+    coverTheme: cv.coverTheme || '#3F5FE0',
+    dateLabel: summary.dateLabel || '',
+    venueName: summary.venueName || '',
+  } : null;
 
-  // Preparado para abrir el campeonato en bloques posteriores (destino aún no construido).
-  const openChampionship = (_c) => { /* B2+: navegar a Ver mi campeonato / modal de clave */ };
+  // Abrir el MISMO campeonato (owner). Reutiliza cvReturn para leer cv.championship/teams/status.
+  const openChampionship = () => navigate('/championships/view', { state: { summary: cv?.summary, organizeState: cv?.organizeState, cvReturn: true, from: 'campeonatos' } });
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
@@ -140,19 +156,16 @@ export default function Championships() {
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         {/* La lista scrollea por detrás del CTA; paddingBottom deja aire para la última card */}
         <div ref={listRef} onScroll={e => { scrollPosRef.current = e.currentTarget.scrollTop; }} className="no-sb" style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '14px 16px 88px' }}>
-          {actives.length > 0 && (
+          {myChampCard ? (
             <>
               <SectionLabel>Activos</SectionLabel>
-              {actives.map(c => <ChampionshipCard key={c.id} c={c} onPress={() => openChampionship(c)} />)}
+              <ChampionshipCard c={myChampCard} onPress={openChampionship} />
             </>
-          )}
-
-          {historic.length > 0 && (
-            <>
-              <div style={{ height: 8 }} />
-              <SectionLabel>Históricos · últimos 14 días</SectionLabel>
-              {historic.map(c => <ChampionshipCard key={c.id} c={c} onPress={() => openChampionship(c)} />)}
-            </>
+          ) : (
+            <div style={{ padding: '48px 24px', textAlign: 'center' }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Aún no hay campeonatos</div>
+              <div style={{ fontSize: 13.5, color: SUB, lineHeight: 1.5 }}>Crea y publica tu campeonato para verlo aquí.</div>
+            </div>
           )}
         </div>
 

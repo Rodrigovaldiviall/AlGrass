@@ -117,10 +117,10 @@ function PickSheet({ title, items, selected, onToggle, onClose }) {
 }
 
 // ── Checkbox-card expandible ("no encuentro disponibilidad" / "que me contacten") ──
-function CheckboxCard({ checked, onToggle, label, expanded }) {
+function CheckboxCard({ checked, onToggle, label, expanded, locked = false }) {
   return (
     <div style={{ border: `1px solid ${checked ? BLUE : HAIR}`, borderRadius: 12, padding: '12px 14px', background: checked ? '#F5F8FF' : '#fff' }}>
-      <button onClick={onToggle} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+      <button onClick={locked ? undefined : onToggle} disabled={locked} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', background: 'transparent', border: 'none', cursor: locked ? 'default' : 'pointer', fontFamily: 'inherit', textAlign: 'left', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
         <div style={{ width: 20, height: 20, borderRadius: 5, flexShrink: 0, border: checked ? 'none' : `1.6px solid ${HAIR}`, background: checked ? BLUE : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {checked && <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2.5 6.5l2.5 2.5 4.5-5" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>}
         </div>
@@ -141,16 +141,18 @@ export default function ChampionshipOrganize() {
   const [format, setFormat] = useState(restore?.format ?? DEFAULT_FORMAT);  // 7v7 por defecto
   const [groupId, setGroupId] = useState(restore?.groupId ?? null);         // rango de tamaño (uno de los 4 grupos)
   const [contactMe, setContactMe] = useState(restore?.contactMe ?? false);
-  const [leagueTeams, setLeagueTeams] = useState(restore?.leagueTeams ?? '');
-  const [leaguePlayers, setLeaguePlayers] = useState(restore?.leaguePlayers ?? '');
+  // Liga: cantidad única + unidad (equipos|personas), SIN cálculo automático entre ambos.
+  const [leagueQty, setLeagueQty] = useState(restore?.leagueQty ?? '');
+  const [leagueUnit, setLeagueUnit] = useState(restore?.leagueUnit ?? 'teams');
 
   const [districts, setDistricts] = useState(() => new Set(restore?.districts ?? []));
   const [venueFilter, setVenueFilter] = useState(() => new Set(restore?.venueFilter ?? []));
   const [amenities, setAmenities] = useState(() => new Set(restore?.amenities ?? []));
   const [dateKey, setDateKey] = useState(restore?.dateKey ?? TODAY_KEY);
   const [venueIdx, setVenueIdx] = useState(restore?.venueIdx ?? 0);
-  const [slotIdx, setSlotIdx] = useState(restore?.slotIdx ?? 0);
+  const [slotIdx, setSlotIdx] = useState(restore?.slotIdx ?? null); // horario NO preseleccionado (null = ninguno)
   const [courtCustom, setCourtCustom] = useState(restore?.courtCustom ?? false); // "que me contacten" en Cancha
+  const [courtForced, setCourtForced] = useState(false); // CASO A: personalización OBLIGATORIA por cero disponibilidad GLOBAL
   const [districtSheet, setDistrictSheet] = useState(false);
   const [venueSheet, setVenueSheet] = useState(false);
   const didMount = useRef(false); // evita que los resets de venue/slot pisen el estado restaurado
@@ -182,13 +184,21 @@ export default function ChampionshipOrganize() {
     return [...yes, ...no];
   }, [baseVenues, group, dateKey]);
 
+  // Disponibilidad GLOBAL: ignora distrito/amenities/venueFilter → ¿existe ALGÚN venue compatible con el
+  // formato con horario válido para esta fecha? Distingue "cero global" (CASO A) de "cero con filtros" (CASO B).
+  const globalVenues = useMemo(() => compatibleVenues(format, new Set(), new Set()), [format]);
+  const globalHasAvailability = useMemo(
+    () => group != null && globalVenues.some(v => venueComplies(v, dateKey)),
+    [globalVenues, group, dateKey] // eslint-disable-line
+  );
+
   const resolvedVenue = candidates[Math.min(venueIdx, Math.max(0, candidates.length - 1))] || null;
   const matrix = useMemo(() => (resolvedVenue ? venueMatrix(resolvedVenue, dateKey) : []), [resolvedVenue, dateKey]);
 
   // Todos los horarios válidos del venue (misma función única). El usuario elige UNA franja completa.
   const slots = useMemo(() => (group ? findValidTournamentSlots(matrix, group) : []), [matrix, group]);
   const complies = slots.length > 0;
-  const activeSlot = complies ? slots[Math.min(slotIdx, slots.length - 1)] : null;
+  const activeSlot = (complies && slotIdx != null) ? slots[Math.min(slotIdx, slots.length - 1)] : null;
   const block = activeSlot ? activeSlot.cells : new Set(); // celdas del horario seleccionado (solo visual)
 
   const showCanchaCard = mode === 'oneday' && !contactMe;
@@ -198,6 +208,9 @@ export default function ChampionshipOrganize() {
   const courts = resolvedVenue?.courts || 0;
   const cols = Math.max(4, courts);
   const scrollCols = cols > 4;
+
+  // Scroll de la pantalla: se guarda en organizeState al ir a "Ver mi campeonato" y se restaura al volver.
+  const scrollRef = useRef(null);
 
   // Indicador vertical sutil de la grilla (aparece solo si hay overflow de horas).
   const gridVRef = useRef(null);
@@ -214,18 +227,61 @@ export default function ChampionshipOrganize() {
   useEffect(() => { const id = requestAnimationFrame(updateGridThumb); return () => cancelAnimationFrame(id); }, [resolvedVenue, dateKey]); // eslint-disable-line
 
   // Cambiar filtros o fecha → mostrar el primer venue (que, para la fecha, es el primero que cumple).
+  // Al cambiar distrito/formato/amenities, deshacer del filtro de Cancha las canchas que ya no son
+  // compatibles (p. ej. al quitar el distrito de una cancha filtrada) para no quedar con un filtro
+  // "fantasma" que no puede deseleccionarse desde el sheet (que se lista por distrito).
+  useEffect(() => {
+    if (!didMount.current) return;
+    const allowed = new Set(compatibleVenues(format, districts, amenities).map(v => v.id));
+    setVenueFilter(prev => {
+      if (prev.size === 0) return prev;
+      const next = new Set([...prev].filter(id => allowed.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [format, districts, amenities]);
+
   useEffect(() => { if (didMount.current) setVenueIdx(0); }, [format, districts, amenities, venueFilter, dateKey]);
-  // Cambiar de venue/fecha/filtros/rango → seleccionar automáticamente el primer horario válido.
-  useEffect(() => { if (didMount.current) setSlotIdx(0); }, [format, districts, amenities, venueFilter, dateKey, groupId, venueIdx]);
+  // Cambiar de venue/fecha/filtros/rango → limpiar el horario (queda SIN preseleccionar; el usuario elige).
+  useEffect(() => { if (didMount.current) setSlotIdx(null); }, [format, districts, amenities, venueFilter, dateKey, groupId, venueIdx]);
+
+  // CASO A ↔ disponibilidad: si NO existe disponibilidad GLOBAL, forzar personalización de Cancha
+  // (bloqueada) y limpiar horario. Si vuelve a existir disponibilidad global, liberar el forzado.
+  useEffect(() => {
+    if (!showCanchaCard || !group) return;                  // no aplica (Liga / formato custom / sin rango)
+    if (!globalHasAvailability) { setCourtForced(true); setCourtCustom(true); setSlotIdx(null); }
+    else if (courtForced) { setCourtForced(false); setCourtCustom(false); } // NO autoselecciona horario
+  }, [globalHasAvailability, showCanchaCard, group]); // eslint-disable-line
   useEffect(() => { didMount.current = true; }, []);
+
+  // Restaura el scroll al volver desde "Ver mi campeonato" (rAF×2 para esperar el layout).
+  useEffect(() => {
+    const y = restore?.scrollTop;
+    if (!y || !scrollRef.current) return;
+    requestAnimationFrame(() => requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: y, behavior: 'instant' })));
+  }, []); // eslint-disable-line
+
+  // Al elegir un horario, si el bloque recomendado cae fuera del área visible de la grilla,
+  // hacer un scroll VERTICAL sutil (smooth) para revelarlo. `startHour` es el índice de fila (HORA).
+  useEffect(() => {
+    const el = gridVRef.current;
+    if (!el || !activeSlot) return;
+    const ROW = 38; // 32 (celda) + 6 (margin) por fila
+    const firstTop = activeSlot.startHour * ROW;
+    const lastBottom = (activeSlot.endHour ?? activeSlot.startHour + 1) * ROW;
+    const inView = firstTop >= el.scrollTop && lastBottom <= el.scrollTop + el.clientHeight;
+    if (inView) return;
+    const target = Math.max(0, firstTop - 6);
+    requestAnimationFrame(() => { el.scrollTo({ top: target, behavior: 'smooth' }); updateGridThumb(); });
+  }, [slotIdx, activeSlot?.startHour, activeSlot?.endHour, venueIdx, dateKey]); // eslint-disable-line
 
   // Navega a "Ver mi campeonato" (modo demostración). Pasa (a) el estado para restaurar Organiza al
   // volver y (b) el resumen resuelto para pintar. Sin persistencia (frontend/mock).
   function goToView() {
     const organizeState = {
-      mode, format, groupId, contactMe, courtCustom, leagueTeams, leaguePlayers,
+      mode, format, groupId, contactMe, courtCustom, leagueQty, leagueUnit,
       districts: [...districts], amenities: [...amenities], venueFilter: [...venueFilter],
       dateKey, venueIdx, slotIdx,
+      scrollTop: scrollRef.current?.scrollTop ?? 0,
     };
     const dsel = DATE_WINDOW.find(d => ymd(d) === dateKey);
     const lab = dsel ? dateChip(dsel) : null;
@@ -233,6 +289,8 @@ export default function ChampionshipOrganize() {
       mode, contactMe, courtCustom,
       formatLabel: format,
       group: group ? { min: group.min, max: group.max } : null,
+      // Liga: cantidad tentativa (equipos o personas). Alimenta el resumen de "Ver mi campeonato".
+      leagueEstimate: mode === 'liga' ? { type: leagueUnit, quantity: leagueQty ? Number(leagueQty) : null } : null,
       dateLabel: lab ? `${lab.top} ${lab.bottom}` : null,
       venueName: resolvedVenue?.name ?? null,
       venueDistrict: resolvedVenue?.district ?? null,
@@ -257,21 +315,25 @@ export default function ChampionshipOrganize() {
   // Recomendación textual del grupo (tarjeta de formato) + configuración concreta (aviso).
   const recoMain = group ? `${group.phases[0].courts} canchas · ${group.phases[0].hours} horas` : null;
   const recoExtra = group && group.phases[1] ? `+ ${group.phases[1].courts} canchas · ${group.phases[1].hours} hora adicional` : null;
-  const configLabel = recoMain ? `${recoMain}${group.phases[1] ? ` + ${group.phases[1].courts} canchas · ${group.phases[1].hours} hora adicional` : ''}` : '';
+  const configLabel = recoMain ? `${recoMain}${group.phases[1] ? ` + ${group.phases[1].courts} canchas · ${group.phases[1].hours} ${group.phases[1].hours === 1 ? 'hora' : 'horas'}` : ''}` : '';
 
   // Regla ÚNICA de habilitación del CTA "Ver mi campeonato":
   //   formatResolved = rango elegido O "que me contacten" (formato) O modo Liga
   //   courtResolved  = no aplica cancha (Liga/formato custom) O cancha custom O hay disponibilidad
   const formatResolved = mode === 'liga' || contactMe || groupId != null;
-  const courtResolved = !showCanchaCard || courtCustom || complies;
+  const courtResolved = !showCanchaCard || courtCustom || (complies && slotIdx != null);
   const canContinue = formatResolved && courtResolved;
 
-  // Aviso inferior: verde si AlGrass encontró el bloque exacto; ámbar si no. SE OCULTA por completo
-  // si el usuario eligió personalizar Cancha (courtCustom) → ya no evaluamos el flujo estándar.
+  // Aviso inferior (mismo lugar de siempre). Tres escenarios de disponibilidad:
+  //   A) cero GLOBAL → mensaje destacado (se muestra aunque courtCustom esté forzado).
+  //   B) existe global pero no con la selección/filtros actuales → mensaje corto (sin forzar personalización).
+  //   C) hay disponibilidad con la selección actual → sin aviso.
   const status = (() => {
-    if (!showCanchaCard || courtCustom || !group || !resolvedVenue) return null;
-    if (complies) return { bg: '#D7F0DD', title: 'Excelente, encontramos la disponibilidad', titleColor: GREEN, body: configLabel };
-    return { bg: '#FFF8EC', title: 'No se encuentra la disponibilidad recomendada.', body: 'Prueba otra cancha o selecciona personalizar.' };
+    if (!showCanchaCard || !group) return null;
+    if (!globalHasAvailability) return { bg: '#FFF8EC', title: 'No encontramos disponibilidad', body: 'No te preocupes, continúa a Ver mi campeonato y te ayudaremos a encontrar una opción.' }; // CASO A
+    if (courtCustom) return null;       // personalización manual con disponibilidad global → sin aviso
+    if (complies) return null;          // CASO C
+    return { bg: '#FFF8EC', title: null, body: 'No hay disponibilidad con esta selección. Prueba otro horario o cambia los filtros.' }; // CASO B
   })();
 
   const arrow = (d, enabled) => (
@@ -288,14 +350,25 @@ export default function ChampionshipOrganize() {
           <button onClick={() => navigate('/championships')} style={{ position: 'absolute', left: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
-          <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>Organiza tu campeonato</div>
+          <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>Crear nuevo campeonato</div>
         </div>
       </div>
 
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-      <div className="no-sb" style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', paddingLeft: 16, paddingRight: 16, paddingTop: 14, paddingBottom: status ? 130 : 88 }}>
-        <div style={{ fontSize: 13, color: SUB, lineHeight: 1.55, marginBottom: 14 }}>
-          Disfruta de un torneo sin preocuparte por la organización: bríndanos los datos de formato y cancha, y nosotros nos encargamos del resto — cancha, árbitros, agua y mucho más. En "Ver mi campeonato" te mostraremos la fase de inscripciones y de resultados, para que todos puedan participar. Despreocúpate y juega.
+      <div ref={scrollRef} className="no-sb" style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', paddingLeft: 16, paddingRight: 16, paddingTop: 14, paddingBottom: status ? 130 : 88 }}>
+        <div style={{ display: 'flex', gap: 10, background: '#E8F1FF', borderRadius: 14, padding: '12px 12px 12px 12px', marginBottom: 16 }}>
+          <div style={{ width: 32, height: 32, borderRadius: '50%', background: BLUE, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M7 4h10v5a5 5 0 0 1-10 0V4z" stroke="#fff" strokeWidth="1.7" strokeLinejoin="round" />
+              <path d="M7 6H4.5v1.5A2.5 2.5 0 0 0 7 10M17 6h2.5v1.5A2.5 2.5 0 0 1 17 10" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M12 14v3M9 20.5h6M9.5 20.5c0-1.4.8-2.3 2.5-2.3s2.5.9 2.5 2.3" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+          <div style={{ minWidth: 0, fontSize: 13, color: SUB, lineHeight: 1.55 }}>
+            <div>Te ayudamos con toda la organización: solo elige el <span style={{ color: BLUE, fontWeight: 700 }}>formato</span> y la <span style={{ color: BLUE, fontWeight: 700 }}>cancha</span>; nosotros nos encargamos del resto: árbitros, agua y mucho más.</div>
+            <div style={{ marginTop: 8 }}>En <span style={{ color: ORANGE, fontWeight: 700 }}>Ver mi campeonato</span> verás las inscripciones y los resultados.</div>
+            <div style={{ marginTop: 8 }}>Despreocúpate y juega.</div>
+          </div>
         </div>
 
         {/* ── Tarjeta Formato ── */}
@@ -312,15 +385,14 @@ export default function ChampionshipOrganize() {
 
           {mode === 'liga' ? (
             <>
-              <div style={{ display: 'flex', gap: 10 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12, color: SUB, marginBottom: 4 }}>Equipos</div>
-                  <input value={leagueTeams} onChange={e => setLeagueTeams(e.target.value.replace(/\D/g, ''))} inputMode="numeric" placeholder="Ej. 10" style={inputStyle} />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12, color: SUB, marginBottom: 4 }}>Jugadores</div>
-                  <input value={leaguePlayers} onChange={e => setLeaguePlayers(e.target.value.replace(/\D/g, ''))} inputMode="numeric" placeholder="Ej. 70" style={inputStyle} />
-                </div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>¿Cuántos participan?</div>
+              <div style={{ fontSize: 12.5, color: SUB, marginTop: 3, marginBottom: 10 }}>Indica una cantidad aproximada y si te refieres a equipos o personas.</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input value={leagueQty} onChange={e => setLeagueQty(e.target.value.replace(/\D/g, '').slice(0, 3))} inputMode="numeric" placeholder="Ej. 8" style={{ ...inputStyle, flex: 1 }} />
+                <select value={leagueUnit} onChange={e => setLeagueUnit(e.target.value)} style={{ ...inputStyle, flex: '0 0 132px', appearance: 'none', WebkitAppearance: 'none', paddingRight: 30, background: `#fff url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 10px center` }}>
+                  <option value="teams">Equipos</option>
+                  <option value="people">Personas</option>
+                </select>
               </div>
               <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 12, background: '#E8F1FF' }}>
                 <div style={{ fontSize: 13.5, fontWeight: 700, color: TEXT, marginBottom: 3 }}>Las ligas se coordinan a medida</div>
@@ -352,7 +424,7 @@ export default function ChampionshipOrganize() {
               <CheckboxCard
                 checked={contactMe}
                 onToggle={() => { setContactMe(v => !v); if (!contactMe) setGroupId(null); }}
-                label="Prefiero que me contacten para personalizarlo"
+                label="Quisiera que me contacten para personalizarlo"
                 expanded={'Continúa con "Ver mi campeonato": nos pondremos en contacto contigo para coordinar todo.'}
               />
 
@@ -393,7 +465,8 @@ export default function ChampionshipOrganize() {
             </div>
 
             {!resolvedVenue ? (
-              <div style={{ fontSize: 13, color: SUB, padding: '8px 0' }}>No hay canchas compatibles con {format} para el filtro actual.</div>
+              // minHeight reserva el alto del bloque de horarios+grilla → al aparecer una cancha la pantalla no salta.
+              <div style={{ fontSize: 13, color: SUB, padding: '8px 0', minHeight: 300 }}>No hay canchas compatibles con {format} para el filtro actual.</div>
             ) : (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
@@ -414,7 +487,7 @@ export default function ChampionshipOrganize() {
                   </div>
                   <div className="no-sb" style={{ display: 'flex', gap: 8, overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 2 }}>
                     {slots.length > 0 ? slots.map((s, i) => (
-                      <Chip key={s.startHour} active={i === Math.min(slotIdx, slots.length - 1)} onClick={() => setSlotIdx(i)}>
+                      <Chip key={s.startHour} active={slotIdx != null && i === Math.min(slotIdx, slots.length - 1)} onClick={() => { setSlotIdx(i); setCourtCustom(false); }}>
                         {clockLabel(s.startHour)} – {clockLabel(s.endHour)}
                       </Chip>
                     )) : (
@@ -482,7 +555,8 @@ export default function ChampionshipOrganize() {
             <div style={{ marginTop: 12 }}>
               <CheckboxCard
                 checked={courtCustom}
-                onToggle={() => setCourtCustom(v => !v)}
+                locked={courtForced}
+                onToggle={() => { const next = !courtCustom; setCourtCustom(next); if (next) setSlotIdx(null); }}
                 label="No encuentro lo que busco. Quisiera que me contacten para personalizarlo."
                 expanded={'Continúa con Ver mi campeonato; nos pondremos en contacto contigo para coordinar todo.'}
               />
@@ -496,8 +570,8 @@ export default function ChampionshipOrganize() {
       <div style={{ position: 'absolute', left: 16, right: 16, bottom: 12, pointerEvents: 'none' }}>
         {status && (
           <div style={{ padding: '10px 12px', borderRadius: 12, background: status.bg, marginBottom: 10, boxShadow: '0 2px 12px rgba(0,0,0,0.10)' }}>
-            <div style={{ fontSize: 13.5, fontWeight: 800, color: status.titleColor || TEXT }}>{status.title}</div>
-            {status.body && <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.4, marginTop: 3 }}>{status.body}</div>}
+            {status.title && <div style={{ fontSize: 13.5, fontWeight: 800, color: status.titleColor || TEXT }}>{status.title}</div>}
+            {status.body && <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.4, marginTop: status.title ? 3 : 0 }}>{status.body}</div>}
           </div>
         )}
         <button
