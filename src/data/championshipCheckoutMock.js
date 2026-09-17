@@ -34,6 +34,11 @@ export function championshipTotal(base, selectedIds) {
 // Regla AlGrass (futuro Admin): las inscripciones cierran N días antes del inicio. Centralizada.
 export const CHAMPIONSHIP_REGISTRATION_CLOSE_DAYS = 5;
 
+// Espera MÍNIMA (mock) del loading al publicar, para que la acción se perciba. AISLADO aquí para
+// retirarlo fácil al conectar Supabase: reemplazar mockPublishDelay() por el request real de publicación.
+export const MOCK_PUBLISH_DELAY_MS = 600;
+export function mockPublishDelay() { return new Promise(res => setTimeout(res, MOCK_PUBLISH_DELAY_MS)); }
+
 // Clave de inscripción demo, consistente por campeonato (hash del nombre → ALG-XXXX).
 export function makeRegistrationKey(seedStr) {
   const s = String(seedStr || 'AlGrass');

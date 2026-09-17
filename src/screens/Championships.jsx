@@ -1,7 +1,8 @@
-import { useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useRef, useEffect, useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, ORANGE } from '../constants';
 import TabBar from '../components/TabBar';
+import ChampConfirmOverlay from '../components/ChampConfirmOverlay';
 
 const SCROLL_KEY = 'ch_list_scroll'; // mismo patrón que Partidos/Canchas (sessionStorage)
 const CV_KEY = 'championship_view_state'; // ÚNICA fuente del campeonato del owner (mock)
@@ -29,15 +30,17 @@ const LockIcon = (c = '#fff') => (
 );
 
 // ── Tarjeta de campeonato (local a B1; ver .md §3) ──────────────────────────
-function ChampionshipCard({ c, onPress }) {
+// highlighted/innerRef: recuadro azul transitorio tras publicar (mismo patrón que Profile/Games).
+function ChampionshipCard({ c, onPress, highlighted = false, innerRef = null }) {
   const isOpen = c.status === 'open';
   const isPrivate = c.visibility === 'private';
   const blocked = c.status === 'results' && isPrivate && !c.resultsPublic;
 
   return (
     <button
+      ref={innerRef}
       onClick={onPress}
-      className="pressable"
+      className={`pressable${highlighted ? ' game-row-highlighted' : ''}`}
       style={{
         display: 'block', width: '100%', padding: 0, marginBottom: 12,
         background: '#fff', border: 'none', borderRadius: 16, overflow: 'hidden',
@@ -97,6 +100,7 @@ function SectionLabel({ children }) {
 
 export default function Championships() {
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Scroll de la lista: mismo mecanismo que Partidos/Canchas.
   const listRef = useRef(null);
@@ -127,7 +131,7 @@ export default function Championships() {
   const champ = cv?.championship || null;
   const summary = cv?.summary || {};
   const myChampCard = (champ && LISTED_STATUSES.has(champ.status)) ? {
-    id: '__mine',
+    id: champ.registrationKey || '__mine', // id estable (mock: la clave); futuro: championship_id
     name: cv.name || 'Campeonato',
     teams: champ.teams?.length ?? 0,
     format: summary.formatLabel || (summary.mode === 'liga' ? 'Liga' : ''),
@@ -142,6 +146,33 @@ export default function Championships() {
 
   // Abrir el MISMO campeonato (owner). Reutiliza cvReturn para leer cv.championship/teams/status.
   const openChampionship = () => navigate('/championships/view', { state: { summary: cv?.summary, organizeState: cv?.organizeState, cvReturn: true, from: 'campeonatos' } });
+
+  // ── Confirmación post-publicación SOBRE el listado + highlight (patrón Profile/Games) ──
+  // Estado TRANSITORIO por location.state (no se persiste en cv). Se consume y limpia → no reaparece.
+  const [publishedConfirm, setPublishedConfirm] = useState(null); // id del campeonato recién publicado | null
+  const [highlightedId, setHighlightedId] = useState(null);
+  const highlightRef = useRef(null);
+  useEffect(() => {
+    const pc = location.state?.publishedChampionship;
+    if (!pc) return;
+    setPublishedConfirm(pc);
+    navigate(location.pathname, { replace: true, state: null }); // consumir → refrescar/volver no reabre el modal
+  }, [location.key]); // eslint-disable-line
+  // Al pulsar Continuar: cerrar modal y señalar el campeonato recién publicado (por su id estable).
+  const onPublishedContinue = () => { const id = publishedConfirm; setPublishedConfirm(null); setHighlightedId(id); };
+  // Scroll SOLO si la card no está completamente visible; luego el highlight azul se desvanece (4.5s).
+  useEffect(() => {
+    if (!highlightedId) return;
+    const el = highlightRef.current, scrollEl = listRef.current;
+    if (el && scrollEl) {
+      requestAnimationFrame(() => {
+        const r = el.getBoundingClientRect(), c = scrollEl.getBoundingClientRect();
+        if (r.top < c.top || r.bottom > c.bottom) scrollEl.scrollTo({ top: Math.max(0, scrollEl.scrollTop + (r.top - c.top) - 12), behavior: 'smooth' });
+      });
+    }
+    const t = setTimeout(() => setHighlightedId(null), 4500);
+    return () => clearTimeout(t);
+  }, [highlightedId]);
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
@@ -159,7 +190,7 @@ export default function Championships() {
           {myChampCard ? (
             <>
               <SectionLabel>Activos</SectionLabel>
-              <ChampionshipCard c={myChampCard} onPress={openChampionship} />
+              <ChampionshipCard c={myChampCard} onPress={openChampionship} highlighted={highlightedId === myChampCard.id} innerRef={highlightedId === myChampCard.id ? highlightRef : null} />
             </>
           ) : (
             <div style={{ padding: '48px 24px', textAlign: 'center' }}>
@@ -190,6 +221,20 @@ export default function Championships() {
       </div>
 
       <TabBar />
+
+      {/* Confirmación de publicación SOBRE el listado. Detrás se ve la card recién publicada. */}
+      {publishedConfirm && (
+        <ChampConfirmOverlay
+          title="¡Campeonato publicado!"
+          lines={[
+            'Tu campeonato ya está publicado.',
+            champ?.registrationClosesAt?.label
+              ? `Las inscripciones cierran el ${champ.registrationClosesAt.label}, así que comparte la clave con tus jugadores cuanto antes.`
+              : 'Comparte la clave con tus jugadores para que puedan empezar a inscribirse.',
+          ]}
+          onContinue={onPublishedContinue}
+        />
+      )}
     </div>
   );
 }

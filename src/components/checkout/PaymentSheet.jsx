@@ -33,13 +33,16 @@ function CopyValue({ text, children, style }) {
   );
 }
 
-function BankRow({ label, value, copyable = false }) {
+function BankRow({ label, value, copyable = false, masked = false }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '3px 0' }}>
       <span style={{ fontSize: 12.5, color: SUB }}>{label}</span>
-      {copyable
-        ? <CopyValue text={value} style={{ fontSize: 12.5, fontWeight: 700, color: TEXT, letterSpacing: 0.2 }}><span>{value}</span></CopyValue>
-        : <span style={{ fontSize: 12.5, fontWeight: 700, color: TEXT, textAlign: 'right', letterSpacing: 0.2 }}>{value}</span>}
+      {masked
+        // Bloqueado hasta reservar: puntos discretos (no blur, no números reales, no "cargando").
+        ? <span style={{ fontSize: 12.5, fontWeight: 700, color: '#C2C2CC', letterSpacing: 2, textAlign: 'right' }}>••••••••••••</span>
+        : copyable
+          ? <CopyValue text={value} style={{ fontSize: 12.5, fontWeight: 700, color: TEXT, letterSpacing: 0.2 }}><span>{value}</span></CopyValue>
+          : <span style={{ fontSize: 12.5, fontWeight: 700, color: TEXT, textAlign: 'right', letterSpacing: 0.2 }}>{value}</span>}
     </div>
   );
 }
@@ -58,15 +61,36 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
   const [transferProof, setTransferProof] = useState(null); // solo Campeonato (transfer)
   const transferFileRef = useRef(null);
 
+  // ── HOLD de Transferencia (mock, SOLO Campeonato): 10 min desde "Reservar y realizar transferencia".
+  //    Se modela con un instante de expiración (holdExpiresAt), NO un contador local que reinicie en render.
+  //    Futuro: holdExpiresAt vendrá del backend (order/hold real). Ver §15.
+  const TRANSFER_HOLD_MS = 10 * 60 * 1000;
+  const [holdExpiresAt, setHoldExpiresAt] = useState(null);  // ms | null (null = aún no reservado)
+  const [nowMs, setNowMs] = useState(() => Date.now());      // reloj para el contador (tick 1s)
+  const [exitConfirm, setExitConfirm] = useState(null);      // { kind:'close'|'switch', method? } | null
+  const holdRemaining   = holdExpiresAt != null ? holdExpiresAt - nowMs : 0;
+  const transferReserved = holdExpiresAt != null && holdRemaining > 0;  // hold vigente → UX actual + contador
+  const transferExpired  = holdExpiresAt != null && holdRemaining <= 0; // llegó a 00:00 → volver a reservar
+  const mmss = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
+
   // Campeonato (prop `transfer`): incluye Transferencia (primera y default) y el método activo expande
   // hacia ARRIBA. El holder crece de forma NATURAL (maxHeight 92%) para intentar mostrar TODAS las
   // opciones sin scroll; el scroll interno queda solo como fallback en pantallas pequeñas. Sin anclaje.
   const anchorEnabled = !!transfer;
-  const selectMethod = (method) => {
-    if (method === activeTab) return;
-    // Única regla especial de scroll: al abrir Yape (Campeonato) empezar SIEMPRE desde arriba ("Método de pago").
+  // Cambia de método realmente (scroll + activeTab). Se llama directo o tras confirmar "Cambiar de método".
+  const applyMethod = (method) => {
     if (anchorEnabled && method === 'yape' && scrollRef.current) scrollRef.current.scrollTop = 0;
     setActiveTab(method);
+  };
+  const selectMethod = (method) => {
+    if (method === activeTab) return;
+    // Con un hold de transferencia VIGENTE, cambiar de método NO libera en silencio: pide confirmación
+    // (la reserva temporal se cancelaría). Ver §15. Si no hay hold vigente, cambia normal.
+    if (activeTab === 'transfer' && method !== 'transfer' && transferReserved) {
+      setExitConfirm({ kind: 'switch', method });
+      return;
+    }
+    applyMethod(method);
   };
   // Tarjeta (Campeonato): inputs y separación algo mayores para distribuir mejor dentro de la altura común
   // (moderados para NO provocar overflow → Tarjeta cabe sin scroll).
@@ -111,11 +135,27 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
     return () => window.removeEventListener('keydown', fn);
   });
 
-  function handleClose() {
-    if (paying === 'loading' || paying === 'confirming') return;
+  function doClose() {
     setPaying('idle');
     setOpen(false);
     setTimeout(() => onClose?.(), 240);
+  }
+  function handleClose() {
+    if (paying === 'loading' || paying === 'confirming') return;
+    if (exitConfirm) return; // ya hay una confirmación abierta
+    // Con hold de transferencia VIGENTE, cerrar NO es inmediato: confirmar (la reserva se cancelaría). §10.
+    if (transferReserved) { setExitConfirm({ kind: 'close' }); return; }
+    doClose();
+  }
+  // Libera el hold mock (futuro: RPC que libera atómicamente las canchas — §13/§14).
+  function releaseHold() { setHoldExpiresAt(null); setTransferProof(null); }
+  // Modal de salida/cambio con hold activo: continuar (no toca nada) vs confirmar (libera + cierra/cambia).
+  function exitStay() { setExitConfirm(null); }              // "Seguir con el pago" — NO reinicia el contador
+  function exitConfirmYes() {
+    const ec = exitConfirm; setExitConfirm(null);
+    releaseHold();                                            // futuro: liberar hold real ANTES de continuar
+    if (ec?.kind === 'switch') applyMethod(ec.method);
+    else doClose();
   }
   // Drag-to-dismiss SOLO en selección de método (paying === 'idle'); deshabilitado en
   // loading/confirming/rejected y bajo cualquier overlay bloqueante.
@@ -165,12 +205,32 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
     }, 1400);
   }
 
+  // "Reservar y realizar transferencia": en producción revalida disponibilidad de TODAS las canchas +
+  // crea el hold de 10 min. AHORA (mock): simula success y arranca el contador (holdExpiresAt = ahora+10min).
+  function reserveTransfer() {
+    setTransferProof(null);
+    setNowMs(Date.now());
+    setHoldExpiresAt(Date.now() + TRANSFER_HOLD_MS);
+  }
+
   // Transferencia (mock, solo Campeonato): NO ejecuta pasarela. Futuro: pending_verification.
+  // Confirmar solo si el hold sigue vigente (now < holdExpiresAt); si expiró → volver al estado expirado.
   function confirmTransfer() {
     if (!transferProof) return;
+    if (holdExpiresAt == null || Date.now() >= holdExpiresAt) { setNowMs(Date.now()); return; }
     setOpen(false);
+    // A partir de aquí = pending_verification: el contador ya no aplica (el sheet se cierra).
     setTimeout(() => { transfer?.onConfirm?.(transferProof); }, 260);
   }
+
+  // Contador del hold: tick cada 1s mientras haya un holdExpiresAt (re-render no reinicia el plazo,
+  // porque holdExpiresAt es estado persistente y el visible = holdExpiresAt − now).
+  useEffect(() => {
+    if (holdExpiresAt == null) return;
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [holdExpiresAt]);
 
   function formatCard(v) {
     return v.replace(/\D/g, '').slice(0, 16).replace(/(.{4})/g, '$1 ').trim();
@@ -245,15 +305,24 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
 
         {/* Scrollable body */}
         <div ref={scrollRef} className="no-sb pay-body" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'none', padding: '10px 16px 0' }}>
-          <div style={{ paddingBottom: 10 }}>
+          {/* Cabecera fija arriba (Método de pago + Total). El resto (desde Transferencia) baja en bloque.
+              El precio crece dentro del paddingBottom (reducido a la par) → no desplaza nada arriba ni abajo. */}
+          <div style={{ paddingBottom: 12 }}>
             <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, letterSpacing: -0.3 }}>Método de pago</div>
-            <div style={{ marginTop: 2, fontSize: 13, color: SUB }}>
-              Total a pagar <strong style={{ color: TEXT, fontWeight: 700 }}>{amtStr}</strong>
+            <div style={{ marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 13, color: SUB }}>Total a pagar</span>
+              <strong style={{ fontSize: 16, fontWeight: 800, color: ORANGE, letterSpacing: -0.2 }}>{amtStr}</strong>
             </div>
           </div>
 
           {/* Transferencia bancaria — SOLO Campeonato (prop `transfer`). Primera opción y default. */}
           {transfer && (
+          <div style={{ position: 'relative' }}>
+            {/* Contador FUERA del marco azul de Transferencia, encima a la derecha, en el hueco superior.
+                Absolute → no ocupa alto ni expande la ventana. */}
+            {transferReserved && (
+              <span style={{ position: 'absolute', top: -20, right: 28, fontSize: 16, fontWeight: 800, letterSpacing: -0.2, fontVariantNumeric: 'tabular-nums', color: holdRemaining < 120000 ? DANGER : TEXT }}>{mmss(holdRemaining)}</span>
+            )}
             <MethodRow
               active={isTransfer}
               onSelect={() => selectMethod('transfer')}
@@ -262,24 +331,53 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
               icon={bankIcon}
               label="Transferencia bancaria"
             >
-              <div style={{ marginTop: 14, borderRadius: 12, background: '#F6F8FF', border: `1px solid ${HAIR}`, padding: '9px 14px' }}>
-                <BankRow label="Banco" value={transfer.bank.bankName} />
-                <BankRow label="Titular" value={transfer.bank.accountHolder} />
-                <BankRow label="RUC" value={transfer.bank.ruc} />
-                <BankRow label="Cuenta" value={transfer.bank.accountNumber} copyable />
-                <BankRow label="CCI" value={transfer.bank.cci} copyable />
-              </div>
-              <input ref={transferFileRef} type="file" accept="image/*,application/pdf" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; setTransferProof(f ? f.name : null); }} />
-              <button onClick={() => transferFileRef.current?.click()} className="pressable" style={{ marginTop: 8, width: '100%', height: 44, borderRadius: 12, border: `1.5px dashed ${BLUE}`, background: '#fff', color: BLUE, cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0l-4 4m4-4l4 4M5 20h14" stroke={BLUE} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                {transferProof ? 'Cambiar comprobante' : 'Adjuntar comprobante'}
-              </button>
-              {transferProof && (
-                <div style={{ marginTop: 6, fontSize: 12.5, color: SUB, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ color: GREEN }}>✓</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{transferProof}</span>
+              <div>
+                {/* Recuadro bancario — MISMO tamaño siempre. Banco/Titular/RUC reales. Las filas Cuenta/CCI
+                    ocupan SIEMPRE su alto (reales, ocultas por visibility antes del hold); en ese MISMO espacio
+                    se superpone el mensaje. Al reservar → mensaje fuera, Cuenta/CCI reales visibles. Cero reflow. */}
+                <div style={{ marginTop: 14, borderRadius: 12, background: '#F6F8FF', border: `1px solid ${HAIR}`, padding: '9px 14px' }}>
+                  <BankRow label="Banco" value={transfer.bank.bankName} />
+                  <BankRow label="Titular" value={transfer.bank.accountHolder} />
+                  <BankRow label="RUC" value={transfer.bank.ruc} />
+                  <div style={{ position: 'relative' }}>
+                    <div style={{ visibility: transferReserved ? 'visible' : 'hidden' }} aria-hidden={!transferReserved}>
+                      <BankRow label="Cuenta" value={transfer.bank.accountNumber} copyable />
+                      <BankRow label="CCI" value={transfer.bank.cci} copyable />
+                    </div>
+                    {!transferReserved && (
+                      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center' }}>
+                        <span style={{ fontSize: 12.5, color: transferExpired ? DANGER : SUB, lineHeight: 1.35 }}>
+                          {transferExpired
+                            ? 'El tiempo de reserva terminó. Vuelve a reservar para comprobar que las canchas siguen disponibles.'
+                            : 'Reservaremos tu campeonato durante 10 minutos para que realices la transferencia y adjuntes el comprobante.'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              )}
+                {transferReserved ? (
+                  /* Hold vigente → adjuntar comprobante (confirmar = footer). */
+                  <>
+                    <input ref={transferFileRef} type="file" accept="image/*,application/pdf" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; setTransferProof(f ? f.name : null); }} />
+                    <button onClick={() => transferFileRef.current?.click()} className="pressable" style={{ marginTop: 8, width: '100%', height: 44, borderRadius: 12, border: `1.5px dashed ${BLUE}`, background: '#fff', color: BLUE, cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0l-4 4m4-4l4 4M5 20h14" stroke={BLUE} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                      {transferProof ? 'Cambiar comprobante' : 'Adjuntar comprobante'}
+                    </button>
+                    {transferProof && (
+                      <div style={{ marginTop: 6, fontSize: 12.5, color: SUB, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ color: GREEN }}>✓</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{transferProof}</span>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  /* Estado PREVIO: la CTA usa el MISMO espacio que "Adjuntar comprobante" (misma altura/margen). */
+                  <button onClick={reserveTransfer} className="pressable" style={{ marginTop: 8, width: '100%', height: 44, borderRadius: 12, border: 'none', background: BLUE, color: '#fff', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 700, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                    Reservar y realizar transferencia
+                  </button>
+                )}
+              </div>
             </MethodRow>
+          </div>
           )}
 
           {/* Yape */}
@@ -365,14 +463,16 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
             />
           </div>
 
-          <div style={{ height: 8 }} />
+          <div style={{ height: 2 }} />
         </div>
 
         {/* Sticky footer — Pagar (pasarela) o "Ya realicé la transferencia" (mock). */}
         <div className="cr-footer-ios-test" style={{ padding: '12px 16px', paddingBottom: 'calc(16px + env(safe-area-inset-bottom))', borderTop: `1px solid ${HAIR}`, background: '#FAFAFA', flexShrink: 0 }}>
           {isTransfer ? (
-            <CtaButton onPress={confirmTransfer} disabled={!transferProof}>
-              Ya realicé la transferencia
+            /* CTA inferior general: SIEMPRE "Ya realicé la transferencia" (nunca "Reservar…", que es interno).
+               Deshabilitado antes del hold y durante el hold sin comprobante; se habilita con hold vigente + proof. */
+            <CtaButton onPress={confirmTransfer} disabled={!transferReserved || !transferProof}>
+              {`Ya realicé la transferencia de ${amtStr}`}
             </CtaButton>
           ) : (
             <CtaButton onPress={pay} disabled={!canPay || paying !== 'idle'}>
@@ -425,6 +525,20 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {/* Confirmación de salida/cambio con hold de transferencia VIGENTE (§10/§15). Fuera del hold no aparece. */}
+      {exitConfirm && (
+        <div className="sheet-overlay" onClick={exitStay} style={{ position: 'fixed', inset: 0, zIndex: 210, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', background: 'rgba(0,0,0,0.4)', padding: '0 16px calc(24px + env(safe-area-inset-bottom))' }}>
+          <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 420, background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 -8px 32px rgba(0,0,0,0.12)' }}>
+            <div style={{ fontSize: 17, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>{exitConfirm.kind === 'switch' ? '¿Cambiar de método de pago?' : '¿Seguro que quieres salir?'}</div>
+            <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, marginTop: 8 }}>{exitConfirm.kind === 'switch' ? 'Tu reserva temporal será cancelada si cambias de método de pago.' : 'Tu reserva temporal será cancelada y las canchas volverán a estar disponibles.'}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 18 }}>
+              <button onClick={exitStay} className="pressable" style={{ width: '100%', height: 48, borderRadius: 14, border: 'none', background: ORANGE, color: '#1B1B1F', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{exitConfirm.kind === 'switch' ? 'Seguir con Transferencia' : 'Seguir con el pago'}</button>
+              <button onClick={exitConfirmYes} className="pressable" style={{ width: '100%', height: 48, borderRadius: 14, border: `1.5px solid ${HAIR}`, background: '#fff', color: DANGER, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{exitConfirm.kind === 'switch' ? 'Cambiar de método' : 'Salir y cancelar reserva'}</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -260,6 +260,23 @@ export default function ChampionshipOrganize() {
     requestAnimationFrame(() => requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: y, behavior: 'instant' })));
   }, []); // eslint-disable-line
 
+  // Formato → Cancha: Cancha aparece solo cuando Formato está completo (Torneo con rango elegido).
+  // Al pasar de incompleto→completo, auto-scroll suave UNA sola vez a la sección Cancha (progresión).
+  const canchaRef = useRef(null);
+  const canchaScrolledRef = useRef(false);
+  const canchaReady = showCanchaCard && !!group;   // Formato completo → revelar Cancha
+  useEffect(() => {
+    if (!canchaReady) { canchaScrolledRef.current = false; return; } // se resetea si vuelve a incompleto
+    if (canchaScrolledRef.current) return;          // ya hicimos el scroll una vez
+    canchaScrolledRef.current = true;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const el = canchaRef.current, sc = scrollRef.current;
+      if (!el || !sc) return;
+      const r = el.getBoundingClientRect(), c = sc.getBoundingClientRect();
+      sc.scrollTo({ top: Math.max(0, sc.scrollTop + (r.top - c.top) - 12), behavior: 'smooth' });
+    }));
+  }, [canchaReady]); // eslint-disable-line
+
   // Al elegir un horario, si el bloque recomendado cae fuera del área visible de la grilla,
   // hacer un scroll VERTICAL sutil (smooth) para revelarlo. `startHour` es el índice de fila (HORA).
   useEffect(() => {
@@ -365,8 +382,8 @@ export default function ChampionshipOrganize() {
             </svg>
           </div>
           <div style={{ minWidth: 0, fontSize: 13, color: SUB, lineHeight: 1.55 }}>
-            <div>Te ayudamos con toda la organización: solo elige el <span style={{ color: BLUE, fontWeight: 700 }}>formato</span> y la <span style={{ color: BLUE, fontWeight: 700 }}>cancha</span>; nosotros nos encargamos del resto: árbitros, agua y mucho más.</div>
-            <div style={{ marginTop: 8 }}>En <span style={{ color: ORANGE, fontWeight: 700 }}>Ver mi campeonato</span> verás las inscripciones y los resultados.</div>
+            <div>Te ayudamos con la organización: solo elige el <span style={{ color: BLUE, fontWeight: 700 }}>formato</span> y la <span style={{ color: BLUE, fontWeight: 700 }}>cancha</span>; nosotros nos encargamos del resto: organizador, árbitros y mucho más.</div>
+            <div style={{ marginTop: 8 }}>En <span style={{ color: ORANGE, fontWeight: 700 }}>Ver mi campeonato</span> verás la etapa de <span style={{ textDecoration: 'underline' }}>Inscripciones</span> y <span style={{ textDecoration: 'underline' }}>Calendario y resultados</span>.</div>
             <div style={{ marginTop: 8 }}>Despreocúpate y juega.</div>
           </div>
         </div>
@@ -446,9 +463,9 @@ export default function ChampionshipOrganize() {
           )}
         </div>
 
-        {/* ── Tarjeta Cancha (solo Torneo 1 día y sin "que me contacten") ── */}
-        {showCanchaCard && (
-          <div style={CARD}>
+        {/* ── Tarjeta Cancha — SOLO cuando Formato está completo (Torneo 1 día con rango elegido) ── */}
+        {canchaReady && (
+          <div ref={canchaRef} style={CARD}>
             <div style={SECTION_TITLE}>Cancha</div>
 
             <div className="no-sb" style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, marginBottom: 10 }}>
@@ -469,6 +486,8 @@ export default function ChampionshipOrganize() {
               <div style={{ fontSize: 13, color: SUB, padding: '8px 0', minHeight: 300 }}>No hay canchas compatibles con {format} para el filtro actual.</div>
             ) : (
               <>
+                {/* Venue + grilla = UNA sola unidad (sub-marco) → clara separación de los filtros de arriba. */}
+                <div style={{ border: `1px solid ${HAIR}`, borderRadius: 14, background: '#FBFBFD', padding: 12, marginBottom: 2 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                   <button onClick={() => cycleVenue(-1)} disabled={venueIdx <= 0} style={arrowBtn}>{arrow('prev', venueIdx > 0)}</button>
                   <div style={{ flex: 1, textAlign: 'center', minWidth: 0 }}>
@@ -479,47 +498,18 @@ export default function ChampionshipOrganize() {
                   <button onClick={() => cycleVenue(1)} disabled={venueIdx >= candidates.length - 1} style={arrowBtn}>{arrow('next', venueIdx < candidates.length - 1)}</button>
                 </div>
 
-                {/* Selector de HORARIOS válidos — SIEMPRE presente (evita salto de layout). Con 0
-                    horarios muestra un badge de estado no clicable en el mismo espacio de los chips. */}
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 700, color: TEXT, marginBottom: 8 }}>
-                    {slots.length} {slots.length === 1 ? 'horario disponible' : 'horarios disponibles'}
-                  </div>
-                  <div className="no-sb" style={{ display: 'flex', gap: 8, overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 2 }}>
-                    {slots.length > 0 ? slots.map((s, i) => (
-                      <Chip key={s.startHour} active={slotIdx != null && i === Math.min(slotIdx, slots.length - 1)} onClick={() => { setSlotIdx(i); setCourtCustom(false); }}>
-                        {clockLabel(s.startHour)} – {clockLabel(s.endHour)}
-                      </Chip>
-                    )) : (
-                      <div style={{ flexShrink: 0, height: 34, padding: '0 14px', borderRadius: 999, border: `1px dashed ${HAIR}`, background: SOFT, color: SUB, fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', cursor: 'default' }}>
-                        Sin horario disponible
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Leyenda: 3 estados de celda + "sin cancha" (inexistente) */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 8, fontSize: 11, color: SUB }}>
-                  <span style={legItem}><i style={{ ...swatch, background: '#fff', border: `1px solid ${HAIR}` }} />Libre</span>
-                  <span style={legItem}><i style={{ ...swatch, background: '#DCE8FF', border: `1px solid ${BLUE}` }} />Recomendado</span>
-                  <span style={legItem}><i style={{ ...swatch, background: '#E8E8EC', border: '1px solid #E8E8EC' }} />Ocupado</span>
-                  <span style={legItem}><i style={{ ...swatch, ...NON_ELIGIBLE }} />Sin cancha</span>
-                </div>
-
-                {/* Grilla: mín. 4 columnas; scroll horizontal si el venue tiene más de 4 canchas.
-                    Wrapper relative con carril de 8px a la derecha para el indicador de scroll vertical. */}
+                {/* Grilla INFORMATIVA (canchas × horas) — algo más compacta (celdas 28, alto máx menor). */}
                 <div style={{ position: 'relative', paddingRight: 8 }}>
                 <div className="no-sb" style={{ overflowX: scrollCols ? 'auto' : 'visible', WebkitOverflowScrolling: 'touch' }}>
                   <div style={{ minWidth: scrollCols ? cols * 50 + 52 : undefined }}>
-                    <div style={{ display: 'flex', gap: 6, marginBottom: 6, paddingLeft: 52 }}>
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 5, paddingLeft: 52 }}>
                       {Array.from({ length: cols }, (_, c) => (
                         <div key={c} style={{ flex: scrollCols ? '0 0 44px' : 1, minWidth: 0, textAlign: 'center', fontSize: 11, color: c < courts ? SUB : '#C7C7CC' }}>C{c + 1}</div>
                       ))}
                     </div>
-                    {/* Máx. 4 franjas visibles (4×38); el resto con scroll VERTICAL interno (cabecera fija arriba) */}
-                    <div ref={gridVRef} onScroll={updateGridThumb} className="no-sb" style={{ maxHeight: 152, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                    <div ref={gridVRef} onScroll={updateGridThumb} className="no-sb" style={{ maxHeight: 132, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
                     {HOURS.map((hLabel, h) => (
-                      <div key={h} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+                      <div key={h} style={{ display: 'flex', gap: 6, marginBottom: 5, alignItems: 'center' }}>
                         <div style={{ width: 46, fontSize: 11, color: SUB, flexShrink: 0 }}>{hLabel}</div>
                         {Array.from({ length: cols }, (_, c) => {
                           // Solo VISUALIZACIÓN (no editable): bloque recomendado / libre no usada / ocupada / sin cancha.
@@ -531,7 +521,7 @@ export default function ChampionshipOrganize() {
                             : free ? { background: '#fff', border: `1px solid ${HAIR}` }
                             : { background: '#E8E8EC', border: '1px solid #E8E8EC' };
                           return (
-                            <div key={c} style={{ flex: scrollCols ? '0 0 44px' : 1, minWidth: 0, height: 32, borderRadius: 8, ...cell }} />
+                            <div key={c} style={{ flex: scrollCols ? '0 0 44px' : 1, minWidth: 0, height: 28, borderRadius: 8, ...cell }} />
                           );
                         })}
                       </div>
@@ -545,6 +535,30 @@ export default function ChampionshipOrganize() {
                     <div style={{ position: 'absolute', top: gridThumb.top, width: 3, height: gridThumb.height, borderRadius: 2, background: 'rgba(0,0,0,0.20)' }} />
                   </div>
                 )}
+                </div>
+                </div>{/* fin del sub-marco venue+grilla */}
+
+                {/* ── DECISIÓN DEL USUARIO — elegir un horario disponible (protagonismo alto, tras el grid). ── */}
+                <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${HAIR}` }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 800, color: TEXT, letterSpacing: -0.1, marginBottom: 8 }}>
+                    {slots.length > 0 ? 'Elige un horario disponible' : 'Sin horarios disponibles'}
+                  </div>
+                  <div className="no-sb" style={{ display: 'flex', gap: 8, overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 2 }}>
+                    {slots.length > 0 ? slots.map((s, i) => {
+                      const on = slotIdx != null && i === Math.min(slotIdx, slots.length - 1);
+                      // Selección FINAL con azul FILLED (más protagonismo que el azul claro de los filtros).
+                      return (
+                        <Chip key={s.startHour} active={on} onClick={() => { setSlotIdx(i); setCourtCustom(false); }}
+                          style={{ height: 30, padding: '0 11px', fontSize: 12.5, ...(on ? { background: BLUE, color: '#fff', border: '1px solid transparent', fontWeight: 700 } : { border: '1px solid #C9D6F5', fontWeight: 700 }) }}>
+                          {clockLabel(s.startHour)} – {clockLabel(s.endHour)}
+                        </Chip>
+                      );
+                    }) : (
+                      <div style={{ flexShrink: 0, height: 34, padding: '0 14px', borderRadius: 999, border: `1px dashed ${HAIR}`, background: SOFT, color: SUB, fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', cursor: 'default' }}>
+                        Sin horario disponible
+                      </div>
+                    )}
+                  </div>
                 </div>
               </>
             )}

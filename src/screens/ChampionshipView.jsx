@@ -3,12 +3,13 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, RED } from '../constants';
 import Shield from '../components/championship/Shield';
 import PlayerAvatar from '../components/championship/PlayerAvatar';
-import ChampConfirmOverlay from '../components/ChampConfirmOverlay';
 import MapsLinkButton from '../components/MapsLinkButton';
 import OrganizerContactButton from '../components/OrganizerContactButton';
+import TabBar from '../components/TabBar';
 import I from '../icons';
 import { buildTeams, combinedRoster, mockStandings, mockScorers, mockMatches, formatForTeamCount, chunkByCounts, playerLabel, CURRENT_USER_NAME } from '../data/championshipTeamsMock';
-import { CHAMPIONSHIP_BASE_PRICE, CHAMPIONSHIP_REGISTRATION_CLOSE_DAYS, soles } from '../data/championshipCheckoutMock';
+import { CHAMPIONSHIP_BASE_PRICE, CHAMPIONSHIP_REGISTRATION_CLOSE_DAYS, mockPublishDelay, soles } from '../data/championshipCheckoutMock';
+import { buildFixture, visualCapacity } from '../data/championshipFixtures';
 import { formatDateLabel } from '../utils/format';
 
 // Temas de PORTADA (independientes de la paleta de equipos). Default rojo; el azul es un tono
@@ -91,19 +92,41 @@ export default function ChampionshipView() {
     : (!isCreated || rawChamp?.createdByUserId == null || rawChamp.createdByUserId === CURRENT_USER_ID);
   const [champ, setChamp] = useState(rawChamp);
   function writeChamp(next) { setChamp(next); const cv = readCV() || {}; cv.championship = next; writeCV(cv); }
-  // Publicar: reutiliza la clave del holder superior (accessCode) como única fuente; pasa a registration_open.
-  const [publishedOverlay, setPublishedOverlay] = useState(false);
-  function publishChampionship() {
+  // Publicar: loading (bloquea doble click) → publica → navega al LISTADO; confirmación + highlight allí.
+  // Estructurado como operación real: loading → [request (mock: espera) ] → success → navegación.
+  const [publishing, setPublishing] = useState(false);
+  async function publishChampionship() {
+    if (publishing) return;                          // evita doble publicación
     if (!champ || champ.status !== 'pending_publish') return;
-    if (!accessCode.trim()) return; // sin clave no se publica
-    writeChamp({ ...champ, registrationKey: accessCode.trim(), status: 'registration_open', publishedAt: new Date().toISOString() });
-    setPublishedOverlay(true); // confirmación SOBRE esta misma vista (no navega)
+    if (!accessCode.trim()) return;                  // sin clave no se publica
+    const key = accessCode.trim();
+    setPublishing(true);
+    await mockPublishDelay();                         // mock aislado (retirar al conectar Supabase)
+    // MOCK: al publicar el campeonato arranca SIEMPRE con 4 equipos ya creados (para probar el flujo).
+    const seededTeams = buildTeams(4);
+    writeChamp({ ...champ, registrationKey: key, status: 'registration_open', publishedAt: new Date().toISOString(), teams: seededTeams });
+    navigate('/championships', { state: { publishedChampionship: key } }); // key = id estable (mock)
   }
-  // Herramientas TEMPORALES del mock (futuro: cierre automático por fecha). Solo cambian status;
-  // conservan teams/players/config/clave/portada/etc. El fixture de Resultados deriva de `teams`
-  // (useMemo), así que se regenera solo si cambió la composición al reabrir.
-  function closeRegistration() { if (champ?.status === 'registration_open') writeChamp({ ...champ, teams, status: 'registration_closed' }); }
-  function reopenRegistration() { if (champ?.status === 'registration_closed') writeChamp({ ...champ, teams, status: 'registration_open' }); }
+  // Herramientas TEMPORALES del mock (futuro: cierre automático por fecha). Conservan teams/players/config.
+  // Cerrar: SORTEA equipos (una sola vez) y GENERA el fixture default (championshipFixtures) → persiste
+  // teamDraw + fixture en cv.championship. Si no hay plantilla para esa cantidad, NO cierra (estado controlado).
+  function closeRegistration() {
+    if (champ?.status !== 'registration_open') return;
+    const fx = buildFixture(teams.length, teams.map(t => t.id)); // Math.random UNA vez, aquí (no en render)
+    if (!fx) { flashToast(`Aún no hay una plantilla de fixture para ${teams.length} equipos.`); return; }
+    writeChamp({ ...champ, teams, status: 'registration_closed', teamDraw: fx.teamDraw, fixture: { count: fx.count, groups: fx.groups, matches: fx.matches } });
+  }
+  // Reabrir: conserva equipos/jugadores, vuelve a registration_open e INVALIDA teamDraw + fixture
+  // (un nuevo Cerrar hará un nuevo sorteo y nuevo fixture).
+  function reopenRegistration() {
+    if (champ?.status !== 'registration_closed') return;
+    const { teamDraw, fixture, ...rest } = champ; // descarta sorteo + fixture
+    writeChamp({ ...rest, teams, status: 'registration_open' });
+  }
+  // TEMPORAL (mock): simula la aprobación de la transferencia por AlGrass → habilita publicar.
+  // Futuro: lo hará Admin al validar el comprobante (payment_validation → pending_publish + materialización).
+  function approvePaymentMock() { if (champ?.status === 'payment_validation') writeChamp({ ...champ, status: 'pending_publish' }); }
+  const paymentValidating = isCreated && champ?.status === 'payment_validation'; // "Validando pago"
 
   const flashToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 1800); };
   const flashCopied = () => flashToast('Copiado');
@@ -161,15 +184,38 @@ export default function ChampionshipView() {
   const scorers = useMemo(() => mockScorers(teams), [teams]);
   const matches = useMemo(() => mockMatches(teams), [teams]);
 
-  // Torneo demo: slots grises = maxTeams − equipos. Liga y campeonato REAL: un único "+" permanente
-  // (hasta el tope de equipos contratados; maxTeams del mock = group.max, luego vendrá de la config real).
-  const canCreateTeam = teams.length < maxTeams;
-  const emptySlots = (isLiga || isCreated) ? (canCreateTeam ? 1 : 0) : Math.max(0, maxTeams - teams.length);
+  // Capacidad VISUAL de slots (Torneo REAL): del rango contratado (group.max) → 6/8/12/16. Los equipos
+  // reales se colocan por la izquierda y el resto son placeholders grises. NO afecta teams.length ni el
+  // fixture (que usa el nº real al cerrar). Liga: un único "+" permanente. Demo: rango del grupo (min→max).
+  const visualCap = (isCreated && !isLiga) ? visualCapacity(group ? group.max : maxTeams) : null;
+  const canCreateTeam = isLiga ? teams.length < maxTeams
+    : isCreated ? teams.length < visualCap
+    : teams.length < maxTeams;
+  const emptySlots = isLiga ? (canCreateTeam ? 1 : 0)
+    : isCreated ? Math.max(0, visualCap - teams.length)
+    : Math.max(0, maxTeams - teams.length);
 
   // Fecha completa "Mié 16 Sep 2026" (reutiliza formatDateLabel; sin el prefijo "Hoy,/Mañana,").
   const dateFull = organizeState?.dateKey ? formatDateLabel(organizeState.dateKey).replace(/^(Hoy|Mañana),\s*/, '') : (summary.dateLabel || null);
   // Horario "inicio → final": reutiliza slotLabel ("6:00 pm – 8:00 pm") como "6:00 PM a 8:00 PM".
   const timeRange = summary.slotLabel ? summary.slotLabel.replace(/\s*–\s*/, ' a ').replace(/\b([ap])m\b/gi, s => s.toUpperCase()) : null;
+
+  // Partidos del campeonato REAL: desde el fixture PERSISTIDO (cv.championship.fixture), no mock.
+  // Sin marcador/ganador/goles. Participantes de fases dependientes (semis/final/3.º) → "Por definir".
+  const realMatches = useMemo(() => {
+    if (!isCreated || !champ?.fixture?.matches) return [];
+    const byId = Object.fromEntries(teams.map(t => [t.id, t]));
+    const TBD = { tbd: true, name: 'Por definir' };
+    return champ.fixture.matches.map((m, i) => ({
+      id: 'fx' + i,
+      a: m.phase === 'group' ? (byId[m.aId] || TBD) : TBD,
+      b: m.phase === 'group' ? (byId[m.bId] || TBD) : TBD,
+      played: false, sa: null, sb: null,
+      court: m.court, time: m.time,
+      dateLabel: dateFull || summary.dateLabel || '',
+      phase: m.phase, label: m.label,
+    }));
+  }, [isCreated, champ, teams, dateFull]); // eslint-disable-line
 
   // Organizadores del campeonato. Principal = usuario que pagó/creó (NO se deriva de games.host_user_id).
   // AlGrass = organizador opcional que Admin podrá asignar (mock: null). No es info privada (owner+jugadores).
@@ -190,33 +236,20 @@ export default function ChampionshipView() {
     ? (champ.registrationClosesAt?.label ? `Cierre de inscripciones: ${champ.registrationClosesAt.label}` : 'Cierre de inscripciones por definir')
     : null;
 
-  // Entrada NORMAL a ChampionshipView: SIEMPRE desde arriba, inmediato. No se persiste el scroll.
-  // (El contenedor scrolleable es este div propio, no window.) Reset antes de pintar → sin salto visible.
+  // Scroll del contenedor propio: entrada principal (desde Perfil/Campeonatos/Crear) → arriba.
+  // Volver desde ChampionshipTeam (cvReturn sin `from`) → restaura la posición guardada al entrar al equipo.
   const scrollRef = useRef(null);
-  useLayoutEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = 0; }, []);
-
-  // Highlight transitorio de la portada tras publicar (mismo lenguaje que Profile: game-row-highlighted).
-  const coverRef = useRef(null);
-  const [highlightCover, setHighlightCover] = useState(false);
-  useEffect(() => {
-    if (!highlightCover) return;
-    const el = coverRef.current, scrollEl = scrollRef.current;
-    if (el && scrollEl) {
-      requestAnimationFrame(() => {
-        const r = el.getBoundingClientRect(), c = scrollEl.getBoundingClientRect();
-        // Solo mover si la portada está fuera del viewport; si ya se ve, no hacer scroll.
-        if (r.top < c.top || r.bottom > c.bottom) scrollEl.scrollTo({ top: Math.max(0, scrollEl.scrollTop + (r.top - c.top) - 8), behavior: 'smooth' });
-      });
-    }
-    const t = setTimeout(() => setHighlightCover(false), 4500);
-    return () => clearTimeout(t);
-  }, [highlightCover]);
+  const isTeamReturn = cvReturn && !nav?.from; // regreso desde ChampionshipTeam (no es navegación principal)
+  useLayoutEffect(() => {
+    const el = scrollRef.current; if (!el) return;
+    el.scrollTop = isTeamReturn ? (restore?.scrollTop || 0) : 0;
+  }, []); // eslint-disable-line
 
   // Guarda TODO el estado antes de ir a ChampionshipTeam (session state, sin persistencia real).
-  // NO se guarda scrollTop: al volver a entrar ChampionshipView siempre empieza arriba.
+  // Guarda scrollTop del contenedor para restaurar la posición al volver del equipo (Team-return).
   function persistCV() {
     // Campeonato REAL: los equipos viven en championship.teams (no en cv.teams demo).
-    writeCV({ summary, organizeState, name, coverTheme, accessCode, resultsPublic, demo, resultsView, matchFilterId, joinedNoTeam, teams, contactRequest, championship: isCreated ? { ...champ, teams } : champ });
+    writeCV({ summary, organizeState, name, coverTheme, accessCode, resultsPublic, demo, resultsView, matchFilterId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, contactRequest, championship: isCreated ? { ...champ, teams } : champ });
   }
   function goToNewTeam() { if (!canCreateTeam) return; persistCV(); navigate('/championships/team', { state: { teamMode: 'new', summary, organizeState, maxTeams, champTeams: isCreated } }); }
   function goToExistingTeam(team) { persistCV(); navigate('/championships/team', { state: { teamMode: 'existing', team, summary, organizeState, champTeams: isCreated } }); }
@@ -224,12 +257,11 @@ export default function ChampionshipView() {
   const openExistingTeam = goToExistingTeam; // escudo real en Inscripciones → modo EXISTING
   const openTeam = goToExistingTeam;         // equipo en Tabla/Llave → modo EXISTING (Partidos NO usa esto)
 
-  // "Atrás" según origen: Perfil → /profile · listado Campeonatos → /championships · si no, Crear campeonato.
-  const goBack = () => nav?.from === 'profile'
-    ? navigate('/profile')
-    : nav?.from === 'campeonatos'
-      ? navigate('/championships')
-      : navigate('/championships/organize', organizeState ? { state: { organizeState } } : undefined);
+  // "Atrás" del campeonato REAL → siempre al listado /championships (es pantalla principal; Atrás no
+  // cambia entre fases). Demo (Crear campeonato) → vuelve a Crear campeonato.
+  const goBack = () => isCreated
+    ? navigate('/championships')
+    : navigate('/championships/organize', organizeState ? { state: { organizeState } } : undefined);
 
   // Checkout habilitado solo con formato+cancha+horario resueltos y SIN personalización de cancha.
   // (El caso pendiente/personalizado tendrá "Contáctame para organizarlo", aún no construido.)
@@ -266,7 +298,7 @@ export default function ChampionshipView() {
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         <div ref={scrollRef} className="no-sb" style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
           {/* ── Portada — nombre editable SOLO en coverEditMode; una única entrada ("Editar portada") ── */}
-          <div ref={coverRef} className={highlightCover ? 'game-row-highlighted' : undefined} style={{ position: 'relative', height: 180, background: coverTheme, overflow: 'hidden' }}>
+          <div style={{ position: 'relative', height: 180, background: coverTheme, overflow: 'hidden' }}>
             <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, rgba(0,0,0,0) 45%, rgba(0,0,0,0.55) 100%)' }} />
             {/* Acciones (top-right) — SOLO owner. Jugador: portada en lectura, sin acciones. */}
             {isOwner && (
@@ -347,9 +379,21 @@ export default function ChampionshipView() {
 
           {/* ── ZONA DE CARDS ── */}
           <div style={{ padding: '10px 16px calc(84px + env(safe-area-inset-bottom))' }}>
+            {/* "Validando pago" — transferencia enviada, esperando validación de AlGrass. Publicar bloqueado. */}
+            {isOwner && paymentValidating && (
+              <div style={{ ...CARD, background: '#FFF7EA', border: `1px solid ${ORANGE}55` }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: ORANGE, flexShrink: 0 }} />
+                  <div style={{ fontSize: 14, fontWeight: 800, color: TEXT, letterSpacing: -0.1 }}>Validando pago</div>
+                </div>
+                <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginTop: 6 }}>Estamos validando tu transferencia. Podrás publicar el campeonato cuando el pago esté confirmado.</div>
+                <OwnerPhaseTool label="Simular aprobación de pago (mock)" note="Herramienta temporal — futuro: lo hará Admin al validar el comprobante." onClick={approvePaymentMock} />
+              </div>
+            )}
             {/* ── Privacidad — EXCLUSIVA del owner. Jugador: NO se renderiza (desaparece por completo). ──
                 Publicado (registration_open/closed/…): fondo secundario muy suave (segundo plano). ── */}
-            {isOwner && (
+            {/* Solo campeonato REAL creado: en la previa de "Crear campeonato" (demo) NO se muestra Privacidad. */}
+            {isOwner && isCreated && (
             <div style={{ ...CARD, background: privacyLocked ? '#F7F7F9' : '#fff' }}>
               <div style={H}>Privacidad</div>
               {/* Clave de acceso — MISMO layout siempre; publicado = cerrada (click copia) + "Editar" la abre */}
@@ -387,7 +431,10 @@ export default function ChampionshipView() {
                   <>
                     <div style={{ height: 1, background: HAIR, margin: '14px 0' }} />
                     <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginBottom: 12 }}>Las inscripciones cierran {CHAMPIONSHIP_REGISTRATION_CLOSE_DAYS} días antes del campeonato.</div>
-                    <button onClick={publishChampionship} disabled={!canPublish} className={canPublish ? 'pressable' : undefined} style={{ width: '100%', height: 50, borderRadius: 14, border: 'none', background: canPublish ? ORANGE : '#E4E4EA', color: canPublish ? '#1B1B1F' : '#9A9AA2', cursor: canPublish ? 'pointer' : 'not-allowed', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Publicar campeonato</button>
+                    <button onClick={publishChampionship} disabled={!canPublish || publishing} className={(canPublish && !publishing) ? 'pressable' : undefined} style={{ width: '100%', height: 50, borderRadius: 14, border: 'none', background: canPublish ? ORANGE : '#E4E4EA', color: canPublish ? '#1B1B1F' : '#9A9AA2', cursor: (canPublish && !publishing) ? 'pointer' : 'not-allowed', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, WebkitTapHighlightColor: 'transparent', outline: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                      {publishing && <span style={{ width: 16, height: 16, borderRadius: '50%', border: '2.5px solid rgba(27,27,31,0.2)', borderTop: '2.5px solid #1B1B1F', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />}
+                      {publishing ? 'Publicando…' : 'Publicar campeonato'}
+                    </button>
                     {!canPublish && <div style={{ fontSize: 12, color: SUB, textAlign: 'center', marginTop: 8 }}>Configura una clave de acceso para publicar.</div>}
                   </>
                 );
@@ -400,7 +447,7 @@ export default function ChampionshipView() {
               champ?.status === 'registration_closed' ? (
                 /* Inscripciones cerradas → Resultados con los EQUIPOS REALES (mock solo en marcadores/fixture) */
                 <>
-                  <Resultados view={resultsView} setView={setResultsView} teams={teams} standings={standings} scorers={scorers} matches={matches} venueName={summary.venueName || 'AlGrass Arena'} openTeam={openTeam} filter={teams.find(t => t.id === matchFilterId) || null} onFilter={team => setMatchFilterId(team ? team.id : null)} isLiga={isLiga} real={isCreated} organizers={organizers} />
+                  <Resultados view={resultsView} setView={setResultsView} teams={teams} standings={standings} scorers={scorers} matches={realMatches} venueName={summary.venueName || 'AlGrass Arena'} openTeam={openTeam} filter={teams.find(t => t.id === matchFilterId) || null} onFilter={team => setMatchFilterId(team ? team.id : null)} isLiga={isLiga} real={isCreated} organizers={organizers} />
                   {isOwner && <OwnerPhaseTool label="Reabrir inscripciones" note="Herramienta temporal para probar el flujo." onClick={reopenRegistration} />}
                 </>
               ) : (
@@ -451,24 +498,10 @@ export default function ChampionshipView() {
             </div>
           ) : (
             <button onClick={checkoutReady ? goToCheckout : goToContact} className="pressable" style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: 54, background: ORANGE, color: '#1B1B1F', border: 'none', borderRadius: 18, boxShadow: '0 6px 18px rgba(245,165,36,0.40)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, WebkitTapHighlightColor: 'transparent' }}>
-              {checkoutReady ? `Continuar · ${soles(CHAMPIONSHIP_BASE_PRICE)}` : 'Contactarme para organizarlo'}
+              {checkoutReady ? `Crear campeonato por ${soles(CHAMPIONSHIP_BASE_PRICE)}` : 'Contactarme para organizarlo'}
             </button>
           )}
         </div>
-
-        {/* Confirmación de publicación SOBRE esta misma vista (no navega). Fecha real si existe. */}
-        {publishedOverlay && (
-          <ChampConfirmOverlay
-            title="¡Campeonato publicado!"
-            lines={[
-              'Tu campeonato ya está publicado.',
-              champ?.registrationClosesAt?.label
-                ? `Las inscripciones cierran el ${champ.registrationClosesAt.label}, así que comparte la clave con tus jugadores cuanto antes.`
-                : 'Comparte la clave con tus jugadores para que puedan empezar a inscribirse.',
-            ]}
-            onContinue={() => { setPublishedOverlay(false); setHighlightCover(true); }}
-          />
-        )}
 
         {/* Confirmación: pasar de un equipo a "sin equipo" (mueve la inscripción, no duplica) */}
         {confirmMove && (
@@ -489,6 +522,10 @@ export default function ChampionshipView() {
           <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.75)', color: '#fff', padding: '8px 18px', borderRadius: 20, fontSize: 14, fontWeight: 500, zIndex: 9999, pointerEvents: 'none', whiteSpace: 'nowrap', maxWidth: '84%', textAlign: 'center' }}>{toast}</div>
         )}
       </div>
+
+      {/* Campeonato REAL = parte de la navegación principal → BottomNav (mismo TabBar de la app).
+          Demo (Crear campeonato) NO es pantalla principal → sin TabBar. */}
+      {isCreated && <TabBar />}
     </div>
   );
 }
@@ -833,7 +870,16 @@ function LlaveMock({ teams, cfg, openTeam, real = false }) {
 }
 
 // Fila de equipo dentro de la tarjeta — clicable independientemente (filtra Partidos por ese equipo).
+// Participante "Por definir" (fases dependientes de resultados) → gris, sin escudo, no clicable.
 function TeamLine({ team, score, onFilter }) {
+  if (team?.tbd) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
+        <Shield dashed size={22} />
+        <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, color: '#B0B0B8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Por definir</span>
+      </div>
+    );
+  }
   return (
     <button onClick={() => onFilter(team)} className="pressable" style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', padding: '3px 0', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
       <Shield color={team.color} design={team.design} name={team.name} size={22} />

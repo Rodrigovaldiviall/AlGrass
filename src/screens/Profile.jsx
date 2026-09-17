@@ -2805,7 +2805,8 @@ export default function Profile() {
     ? (_champLe?.quantity ? `${_champLe.quantity} ${_champLe.type === 'people' ? 'personas' : 'equipos'}` : '')
     : (_champSum.group ? (_champSum.group.min === _champSum.group.max ? `${_champSum.group.min} equipos` : `${_champSum.group.min}–${_champSum.group.max} equipos`) : '');
   const champVenueLine = [_champSum.venueName, champTeamsLabel].filter(Boolean).join(' · ');
-  const champStatusLabel = champ?.status === 'registration_closed' ? 'Inscripciones cerradas'
+  const champStatusLabel = champ?.status === 'payment_validation' ? 'Validando pago'
+    : champ?.status === 'registration_closed' ? 'Inscripciones cerradas'
     : champ?.status === 'registration_open' ? 'Publicado'
     : 'Pendiente publicar';
   const openChampionship = () => navigate('/championships/view', { state: { summary: _champCv?.summary, organizeState: _champCv?.organizeState, cvReturn: true, from: 'profile' } });
@@ -2814,7 +2815,7 @@ export default function Profile() {
   // El campeonato pagado se INTEGRA como evento en la agrupación por fecha existente (misma cabecera/orden).
   const _champDateKey = _champCv?.organizeState?.dateKey || null;
   const _champT24 = champTo24(_champStart);
-  const champEvent = (champ && (champ.status === 'pending_publish' || champ.status === 'registration_open' || champ.status === 'registration_closed') && _champDateKey && _champT24)
+  const champEvent = (champ && (champ.status === 'payment_validation' || champ.status === 'pending_publish' || champ.status === 'registration_open' || champ.status === 'registration_closed') && _champDateKey && _champT24)
     ? { __champ: true, id: '__champ', dateKey: _champDateKey, time24: _champT24, date: formatDateLabel(_champDateKey), time: champTime, ampm: champAmpm }
     : null;
   const upcomingAll     = champEvent ? sortByDt([...upcoming, champEvent], false) : upcoming;
@@ -3489,6 +3490,13 @@ export default function Profile() {
             'Ya puedes encontrarlo en Próximos eventos. Cuando estés listo, entra para prepararlo y publicarlo.',
             'Comparte la clave con los jugadores cuando abras las inscripciones.',
           ]}
+          onContinue={() => { setChampConfirm(null); setHighlightedId('__champ'); }}
+        />
+      )}
+      {champConfirm === 'created_validation' && (
+        <ChampConfirmOverlay
+          title="¡Campeonato creado!"
+          lines={['Validaremos tu pago para que puedas publicarlo. Te avisaremos cuando esté confirmado.']}
           onContinue={() => { setChampConfirm(null); setHighlightedId('__champ'); }}
         />
       )}

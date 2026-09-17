@@ -33,12 +33,14 @@ export default function ChampionshipCheckout() {
   const championshipName = nav.championshipName || summary.name || 'Copa AlGrass';
 
   // Pago CONFIRMADO (electrónico) → el campeonato existe como 'pending_publish' (NO se publica solo).
-  // Transferencia (pending_verification) NO crea el campeonato: primero AlGrass verifica.
-  const confirmPayment = () => {
+  // Crea el campeonato con el `status` inicial según el método de pago y navega a Profile con la confirmación.
+  //  - Electrónico (tarjeta/Yape/pasarela): pago confirmado → 'pending_publish' (puede publicar).
+  //  - Transferencia: voucher enviado → 'payment_validation' ("Validando pago"); AlGrass valida antes de publicar.
+  const createChampionship = (status, champConfirm) => {
     setPayOpen(false);
     const cv = readCV() || {};
     cv.championship = {
-      status: 'pending_publish',
+      status,
       privacy: 'private',
       createdByUserId: 'you', // owner = quien pagó (mock 'you'); futuro: currentUser.id de Supabase
       registrationKey: makeRegistrationKey(championshipName),
@@ -47,8 +49,10 @@ export default function ChampionshipCheckout() {
     };
     writeCV(cv);
     // Navegar YA a Profile; la confirmación aparece SOBRE Profile (replace → Back no vuelve al checkout).
-    navigate('/profile', { replace: true, state: { champConfirm: 'created' } });
+    navigate('/profile', { replace: true, state: { champConfirm } });
   };
+  const confirmPayment = () => createChampionship('pending_publish', 'created');            // electrónico
+  const confirmTransferPayment = () => createChampionship('payment_validation', 'created_validation'); // transferencia
 
   const base = CHAMPIONSHIP_BASE_PRICE;
   const [selected, setSelected] = useState(() => new Set());   // ids de extras
@@ -57,7 +61,6 @@ export default function ChampionshipCheckout() {
   const [razon, setRazon] = useState('');
   const [direccion, setDireccion] = useState('');
   const [payOpen, setPayOpen] = useState(false);
-  const [done, setDone] = useState(null);                      // null | 'confirmed' | 'pending_verification'
 
   const total = championshipTotal(base, selected);
   const selectedExtras = CHAMPIONSHIP_EXTRAS.filter(e => selected.has(e.id));
@@ -158,7 +161,7 @@ export default function ChampionshipCheckout() {
         </div>
 
         <CtaButton onPress={() => setPayOpen(true)} disabled={!facturaOk}>
-          {`Pagar ${soles(total)}`}
+          Confirmar
         </CtaButton>
       </div>
 
@@ -168,22 +171,9 @@ export default function ChampionshipCheckout() {
           amount={total}
           currency="S/"
           onClose={() => setPayOpen(false)}
-          onPaid={confirmPayment}       // confirmed → crea campeonato pending_publish
-          transfer={{ bank: CHAMPIONSHIP_BANK, onConfirm: () => { setPayOpen(false); setDone('pending_verification'); } }}
+          onPaid={confirmPayment}                 // electrónico → campeonato 'pending_publish'
+          transfer={{ bank: CHAMPIONSHIP_BANK, onConfirm: confirmTransferPayment }} // transferencia → 'payment_validation'
         />
-      )}
-
-      {/* Transferencia (pending_verification) — overlay MOCK. El pago electrónico confirmado usa full-screen. */}
-      {done === 'pending_verification' && (
-        <div className="sheet-overlay" onClick={() => setDone(null)} style={{ position: 'fixed', inset: 0, zIndex: 250, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', background: 'rgba(0,0,0,0.35)', padding: '0 16px calc(24px + env(safe-area-inset-bottom))' }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 420, background: '#fff', borderRadius: 18, padding: 20, boxShadow: '0 12px 40px rgba(0,0,0,0.2)' }}>
-            <div style={{ fontSize: 17, fontWeight: 800, color: TEXT, letterSpacing: -0.3 }}>Transferencia registrada (mock)</div>
-            <div style={{ fontSize: 13.5, color: SUB, lineHeight: 1.5, marginTop: 6 }}>Estado futuro: pending_verification. Validaremos tu comprobante. Aún no se persiste.</div>
-            <div style={{ marginTop: 16 }}>
-              <CtaButton onPress={() => navigate(-1)}>Entendido</CtaButton>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );
