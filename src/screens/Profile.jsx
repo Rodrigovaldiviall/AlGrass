@@ -26,7 +26,7 @@ import { buildGameShareUrl } from '../utils/share';
 import { fetchPendingSlotExpiry, markSlotReservationNotified, getPendingRewards, markRewardsCommunicated } from '../services/reservationService';
 import { saveRating, fetchMyRatings, upsertRatingRows, markPopupShown, getLocalRatings, setLocalRatings } from '../services/ratingService';
 import { getMyWaitlistGamesFull } from '../services/waitlistService';
-import { getChampionshipById } from '../services/championshipService';
+import { getChampionshipById, listMyChampionships } from '../services/championshipService';
 import { useForegroundTick } from '../hooks/useForegroundTick';
 import { uploadAvatar, getAvatarUrl } from '../utils/avatar';
 import { useGlobalRoles } from '../hooks/useGlobalRoles';
@@ -2443,6 +2443,7 @@ export default function Profile() {
         `)
         .eq('user_id', uid)
         .eq('status', 'spend')
+        .not('game_id', 'is', null)   // excluir asientos de Championship (game_id NULL) → NO son Match
         .then(({ data, error }) => {
           if (error) { console.warn('[Profile] reservations:', error.message); setSbGamesReady(true); return; }
           if (!data?.length) { setExtraGames([]); setSbGamesReady(true); return; }
@@ -2616,6 +2617,7 @@ export default function Profile() {
       `)
       .eq('user_id', uid)
       .eq('status', 'spend')
+      .not('game_id', 'is', null)   // excluir asientos de Championship (game_id NULL) → NO son Match
       .then(({ data, error }) => {
         if (error || !data?.length) return;
         const matchData = data.filter(r => r.games?.type !== 'rental');
@@ -2832,16 +2834,56 @@ export default function Profile() {
     : champStatus === 'registration_closed' ? 'Inscripciones cerradas'
     : champStatus === 'registration_open' ? 'Publicado'
     : 'Pendiente publicar';
-  const openChampionship = () => navigate('/championships/view', { state: { summary: _champCv?.summary, organizeState: _champCv?.organizeState, cvReturn: true, from: 'profile' } });
+  const openChampionship = (g) => navigate('/championships/view', { state: { summary: g?.summary ?? _champCv?.summary, organizeState: g?.organizeState ?? _champCv?.organizeState, cvReturn: false, from: 'profile' } });
   const openChampRequest = () => navigate('/championships/contact', { state: { summary: champReq?.originalSummary, organizeState: champReq?.originalOrganizeState, championshipName: champReq?.championshipName, existingRequest: true } });
 
-  // El campeonato pagado se INTEGRA como evento en la agrupación por fecha existente (misma cabecera/orden).
-  const _champDateKey = _champCv?.organizeState?.dateKey || null;
-  const _champT24 = champTo24(_champStart);
-  const champEvent = (champ && (champStatus === 'payment_validation' || champStatus === 'pending_publish' || champStatus === 'registration_open' || champStatus === 'registration_closed') && _champDateKey && _champT24)
-    ? { __champ: true, id: '__champ', dateKey: _champDateKey, time24: _champT24, date: formatDateLabel(_champDateKey), time: champTime, ampm: champAmpm }
-    : null;
-  const upcomingAll     = champEvent ? sortByDt([...upcoming, champEvent], false) : upcoming;
+  // ── Campeonatos REALES del usuario (FUENTE DE VERDAD del listado = DB, 0..N) ──────────────────
+  // Cada campeonato es un evento independiente con SU championship.id como identidad/key. Ya NO se
+  // usa championship_view_state como fuente del listado (solo queda como caché del recién creado).
+  const [champList, setChampList] = useState([]);
+  useEffect(() => {
+    if (!user?.id) { setChampList([]); return; }
+    let alive = true;
+    listMyChampionships({ userId: user.id }).then(({ data, error }) => {
+      if (alive) setChampList(error ? [] : (data || []));
+    });
+    return () => { alive = false; };
+  }, [user?.id]);
+
+  // Un champEvent por campeonato (mismos campos visuales que la tarjeta actual, derivados por fila).
+  const champEvents = champList.map(row => {
+    const fc = row.format_config || {};
+    const sum = fc.summary || {};
+    const dateKey = row.event_date || fc.organizeState?.dateKey || null;
+    let time = '', ampm = '', time24 = null;
+    if (row.start_time) {                                   // hora real del backend
+      const [hh, mm] = String(row.start_time).split(':');
+      const H = Number(hh);
+      time24 = `${String(H).padStart(2, '0')}:${mm || '00'}`;
+      ampm = H >= 12 ? 'pm' : 'am';
+      time = `${((H + 11) % 12) + 1}:${mm || '00'}`;
+    } else {                                                // fallback: slotLabel del snapshot
+      const st = (sum.slotLabel || '').split('–')[0].trim();
+      time = st.split(' ')[0] || ''; ampm = st.split(' ')[1] || ''; time24 = champTo24(st);
+    }
+    const le = sum.leagueEstimate;
+    const teamsLabel = sum.mode === 'liga'
+      ? (le?.quantity ? `${le.quantity} ${le.type === 'people' ? 'personas' : 'equipos'}` : '')
+      : (sum.group ? (sum.group.min === sum.group.max ? `${sum.group.min} equipos` : `${sum.group.min}–${sum.group.max} equipos`) : '');
+    const statusLabel = row.status === 'payment_validation' ? 'Validando pago'
+      : row.status === 'registration_closed' ? 'Inscripciones cerradas'
+      : row.status === 'registration_open' ? 'Publicado'
+      : 'Pendiente publicar';
+    return {
+      __champ: true, id: row.id, dateKey, time24,
+      date: dateKey ? formatDateLabel(dateKey) : '', time, ampm,
+      name: row.name || 'Campeonato', theme: row.cover_theme || '#E24A4A',
+      venueName: sum.venueName || null, teamsLabel, statusLabel,
+      summary: fc.summary || null, organizeState: fc.organizeState || null,
+    };
+  }).filter(e => e.dateKey && e.time24);
+
+  const upcomingAll     = champEvents.length ? sortByDt([...upcoming, ...champEvents], false) : upcoming;
   const visibleUpcoming = upcomingExpanded ? upcomingAll : upcomingAll.slice(0, 10);
 
   useEffect(() => {
@@ -3366,22 +3408,22 @@ export default function Profile() {
                         if (g.__champ) return (
                           /* Campeonato pagado como evento del día — misma geometría que GameRow (gap 12 + ChevIcon).
                              El holder (flex:1) termina en la MISMA línea vertical que el badge de Partido. */
-                          <div key={g.id} ref={highlightedId === '__champ' ? highlightedRef : null} onClick={openChampionship} className={`pressable${highlightedId === '__champ' ? ' game-row-highlighted' : ''}`} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 16px', cursor: 'pointer' }}>
+                          <div key={g.id} ref={highlightedId === g.id ? highlightedRef : null} onClick={() => openChampionship(g)} className={`pressable${highlightedId === g.id ? ' game-row-highlighted' : ''}`} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 16px', cursor: 'pointer' }}>
                             <div style={{ width: 44, flexShrink: 0, textAlign: 'center' }}>
                               <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, lineHeight: 1.1 }}>{g.time || '—'}</div>
                               {g.ampm && <div style={{ fontSize: 11, color: SUB, fontWeight: 500, lineHeight: 1.1 }}>{g.ampm}</div>}
                             </div>
-                            <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10, background: champTheme, borderRadius: 12, padding: '8px 12px' }}>
+                            <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10, background: g.theme, borderRadius: 12, padding: '8px 12px' }}>
                               <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 15, fontWeight: 800, color: '#fff', letterSpacing: -0.2, textShadow: '0 1px 2px rgba(0,0,0,0.25)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{champName}</div>
-                                {(_champSum.venueName || champTeamsLabel) && (
+                                <div style={{ fontSize: 15, fontWeight: 800, color: '#fff', letterSpacing: -0.2, textShadow: '0 1px 2px rgba(0,0,0,0.25)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.name}</div>
+                                {(g.venueName || g.teamsLabel) && (
                                   <div style={{ display: 'flex', alignItems: 'baseline', minWidth: 0, marginTop: 2 }}>
-                                    {_champSum.venueName && <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.9)', textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>{_champSum.venueName}</span>}
-                                    {champTeamsLabel && <span style={{ flexShrink: 0, whiteSpace: 'nowrap', fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.9)', textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>{_champSum.venueName ? ' · ' : ''}{champTeamsLabel}</span>}
+                                    {g.venueName && <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.9)', textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>{g.venueName}</span>}
+                                    {g.teamsLabel && <span style={{ flexShrink: 0, whiteSpace: 'nowrap', fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.9)', textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>{g.venueName ? ' · ' : ''}{g.teamsLabel}</span>}
                                   </div>
                                 )}
                               </div>
-                              <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 700, color: '#fff', textAlign: 'right', lineHeight: 1.2, maxWidth: 90, textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>{champStatusLabel}</span>
+                              <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 700, color: '#fff', textAlign: 'right', lineHeight: 1.2, maxWidth: 90, textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>{g.statusLabel}</span>
                             </div>
                             <ChevIcon />
                           </div>
@@ -3513,14 +3555,14 @@ export default function Profile() {
             'Ya puedes encontrarlo en Próximos eventos. Cuando estés listo, entra para prepararlo y publicarlo.',
             'Comparte la clave con los jugadores cuando abras las inscripciones.',
           ]}
-          onContinue={() => { setChampConfirm(null); setHighlightedId('__champ'); }}
+          onContinue={() => { setChampConfirm(null); setHighlightedId(_champCv?.championship?.realId || null); }}
         />
       )}
       {champConfirm === 'created_validation' && (
         <ChampConfirmOverlay
           title="¡Campeonato creado!"
           lines={['Validaremos tu pago para que puedas publicarlo. Te avisaremos cuando esté confirmado.']}
-          onContinue={() => { setChampConfirm(null); setHighlightedId('__champ'); }}
+          onContinue={() => { setChampConfirm(null); setHighlightedId(_champCv?.championship?.realId || null); }}
         />
       )}
       {champConfirm === 'request' && (

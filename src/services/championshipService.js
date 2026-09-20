@@ -96,6 +96,18 @@ export async function fetchFreeRentalBlock({ count = 4 } = {}) {
   return { ids: best.slice(0, Math.max(1, count)).map(g => g.id), error: null };
 }
 
+// Listado REAL de los campeonatos del usuario (fuente de verdad del listado en Profile; 0..N).
+// RLS championships_select acota al owner. Trae solo lo necesario para pintar la tarjeta + abrir el
+// campeonato (format_config lleva summary/organizeState del snapshot). Ordena por fecha de evento.
+export function listMyChampionships({ userId }) {
+  return supabase
+    .from('championships')
+    .select('id, status, name, cover_theme, event_date, start_time, format_config, registration_closes_at, order_id, created_at')
+    .eq('owner_user_id', userId)
+    .in('status', ['payment_validation', 'pending_publish', 'registration_open', 'registration_closed'])
+    .order('event_date', { ascending: true });
+}
+
 // Lectura mínima del campeonato propio (RLS championships_select acota al owner). Se usa para
 // representar en Profile el campeonato real recién creado ("Validando pago") y su persistencia tras
 // refresh. SIN escritura, SIN lógica: devuelve el { data, error } CRUDO de Supabase.
