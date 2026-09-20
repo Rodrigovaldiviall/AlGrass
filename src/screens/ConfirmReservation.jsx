@@ -513,8 +513,26 @@ export default function ConfirmReservation() {
   const _armaModeInit = (isCaptain || isCaptainGold) && (game?.addGuestsMode ?? false) && game?.source !== 'campo' && game?.type !== 'rental';
   const _armaInit     = _armaModeInit ? readArmaCache(game?.id, authUser?.id) : null;
   const _armaSeedInit = _armaInit ? _r1Seed(_armaInit.r1) : null;
-  const [reservedSlots, setReservedSlots] = useState(_armaSeedInit?.on ? _armaSeedInit.n : 0);
-  const [armaLista, setArmaLista] = useState(!!_armaSeedInit?.on); // "Arma la lista" ON/OFF (reservedSlots = N total)
+  // ACTIVACIÓN de un published+captain (SOLO el join inicial del titular): "Arma la lista" arranca ON con
+  // N = teamSize (que YA incluye al capitán) y ese N es el mínimo durante esta confirmación. teamSize del
+  // formato ("7v7"→7; fallback total_spots/2). NO se persiste: deriva de status+published_audience+format.
+  // No aplica a published+public, reserved, addGuests/invited, rental ni campo.
+  const _teamSizeInit = (() => {
+    const m = /^(\d+)\s*v/i.exec(game?.format || '');
+    if (m) return parseInt(m[1], 10);
+    return game?.totalSpots ? Math.floor(game.totalSpots / 2) : 0;
+  })();
+  // captainActivation (efímero, viene del gate de GameDetail): true SOLO si el usuario entró por la
+  // puerta captain-only en esta estancia. Un CASO B (entró en reserved y el game volvió a published+
+  // captain) llega con captainActivation=false → conserva el flujo NORMAL (sin ON forzado ni mínimo).
+  const _capActivationInit = (isCaptain || isCaptainGold)
+    && game?.status === 'published' && game?.publishedAudience === 'captain'
+    && game?.captainActivation === true
+    && !(game?.addGuestsMode) && !(game?.invitedMode)
+    && game?.type !== 'rental' && game?.source !== 'campo'
+    && _teamSizeInit > 0;
+  const [reservedSlots, setReservedSlots] = useState(_armaSeedInit?.on ? _armaSeedInit.n : (_capActivationInit ? _teamSizeInit : 0));
+  const [armaLista, setArmaLista] = useState(!!_armaSeedInit?.on || _capActivationInit); // "Arma la lista" ON/OFF (reservedSlots = N total)
   const [lastN, setLastN] = useState(0);             // N recordado al apagar el toggle (misma sesión)
 
   const [confirmedPlayerIds, setConfirmedPlayerIds] = useState(new Set());
@@ -639,7 +657,9 @@ export default function ConfirmReservation() {
   // Piso MÍNIMO del contador: al armar la lista se reservan al menos 2 (titular + 1 cupo), aunque
   // estés solo. Con invitados el piso real ya es ≥2. No afecta al conteo de "pre-inscritos" ni a
   // los cupos vacíos (esos siguen usando listFloor real).
-  const listFloorMin  = Math.max(listFloor, 2);
+  // Piso del contador. En la activación de un published+captain, el mínimo sube a teamSize (medio
+  // equipo, incluye al titular). En cualquier otro flujo _capActivationInit=false → piso normal (max 2).
+  const listFloorMin  = Math.max(listFloor, 2, _capActivationInit ? _teamSizeInit : 0);
   // Con Arma la lista ON, N (reservedSlots) YA incluye titular+invitados; el cap de invitados
   // no debe descontar N (los invitados llenan cupos de N o suben N). OFF: comportamiento actual.
   const guestSlots    = maxSelectable(armaLista ? 0 : reservedSlots);   // máx invitados

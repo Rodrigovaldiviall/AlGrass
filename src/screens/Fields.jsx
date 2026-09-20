@@ -10,6 +10,7 @@ import fieldPriceBg from '../assets/field price.webp';
 import fieldNoAvailable from '../assets/Field no available.webp';
 import { supabase } from '../lib/supabase';
 import { getRentalGames } from '../services/gameService';
+import { useGlobalRoles } from '../hooks/useGlobalRoles';
 import { getVenues } from '../services/venueService';
 import DistrictSheet from '../components/DistrictSheet';
 import RouteNoticeModal from '../components/RouteNoticeModal';
@@ -536,7 +537,13 @@ function FieldRow({ f, last, onPress, userBooked, isHost, badgeReady = true }) {
           <GameMetaLine format={f.format} durationMin={f.durationMin} parking={f.parking} covered={f.covered} womenOnly={false} filmed={f.filmed} />
         </div>
       </div>
-      <FieldThumbnail price={isHost ? null : f.price} reserved={f.reserved} userBooked={userBooked} isHost={isHost} badgeReady={badgeReady} />
+      <div style={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}>
+        {/* "No publicado" ENCIMA del thumbnail (absoluto → no altera la altura de la fila). Solo published+captain. */}
+        {f.status === 'published' && f.publishedAudience === 'captain' && (
+          <span style={{ position: 'absolute', bottom: '100%', right: 0, marginBottom: 2, fontSize: 10.5, fontWeight: 700, color: '#8A6D00', background: '#FFF3C4', borderRadius: 6, padding: '1px 6px', whiteSpace: 'nowrap', lineHeight: 1.2, pointerEvents: 'none' }}>No publicado</span>
+        )}
+        <FieldThumbnail price={isHost ? null : f.price} reserved={f.reserved} userBooked={userBooked} isHost={isHost} badgeReady={badgeReady} />
+      </div>
       <div style={{ pointerEvents: 'none', marginLeft: 6 }}>{I.chev()}</div>
     </div>
   );
@@ -560,6 +567,7 @@ export default function Fields() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
+  const { isCaptain } = useGlobalRoles();
   const _mapReturn = location.state?.mapReturn ?? null;       // contexto restaurado al volver de RentalDetail
   // Estado persistido entre tabs (sessionStorage). Prioridad: mapReturn (detalle) → persistido (tab) → default.
   const _flStored = (() => { try { return JSON.parse(sessionStorage.getItem('fl')) ?? {}; } catch { return {}; } })();
@@ -645,7 +653,7 @@ export default function Fields() {
   const hasFieldsCache = useRef(_rentalCache.length > 0).current;
   const listReady = cityReady && (hasFieldsCache || (!loading && myBookedFresh));
   useEffect(() => {
-    getRentalGames().then(data => {
+    getRentalGames({ isCaptain }).then(data => {
       _rentalCache = data;
       setRentalGames(data);
       setLoading(false);
@@ -657,7 +665,7 @@ export default function Fields() {
         setMyBookedFresh(true);
       }
     });
-  }, [fgTick]); // eslint-disable-line
+  }, [fgTick, isCaptain]); // eslint-disable-line
 
   const hasHostedInFeed = useMemo(
     () => !!user?.id && rentalGames.some(f => f.hostUserId === user.id),

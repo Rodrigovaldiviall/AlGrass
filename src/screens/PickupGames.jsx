@@ -674,6 +674,10 @@ function GameRow({ g, last, onOpen, booked, inWaitlist, guestInfo, canceledCount
         </div>
       </div>
       <div style={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}>
+        {/* "No publicado" ENCIMA del badge (absoluto → no altera la altura de la fila). Solo published+captain. */}
+        {g.status === 'published' && g.publishedAudience === 'captain' && (
+          <span style={{ position: 'absolute', bottom: '100%', right: 0, marginBottom: 2, fontSize: 10.5, fontWeight: 700, color: '#8A6D00', background: '#FFF3C4', borderRadius: 6, padding: '1px 6px', whiteSpace: 'nowrap', lineHeight: 1.2, pointerEvents: 'none' }}>No publicado</span>
+        )}
         {(!pillReady && !isHost) ? (
           <SkeletonPill />
         ) : (
@@ -966,7 +970,7 @@ export default function PickupGames() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user }  = useAuth();
-  const { isCaptainGold } = useGlobalRoles();
+  const { isCaptain, isCaptainGold } = useGlobalRoles();
 
   const _mapReturn = location.state?.mapReturn ?? null;       // contexto restaurado al volver de GameDetail
   // Estado persistido entre tabs (sessionStorage). Prioridad: mapReturn (detalle) → persistido (tab) → default.
@@ -1005,10 +1009,10 @@ export default function PickupGames() {
   const [games, setGames]     = useState(() => _gamesCache);
   const [loading, setLoading] = useState(_gamesCache.length === 0);
   useEffect(() => {
-    getGames().then(data => {
+    getGames({ isCaptain }).then(data => {
       _gamesCache = data; setGames(data); setLoading(false);
     });
-  }, [fgTick]);
+  }, [fgTick, isCaptain]);
 
   const _pr0 = user?.id ? _readPRCache(user.id) : null;
   const _wl0 = user?.id ? _readWLCache(user.id) : null;

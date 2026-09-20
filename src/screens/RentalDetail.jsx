@@ -17,6 +17,7 @@ import { getAvatarUrl } from '../utils/avatar';
 import { isGamePast, isGameStarted, gameStartDate, gameEndDate, deriveAttendance } from '../utils/deriveGameState';
 import RatingBlock from '../components/RatingBlock';
 import { getGameById } from '../services/gameService';
+import { useGlobalRoles } from '../hooks/useGlobalRoles';
 import { cancelRental, getRentalCancellationWindow } from '../services/reservationService';
 import { shareOrCopy } from '../utils/share';
 import { useAuth } from '../context/AuthContext';
@@ -379,6 +380,7 @@ export default function RentalDetail() {
   const location = useLocation();
   const { id }   = useParams();
   const { user } = useAuth();
+  const { isCaptain, isCaptainGold, ready: rolesReady } = useGlobalRoles();
   const mapReturn = location.state?.mapReturn ?? null;  // contexto del mapa de Canchas, se devuelve al volver
   const goBack = () => navigate(location.state?.backPath ?? '/fields', mapReturn ? { state: { mapReturn } } : undefined);
 
@@ -406,6 +408,15 @@ export default function RentalDetail() {
     const t = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(t);
   }, []);
+
+  // Deep-link (UX, NO RLS): un rental 'published' con audiencia 'captain' NO debe abrirse como oferta
+  // pública para un usuario normal/anónimo; captain/captain_gold sí. Solo aplica a status='published'.
+  useEffect(() => {
+    if (!rolesReady || !game) return;
+    if (game.status === 'published' && game.publishedAudience === 'captain' && !(isCaptain || isCaptainGold)) {
+      navigate('/fields', { replace: true });
+    }
+  }, [game, rolesReady, isCaptain, isCaptainGold]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Always fetch fresh: game status (full fetch) + reservation net state — all in parallel.
   useEffect(() => {

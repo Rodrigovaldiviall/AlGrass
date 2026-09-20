@@ -31,6 +31,7 @@ const GAME_SELECT = `
   id,
   type,
   status,
+  published_audience,
   date_key,
   time,
   price_per_person,
@@ -81,6 +82,7 @@ function mapGame(g) {
     id:          g.id,
     type:        g.type                             ?? '',
     status:      g.status                           ?? null,
+    publishedAudience: g.published_audience         ?? 'public',   // 'public' | 'captain' (solo afecta cuando status='published')
     city:        venue?.city                        ?? '',
     dateKey:     g.date_key                         ?? '',
     time24:      g.time                             ?? null,   // raw "HH:MM:SS" for temporal logic
@@ -134,16 +136,20 @@ export async function getGameById(gameId) {
   return mapGame(data);
 }
 
-export async function getGames() {
+// isCaptain (captain ∪ captain_gold) desde useGlobalRoles. Regla: SOLO se oculta
+// status='published' AND published_audience='captain' a NO-capitanes. reserved (cualquier
+// audiencia) y published+public siguen visibles como hoy. Sin isCaptain (anónimo/normal) → filtra.
+export async function getGames({ isCaptain = false } = {}) {
   const { from, to } = horizonRange();
-  const { data, error } = await supabase
+  let q = supabase
     .from('games')
     .select(GAME_SELECT)
     .eq('type', 'match')
     .in('status', ['published', 'reserved'])
     .gte('date_key', from)
     .lte('date_key', to);
-
+  if (!isCaptain) q = q.or('status.eq.reserved,published_audience.eq.public');
+  const { data, error } = await q;
   if (error) { console.error('getGames:', error); return []; }
   return data.map(mapGame);
 }
@@ -159,15 +165,18 @@ function mapRentalGame(g) {
   };
 }
 
-export async function getRentalGames() {
+// Misma regla de audiencia que getGames (ver arriba).
+export async function getRentalGames({ isCaptain = false } = {}) {
   const { from, to } = horizonRange();
-  const { data, error } = await supabase
+  let q = supabase
     .from('games')
     .select(GAME_SELECT)
     .eq('type', 'rental')
     .in('status', ['published', 'reserved'])
     .gte('date_key', from)
     .lte('date_key', to);
+  if (!isCaptain) q = q.or('status.eq.reserved,published_audience.eq.public');
+  const { data, error } = await q;
   if (error) { console.error('getRentalGames:', error); return []; }
   return data.map(mapRentalGame);
 }

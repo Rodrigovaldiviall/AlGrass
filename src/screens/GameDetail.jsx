@@ -1466,7 +1466,7 @@ export default function GameDetail() {
   const reserveSlotsFromModifyRef = useRef(false);
   const reserveSlotsSavedRef      = useRef(false);
   const [slotRes, setSlotRes] = useState(null);
-  const { isCaptain, isCaptainGold } = useGlobalRoles();
+  const { isCaptain, isCaptainGold, ready: rolesReady } = useGlobalRoles();
   // Al abrir "Gestionar mi reserva" precargamos slotRes con la MISMA RPC
   // (get_slot_reservation), una sola vez, para mostrar el contador used/total.
   function openModify() {
@@ -1592,6 +1592,26 @@ export default function GameDetail() {
       if (fetched) setSbGame(fetched);
     });
   }, [gameId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Deep-link gate (UX, NO RLS): decisión ÚNICA por montaje sobre el PRIMER estado canónico resuelto.
+  //  · CASO A (entrada no autorizada): si al entrar el game YA es published+captain y el usuario no es
+  //    captain → redirigir (como hoy). Cubre el deep-link directo a un captain-only.
+  //  · CASO B (entrada legítima previa): si al entrar era reserved/public → se autoriza para ESTA
+  //    estancia; si luego cambia a published+captain NO se expulsa (la puerta ya se cruzó abierta).
+  // EFÍMERO: solo refs de este mount. Salir y volver = montaje nuevo → se re-evalúa el gate.
+  const gateDecidedRef      = useRef(false);
+  const entryCaptainOnlyRef = useRef(false);   // true solo si la entrada fue por la puerta captain-only
+  useEffect(() => {
+    if (gateDecidedRef.current) return;
+    if (!rolesReady || !sbGame) return;         // esperar roles + primer fetch canónico
+    gateDecidedRef.current = true;
+    const captainOnly = sbGame.status === 'published' && sbGame.publishedAudience === 'captain';
+    if (captainOnly && !(isCaptain || isCaptainGold)) {
+      navigate('/games', { replace: true });    // CASO A
+      return;
+    }
+    entryCaptainOnlyRef.current = captainOnly;   // CASO B/normal: autorizado; recuerda si entró captain-only
+  }, [sbGame, rolesReady, isCaptain, isCaptainGold]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Shared Link: primera llegada al partido del enlace → consume el auto-redirect. El CTX
   // permanece (referral/ciudad/analytics); solo deja de redirigir automáticamente en adelante.
@@ -1887,6 +1907,12 @@ export default function GameDetail() {
       price: fresh?.price != null ? `S/. ${Number(fresh.price).toFixed(2)}` : g.price, priceNumber: fresh?.price ?? g.priceNumber, currency: g.currency, source: 'match', type: g.type,
       openSpots: freshAvail, wasInWaitlist: inWaitlist, backPath: id ? `/game/${id}` : '/games',
       gameDetailBackPath: backPath, hostUserId: g.hostUserId,
+      // Para el checkout: activar "Arma la lista" (mínimo medio equipo) SOLO si es una activación real
+      // de captain-only, es decir, si el usuario ENTRÓ por la puerta captain-only en esta estancia. Un
+      // usuario/capitán que entró cuando estaba reserved (CASO B) conserva el flujo normal aunque el game
+      // haya vuelto a published+captain durante su permanencia.
+      status: fresh?.status ?? g.status, publishedAudience: fresh?.publishedAudience ?? g.publishedAudience ?? null, totalSpots: fresh?.totalSpots ?? g.totalSpots ?? null,
+      captainActivation: entryCaptainOnlyRef.current,
     };
     navigate('/checkout', { state: { game: checkoutGame, referral: sharedLink.getReferral(id) } });
   }
