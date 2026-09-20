@@ -26,7 +26,7 @@ import { buildGameShareUrl } from '../utils/share';
 import { fetchPendingSlotExpiry, markSlotReservationNotified, getPendingRewards, markRewardsCommunicated } from '../services/reservationService';
 import { saveRating, fetchMyRatings, upsertRatingRows, markPopupShown, getLocalRatings, setLocalRatings } from '../services/ratingService';
 import { getMyWaitlistGamesFull } from '../services/waitlistService';
-import { getChampionshipById, listMyChampionships } from '../services/championshipService';
+import { listMyChampionships } from '../services/championshipService';
 import { useForegroundTick } from '../hooks/useForegroundTick';
 import { uploadAvatar, getAvatarUrl } from '../utils/avatar';
 import { useGlobalRoles } from '../hooks/useGlobalRoles';
@@ -2796,7 +2796,6 @@ export default function Profile() {
 
   // Campeonatos/solicitudes mock (sessionStorage). MOCK: 1 campeonato + 1 solicitud (se reemplazan; no arrays).
   const _champCv = (() => { try { return JSON.parse(sessionStorage.getItem('championship_view_state')); } catch { return null; } })();
-  const champ = _champCv?.championship || null;                 // { status, ... } (pago confirmado)
   const champReq = _champCv?.contactRequest || null;            // { status:'pending', ... } (solicitud)
   const champName = _champCv?.name || champReq?.championshipName || 'Campeonato';
   const champTheme = _champCv?.coverTheme || '#E24A4A';
@@ -2809,31 +2808,6 @@ export default function Profile() {
     ? (_champLe?.quantity ? `${_champLe.quantity} ${_champLe.type === 'people' ? 'personas' : 'equipos'}` : '')
     : (_champSum.group ? (_champSum.group.min === _champSum.group.max ? `${_champSum.group.min} equipos` : `${_champSum.group.min}–${_champSum.group.max} equipos`) : '');
   const champVenueLine = [_champSum.venueName, champTeamsLabel].filter(Boolean).join(' · ');
-  const [realChampStatus, setRealChampStatus] = useState(null); // Campeonato REAL (transfer): status del backend
-  // Campeonato REAL (transfer): reconcilia el mock (sessionStorage) con el estado del backend. Persistencia
-  // tras refresh: cv.championship.status ya se guardó al confirmar ("Validando pago"); esta lectura mínima
-  // (RLS acota al owner) lo mantiene fiel a Supabase si el estado cambió (p.ej. Admin futuro). §18.
-  useEffect(() => {
-    const rid = champ?.realId;
-    if (!rid) return;
-    let alive = true;
-    getChampionshipById({ championshipId: rid }).then(({ data }) => {
-      if (!alive || !data?.status) return;
-      setRealChampStatus(data.status);
-      if (data.status !== champ.status) {
-        try {
-          const cv = JSON.parse(sessionStorage.getItem('championship_view_state')) || {};
-          if (cv.championship) { cv.championship.status = data.status; sessionStorage.setItem('championship_view_state', JSON.stringify(cv)); }
-        } catch {}
-      }
-    }).catch(() => {});
-    return () => { alive = false; };
-  }, [champ?.realId]); // eslint-disable-line
-  const champStatus = realChampStatus ?? champ?.status;   // status efectivo (real si existe)
-  const champStatusLabel = champStatus === 'payment_validation' ? 'Validando pago'
-    : champStatus === 'registration_closed' ? 'Inscripciones cerradas'
-    : champStatus === 'registration_open' ? 'Publicado'
-    : 'Pendiente publicar';
   const openChampionship = (g) => navigate('/championships/view', { state: { summary: g?.summary ?? _champCv?.summary, organizeState: g?.organizeState ?? _champCv?.organizeState, cvReturn: false, from: 'profile' } });
   const openChampRequest = () => navigate('/championships/contact', { state: { summary: champReq?.originalSummary, organizeState: champReq?.originalOrganizeState, championshipName: champReq?.championshipName, existingRequest: true } });
 

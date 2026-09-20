@@ -214,7 +214,6 @@ export default function ChampionshipCheckout() {
     if (!eventDate) return { error: 'INVALID_DATE' };
     if (!groupId) return { error: 'CHAMPIONSHIP_FORMAT_UNAVAILABLE' };   // sin formato → el backend no puede tarifar
     const config = buildHoldConfig();
-    console.log('[championship hold] request', { groupId, eventDate, extras: config.extras, selectedGameIds: h.gameIds, idempotencyKey: h.key });
     const { data, error } = await createTransferHold({ gameIds: h.gameIds, idempotencyKey: h.key, config });
     if (error) {
       // AVAILABILITY_CHANGED o bloqueo vigente de Championship (carrera: Admin bloqueó tras abrir la pantalla).
@@ -223,7 +222,6 @@ export default function ChampionshipCheckout() {
       return { error: error.message || 'NETWORK' };  // reintentable con la MISMA key (idempotencia backend)
     }
     h.id = data.id;
-    console.log('[championship hold] creado', { championshipId: data.id, gameIds: h.gameIds, holdExpiresAt: data.hold_expires_at });
     return { holdExpiresAt: data.hold_expires_at };
   };
 
@@ -234,7 +232,6 @@ export default function ChampionshipCheckout() {
     if (!id) { resetAttempt(); return {}; }
     const { error } = await releaseTransferHold({ championshipId: id });
     if (error) return { error: error.message || 'NETWORK' };
-    console.log('[championship hold] liberado (user_canceled)', { championshipId: id });
     resetAttempt();
     return {};
   };
@@ -251,7 +248,6 @@ export default function ChampionshipCheckout() {
       if (/HOLD_EXPIRED/.test(error.message || '')) { resetAttempt(); return { error: 'HOLD_EXPIRED' }; }
       return { error: error.message || 'NETWORK' };
     }
-    console.log('[championship transfer] confirmado → payment_validation', { championshipId: data.id });
     resetAttempt();
     createChampionship('payment_validation', 'created_validation', { realId: data.id });
     return {};
