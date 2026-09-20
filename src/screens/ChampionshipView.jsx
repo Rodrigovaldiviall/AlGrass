@@ -498,7 +498,7 @@ export default function ChampionshipView() {
             </div>
           ) : (
             <button onClick={checkoutReady ? goToCheckout : goToContact} className="pressable" style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: 54, background: ORANGE, color: '#1B1B1F', border: 'none', borderRadius: 18, boxShadow: '0 6px 18px rgba(245,165,36,0.40)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, WebkitTapHighlightColor: 'transparent' }}>
-              {checkoutReady ? `Crear campeonato por ${soles(CHAMPIONSHIP_BASE_PRICE)}` : 'Contactarme para organizarlo'}
+              {checkoutReady ? 'Crear campeonato' : 'Contactarme para organizarlo'}
             </button>
           )}
         </div>

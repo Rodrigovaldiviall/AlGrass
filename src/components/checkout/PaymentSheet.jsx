@@ -61,13 +61,20 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
   const [transferProof, setTransferProof] = useState(null); // solo Campeonato (transfer)
   const transferFileRef = useRef(null);
 
-  // ── HOLD de Transferencia (mock, SOLO Campeonato): 10 min desde "Reservar y realizar transferencia".
-  //    Se modela con un instante de expiración (holdExpiresAt), NO un contador local que reinicie en render.
-  //    Futuro: holdExpiresAt vendrá del backend (order/hold real). Ver §15.
-  const TRANSFER_HOLD_MS = 10 * 60 * 1000;
+  // ── HOLD de Transferencia (SOLO Campeonato): hold REAL de 10 min creado por Supabase.
+  //    Se modela con un instante de expiración (holdExpiresAt) que viene del BACKEND (hold_expires_at),
+  //    NO un contador local reiniciable ni Date.now()+10min. El tick local solo pinta MM:SS; la
+  //    autoridad de expiración es el backend/cron. Las mutaciones (crear/liberar/confirmar) las
+  //    ejecuta el padre vía transfer.onReserve / onRelease / onConfirm (RPC reales). Ver §4/§11/§16.
   const [holdExpiresAt, setHoldExpiresAt] = useState(null);  // ms | null (null = aún no reservado)
   const [nowMs, setNowMs] = useState(() => Date.now());      // reloj para el contador (tick 1s)
   const [exitConfirm, setExitConfirm] = useState(null);      // { kind:'close'|'switch', method? } | null
+  const [reserving, setReserving] = useState(false);         // create_championship_transfer_hold en curso
+  const [releasing, setReleasing] = useState(false);         // release_… en curso (salir / cambiar método)
+  const [confirmingTransfer, setConfirmingTransfer] = useState(false); // confirm_… en curso
+  const [availabilityChanged, setAvailabilityChanged] = useState(false); // overlay "La disponibilidad cambió"
+  const [actionError, setActionError] = useState(null);      // error controlado (reserve/release/confirm) sin cerrar
+  const expiredNotifiedRef = useRef(false);                  // onExpire una sola vez por hold
   const holdRemaining   = holdExpiresAt != null ? holdExpiresAt - nowMs : 0;
   const transferReserved = holdExpiresAt != null && holdRemaining > 0;  // hold vigente → UX actual + contador
   const transferExpired  = holdExpiresAt != null && holdRemaining <= 0; // llegó a 00:00 → volver a reservar
@@ -142,20 +149,40 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
   }
   function handleClose() {
     if (paying === 'loading' || paying === 'confirming') return;
+    if (reserving || releasing || confirmingTransfer) return; // RPC en curso: no cerrar a medias
     if (exitConfirm) return; // ya hay una confirmación abierta
-    // Con hold de transferencia VIGENTE, cerrar NO es inmediato: confirmar (la reserva se cancelaría). §10.
+    // Con hold de transferencia VIGENTE, cerrar NO es inmediato: confirmar (la reserva se cancelaría). §11.
     if (transferReserved) { setExitConfirm({ kind: 'close' }); return; }
     doClose();
   }
-  // Libera el hold mock (futuro: RPC que libera atómicamente las canchas — §13/§14).
-  function releaseHold() { setHoldExpiresAt(null); setTransferProof(null); }
-  // Modal de salida/cambio con hold activo: continuar (no toca nada) vs confirmar (libera + cierra/cambia).
-  function exitStay() { setExitConfirm(null); }              // "Seguir con el pago" — NO reinicia el contador
-  function exitConfirmYes() {
-    const ec = exitConfirm; setExitConfirm(null);
-    releaseHold();                                            // futuro: liberar hold real ANTES de continuar
-    if (ec?.kind === 'switch') applyMethod(ec.method);
-    else doClose();
+  // Modal de salida/cambio con hold activo: continuar (no toca nada) vs confirmar (libera REAL + cierra/cambia).
+  function exitStay() { if (releasing) return; setActionError(null); setExitConfirm(null); } // "Seguir con el pago"
+  // Confirmar salida/cambio: libera el hold REAL (RPC) ANTES de cerrar/cambiar. Si la liberación FALLA
+  // (red/backend), NO cerramos: el backend puede seguir manteniendo el hold → mantener modal y reintentar. §13.
+  async function exitConfirmYes() {
+    if (releasing) return;
+    const ec = exitConfirm;
+    setActionError(null);
+    setReleasing(true);
+    try {
+      const res = await transfer?.onRelease?.();
+      if (res?.error) {
+        setReleasing(false);
+        setActionError('No pudimos cancelar tu reserva. Revisa tu conexión e inténtalo de nuevo.');
+        return; // mantiene exitConfirm abierto para reintentar; NO libera estado local
+      }
+      // Éxito real: las canchas fueron liberadas por el backend → limpiar estado local del hold.
+      setHoldExpiresAt(null);
+      setTransferProof(null);
+      setReleasing(false);
+      setExitConfirm(null);
+      if (ec?.kind === 'switch') applyMethod(ec.method);
+      else doClose();
+    } catch (e) {
+      console.error('[exitConfirmYes] release threw:', e);
+      setReleasing(false);
+      setActionError('No pudimos cancelar tu reserva. Revisa tu conexión e inténtalo de nuevo.');
+    }
   }
   // Drag-to-dismiss SOLO en selección de método (paying === 'idle'); deshabilitado en
   // loading/confirming/rejected y bajo cualquier overlay bloqueante.
@@ -205,22 +232,55 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
     }, 1400);
   }
 
-  // "Reservar y realizar transferencia": en producción revalida disponibilidad de TODAS las canchas +
-  // crea el hold de 10 min. AHORA (mock): simula success y arranca el contador (holdExpiresAt = ahora+10min).
-  function reserveTransfer() {
-    setTransferProof(null);
-    setNowMs(Date.now());
-    setHoldExpiresAt(Date.now() + TRANSFER_HOLD_MS);
+  // "Reservar y realizar transferencia": crea el HOLD REAL (create_championship_transfer_hold vía el padre).
+  // Revalida disponibilidad de TODAS las canchas server-side; el contador arranca con hold_expires_at REAL.
+  // Idempotente: el padre reusa la misma key en reintentos (§7/§10) → no crea dos campeonatos.
+  async function reserveTransfer() {
+    if (reserving || transferReserved) return;
+    setActionError(null);
+    setReserving(true);
+    try {
+      const res = await transfer?.onReserve?.();
+      if (res?.error === 'AVAILABILITY_CHANGED') { setReserving(false); setAvailabilityChanged(true); return; } // §9
+      if (res?.error) { setReserving(false); setActionError('No pudimos crear tu reserva. Revisa tu conexión e inténtalo de nuevo.'); return; } // §10: reintentable con la misma key
+      if (res?.holdExpiresAt != null) {
+        expiredNotifiedRef.current = false;
+        setTransferProof(null);
+        const exp = new Date(res.holdExpiresAt).getTime();
+        setNowMs(Date.now());
+        setHoldExpiresAt(exp);   // instante REAL del backend (NO Date.now()+10min). §6
+      }
+    } catch (e) {
+      console.error('[reserveTransfer] onReserve threw:', e);
+      setActionError('No pudimos crear tu reserva. Revisa tu conexión e inténtalo de nuevo.');
+    }
+    setReserving(false);
   }
 
-  // Transferencia (mock, solo Campeonato): NO ejecuta pasarela. Futuro: pending_verification.
-  // Confirmar solo si el hold sigue vigente (now < holdExpiresAt); si expiró → volver al estado expirado.
-  function confirmTransfer() {
-    if (!transferProof) return;
+  // "Ya realicé la transferencia": confirma REAL (confirm_championship_transfer vía el padre):
+  // order pending→validation, championship transfer_hold→payment_validation. Los games SIGUEN reserved.
+  // En éxito el padre navega a Profile ("Validando pago"); aquí solo cerramos. Si el backend responde
+  // HOLD_EXPIRED (el cron ganó la carrera), reflejamos estado expirado sin liberar nada localmente. §16.
+  async function confirmTransfer() {
+    if (!transferProof || confirmingTransfer) return;
     if (holdExpiresAt == null || Date.now() >= holdExpiresAt) { setNowMs(Date.now()); return; }
-    setOpen(false);
-    // A partir de aquí = pending_verification: el contador ya no aplica (el sheet se cierra).
-    setTimeout(() => { transfer?.onConfirm?.(transferProof); }, 260);
+    setActionError(null);
+    setConfirmingTransfer(true);
+    try {
+      const res = await transfer?.onConfirm?.(transferProof);
+      if (res?.error === 'HOLD_EXPIRED') {
+        setConfirmingTransfer(false);
+        setHoldExpiresAt(Date.now() - 1);        // forzar UI expirada; el backend/cron ya liberó las canchas
+        transfer?.onExpire?.();                  // el padre invalida la key/id → próxima reserva = intento nuevo
+        return;
+      }
+      if (res?.error) { setConfirmingTransfer(false); setActionError('No pudimos confirmar tu transferencia. Inténtalo de nuevo.'); return; }
+      setOpen(false);                            // éxito: el padre navega; el sheet se desmonta
+    } catch (e) {
+      console.error('[confirmTransfer] onConfirm threw:', e);
+      setConfirmingTransfer(false);
+      setActionError('No pudimos confirmar tu transferencia. Inténtalo de nuevo.');
+    }
   }
 
   // Contador del hold: tick cada 1s mientras haya un holdExpiresAt (re-render no reinicia el plazo,
@@ -231,6 +291,16 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
     const id = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(id);
   }, [holdExpiresAt]);
+
+  // Expiración local (contador → 00:00): el frontend NO toca games (autoridad = backend/cron). Solo
+  // notifica al padre UNA vez para invalidar la key/id (próxima reserva = intento nuevo) y bloquea la CTA. §14.
+  useEffect(() => {
+    if (transferExpired && !expiredNotifiedRef.current) {
+      expiredNotifiedRef.current = true;
+      setTransferProof(null);
+      transfer?.onExpire?.();
+    }
+  }, [transferExpired]); // eslint-disable-line
 
   function formatCard(v) {
     return v.replace(/\D/g, '').slice(0, 16).replace(/(.{4})/g, '$1 ').trim();
@@ -371,9 +441,16 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
                   </>
                 ) : (
                   /* Estado PREVIO: la CTA usa el MISMO espacio que "Adjuntar comprobante" (misma altura/margen). */
-                  <button onClick={reserveTransfer} className="pressable" style={{ marginTop: 8, width: '100%', height: 44, borderRadius: 12, border: 'none', background: BLUE, color: '#fff', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 700, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-                    Reservar y realizar transferencia
-                  </button>
+                  <>
+                    <button onClick={reserveTransfer} disabled={reserving} className="pressable" style={{ marginTop: 8, width: '100%', height: 44, borderRadius: 12, border: 'none', background: BLUE, color: '#fff', cursor: reserving ? 'default' : 'pointer', opacity: reserving ? 0.75 : 1, fontFamily: 'inherit', fontSize: 14, fontWeight: 700, WebkitTapHighlightColor: 'transparent', outline: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                      {reserving
+                        ? <><span style={{ width: 15, height: 15, borderRadius: '50%', border: '2.5px solid rgba(255,255,255,0.4)', borderTop: '2.5px solid #fff', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />Reservando...</>
+                        : 'Reservar y realizar transferencia'}
+                    </button>
+                    {actionError && !transferExpired && (
+                      <div style={{ marginTop: 8, fontSize: 12.5, color: DANGER, lineHeight: 1.35 }}>{actionError}</div>
+                    )}
+                  </>
                 )}
               </div>
             </MethodRow>
@@ -471,8 +548,10 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
           {isTransfer ? (
             /* CTA inferior general: SIEMPRE "Ya realicé la transferencia" (nunca "Reservar…", que es interno).
                Deshabilitado antes del hold y durante el hold sin comprobante; se habilita con hold vigente + proof. */
-            <CtaButton onPress={confirmTransfer} disabled={!transferReserved || !transferProof}>
-              {`Ya realicé la transferencia de ${amtStr}`}
+            <CtaButton onPress={confirmTransfer} disabled={!transferReserved || !transferProof || confirmingTransfer}>
+              {confirmingTransfer
+                ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><span style={{ width: 16, height: 16, borderRadius: '50%', border: '2.5px solid rgba(27,27,31,0.2)', borderTop: '2.5px solid #1B1B1F', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />Confirmando...</span>
+                : `Ya realicé la transferencia de ${amtStr}`}
             </CtaButton>
           ) : (
             <CtaButton onPress={pay} disabled={!canPay || paying !== 'idle'}>
@@ -528,15 +607,46 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
         </div>
       )}
 
-      {/* Confirmación de salida/cambio con hold de transferencia VIGENTE (§10/§15). Fuera del hold no aparece. */}
+      {/* AVAILABILITY_CHANGED (§9): el hold NO se creó (una o más canchas dejaron de estar libres). No hay
+          contador ni championship activo. CTA → el padre cierra el sheet, limpia el intento y vuelve a Crear campeonato. */}
+      {availabilityChanged && (
+        <div className="sheet-overlay" style={{ position: 'fixed', inset: 0, zIndex: 212, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#fff', padding: '0 32px' }}>
+          <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#FFF3E0', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
+              <path d="M12 8v5" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" />
+              <circle cx="12" cy="16.5" r="1.2" fill={ORANGE} />
+              <circle cx="12" cy="12" r="9" stroke={ORANGE} strokeWidth="1.8" />
+            </svg>
+          </div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: TEXT, letterSpacing: -0.4, textAlign: 'center' }}>La disponibilidad cambió</div>
+          <div style={{ marginTop: 8, fontSize: 14, color: SUB, textAlign: 'center', lineHeight: 1.45 }}>
+            Durante el proceso, una o más de las canchas seleccionadas fueron reservadas. Vuelve a consultar la disponibilidad para crear tu campeonato con horarios disponibles.
+          </div>
+          <div style={{ marginTop: 28, width: '100%', maxWidth: 320 }}>
+            <CtaButton onPress={() => { setOpen(false); setTimeout(() => transfer?.onAvailabilityChanged?.(), 220); }}>
+              Volver a crear campeonato
+            </CtaButton>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmación de salida/cambio con hold de transferencia VIGENTE (§11/§12). Fuera del hold no aparece.
+          Confirmar libera el hold REAL (RPC); si falla NO cierra (§13) → muestra error y permite reintentar. */}
       {exitConfirm && (
         <div className="sheet-overlay" onClick={exitStay} style={{ position: 'fixed', inset: 0, zIndex: 210, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', background: 'rgba(0,0,0,0.4)', padding: '0 16px calc(24px + env(safe-area-inset-bottom))' }}>
           <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 420, background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 -8px 32px rgba(0,0,0,0.12)' }}>
             <div style={{ fontSize: 17, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>{exitConfirm.kind === 'switch' ? '¿Cambiar de método de pago?' : '¿Seguro que quieres salir?'}</div>
             <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, marginTop: 8 }}>{exitConfirm.kind === 'switch' ? 'Tu reserva temporal será cancelada si cambias de método de pago.' : 'Tu reserva temporal será cancelada y las canchas volverán a estar disponibles.'}</div>
+            {actionError && (
+              <div style={{ marginTop: 12, fontSize: 12.5, color: DANGER, lineHeight: 1.4 }}>{actionError}</div>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 18 }}>
-              <button onClick={exitStay} className="pressable" style={{ width: '100%', height: 48, borderRadius: 14, border: 'none', background: ORANGE, color: '#1B1B1F', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{exitConfirm.kind === 'switch' ? 'Seguir con Transferencia' : 'Seguir con el pago'}</button>
-              <button onClick={exitConfirmYes} className="pressable" style={{ width: '100%', height: 48, borderRadius: 14, border: `1.5px solid ${HAIR}`, background: '#fff', color: DANGER, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{exitConfirm.kind === 'switch' ? 'Cambiar de método' : 'Salir y cancelar reserva'}</button>
+              <button onClick={exitStay} disabled={releasing} className="pressable" style={{ width: '100%', height: 48, borderRadius: 14, border: 'none', background: ORANGE, color: '#1B1B1F', cursor: releasing ? 'default' : 'pointer', opacity: releasing ? 0.6 : 1, fontFamily: 'inherit', fontSize: 15, fontWeight: 800, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{exitConfirm.kind === 'switch' ? 'Seguir con Transferencia' : 'Seguir con el pago'}</button>
+              <button onClick={exitConfirmYes} disabled={releasing} className="pressable" style={{ width: '100%', height: 48, borderRadius: 14, border: `1.5px solid ${HAIR}`, background: '#fff', color: DANGER, cursor: releasing ? 'default' : 'pointer', opacity: releasing ? 0.7 : 1, fontFamily: 'inherit', fontSize: 15, fontWeight: 700, WebkitTapHighlightColor: 'transparent', outline: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                {releasing
+                  ? <><span style={{ width: 15, height: 15, borderRadius: '50%', border: '2.5px solid rgba(220,38,38,0.25)', borderTop: `2.5px solid ${DANGER}`, display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />Cancelando...</>
+                  : (exitConfirm.kind === 'switch' ? 'Cambiar de método' : 'Salir y cancelar reserva')}
+              </button>
             </div>
           </div>
         </div>

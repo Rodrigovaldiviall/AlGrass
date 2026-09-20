@@ -13,15 +13,26 @@ export const DEFAULT_FORMAT = '7v7';
 // "hora adicional" con menos canchas. courtHours = Σ(canchas×horas) = CAPACIDAD (horas-cancha),
 // NUNCA la duración del campeonato. clockHours = horas de reloj recomendadas.
 export const RECOMMENDATION_GROUPS = [
-  { id: 'g1', min: 4,  max: 6,  phases: [{ courts: 2, hours: 2 }],                          courtHours: 4,  clockHours: 2 },
-  { id: 'g2', min: 7,  max: 8,  phases: [{ courts: 3, hours: 2 }],                          courtHours: 6,  clockHours: 2 },
-  { id: 'g3', min: 9,  max: 12, phases: [{ courts: 3, hours: 2 }, { courts: 2, hours: 1 }], courtHours: 8,  clockHours: 3 },
-  { id: 'g4', min: 13, max: 16, phases: [{ courts: 4, hours: 2 }, { courts: 2, hours: 1 }], courtHours: 10, clockHours: 3 },
+  { id: 'g1', min: 4,  max: 4,  phases: [{ courts: 2, hours: 1 }, { courts: 1, hours: 1 }], courtHours: 3,  clockHours: 2 },
+  { id: 'g2', min: 5,  max: 6,  phases: [{ courts: 2, hours: 2 }],                          courtHours: 4,  clockHours: 2 },
+  { id: 'g3', min: 7,  max: 8,  phases: [{ courts: 3, hours: 2 }],                          courtHours: 6,  clockHours: 2 },
+  { id: 'g4', min: 9,  max: 12, phases: [{ courts: 3, hours: 2 }, { courts: 2, hours: 1 }], courtHours: 8,  clockHours: 3 },
+  { id: 'g5', min: 13, max: 14, phases: [{ courts: 4, hours: 2 }, { courts: 1, hours: 1 }], courtHours: 9,  clockHours: 3 },
+  { id: 'g6', min: 15, max: 16, phases: [{ courts: 4, hours: 2 }, { courts: 2, hours: 1 }], courtHours: 10, clockHours: 3 },
 ];
 
 export function groupForTeams(n) {
   if (n == null) return null;
   return RECOMMENDATION_GROUPS.find(g => n >= g.min && n <= g.max) || null;
+}
+
+// Rango REFERENCIAL de jugadores por holder (SOLO UX; NO es min/max de inscritos, admite suplentes).
+//   minPlayers = minTeams × playersPerTeam
+//   maxPlayers = maxTeams × playersPerTeam + (playersPerTeam − 1)  (hasta justo antes del siguiente equipo)
+// Derivado (no hardcodeado): si cambian holders o playersPerTeam, el rango se recalcula solo.
+export function playersRange(minTeams, maxTeams, playersPerTeam) {
+  const p = playersPerTeam || 0;
+  return { min: minTeams * p, max: maxTeams * p + (p - 1) };
 }
 
 export const MIN_TEAMS = 4;

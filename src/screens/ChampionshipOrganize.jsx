@@ -3,14 +3,15 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN } from '../constants';
 import TabBar from '../components/TabBar';
 import { useSheetPull } from '../hooks/useSheetPull';
-import { DATE_WINDOW, TODAY_KEY, ymd } from '../data/games';
+import { DATE_WINDOW, TODAY, TODAY_KEY, ymd } from '../data/games';
+import { getChampionshipConfig } from '../services/championshipService';
 import {
-  FORMATS, DEFAULT_FORMAT, PLAYERS_PER_TEAM, RECOMMENDATION_GROUPS,
-  DISTRICTS, AMENITIES, HOURS, compatibleVenues, venueMatrix, findValidTournamentSlots,
+  FORMATS, DEFAULT_FORMAT, PLAYERS_PER_TEAM, RECOMMENDATION_GROUPS, AMENITIES, playersRange,
 } from '../data/championshipFormats';
-
-// Etiqueta de reloj a partir del índice de franja (índice 0 = 3:00 pm … cada franja +1h).
-const clockLabel = (i) => { const hr = 15 + i; const ampm = hr >= 12 ? 'pm' : 'am'; const h12 = hr % 12 || 12; return `${h12}:00 ${ampm}`; };
+import {
+  fetchChampionshipInventory, championshipVenues, championshipDistricts,
+  championshipVenueGrid, championshipSlots, hourLabel, clockFromMin, gameBlockedByChampionship,
+} from '../services/championshipAvailabilityService';
 
 // Mismo patrón de fechas que Partidos (DateCell): día abreviado + número, 30 días de horizonte.
 const DOW_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
@@ -19,16 +20,17 @@ function dateChip(d) {
   if (k === TODAY_KEY) return { top: 'Hoy', bottom: d.getDate() };
   return { top: DOW_ES[d.getDay()], bottom: d.getDate() };
 }
-function DateCell({ top, bottom, active, isToday, onClick, check }) {
+function DateCell({ top, bottom, active, isToday, onClick, check, disabled }) {
   const topColor = active ? '#fff' : (isToday ? BLUE : SUB);
   const bottomColor = active ? '#fff' : TEXT;
   return (
-    <button onClick={onClick} style={{
+    <button onClick={disabled ? undefined : onClick} disabled={disabled} style={{
       position: 'relative',
       flex: '0 0 auto', width: 50, height: 52, borderRadius: 11,
       background: active ? BLUE : '#fff', border: `1px solid ${active ? BLUE : HAIR}`,
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: 0,
-      cursor: 'pointer', outline: 'none', WebkitTapHighlightColor: 'transparent', fontFamily: 'inherit',
+      cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.38 : 1,
+      outline: 'none', WebkitTapHighlightColor: 'transparent', fontFamily: 'inherit',
       transition: 'background .15s, border-color .15s',
     }}>
       {/* check discreto: la fecha tiene al menos un venue con la disponibilidad recomendada */}
@@ -157,16 +159,53 @@ export default function ChampionshipOrganize() {
   const [venueSheet, setVenueSheet] = useState(false);
   const didMount = useRef(false); // evita que los resets de venue/slot pisen el estado restaurado
 
+  // Inventario rental REAL de Supabase (SELECT). null = cargando. Sustituye la fuente mock del grid.
+  const [inv, setInv] = useState(null);
+  const invLoading = inv == null;
+  useEffect(() => {
+    let alive = true;
+    fetchChampionshipInventory().then(({ games: gs, error }) => {
+      if (!alive) return;
+      if (error) { console.warn('[ChampionshipOrganize] inventory:', error.message); setInv([]); return; }
+      setInv(gs || []);
+    });
+    return () => { alive = false; };
+  }, []);
+  const gamesAll = inv || [];
+
+  // Config de Championship por CIUDAD del inventario (asunción operativa: un inventario ≈ una ciudad).
+  // Fuente única para: (a) availability_blocks → filtrar canchas ANTES del grid; (b) booking_lead_rules.
+  // Se llave por la ciudad del inventario (NO por resolvedVenue) para evitar dependencia circular con el grid.
+  const invCity = useMemo(() => {
+    const cs = [...new Set(gamesAll.map(g => g.city).filter(Boolean))];
+    return cs.length ? cs[0] : null;
+  }, [gamesAll]);
+  const [champCfg, setChampCfg] = useState(null);
+  useEffect(() => {
+    if (!invCity) { setChampCfg(null); return; }
+    let alive = true;
+    getChampionshipConfig({ city: invCity }).then(({ data, error }) => { if (alive) setChampCfg(error ? null : data); });
+    return () => { alive = false; };
+  }, [invCity]);
+  const availabilityBlocks = Array.isArray(champCfg?.availability_blocks) ? champCfg.availability_blocks : [];
+
+  // Inventario UTILIZABLE por Championship = inventario real − rentals que se solapan con un availability_block
+  // de SU ciudad. NO se muta el rental (sigue disponible en Rental/Match); solo se excluye como candidato.
+  const games = useMemo(() => {
+    if (!availabilityBlocks.length) return gamesAll;
+    return gamesAll.filter(g => (g.city !== invCity) || !gameBlockedByChampionship(g, availabilityBlocks));
+  }, [gamesAll, availabilityBlocks, invCity]);
+
   const group = RECOMMENDATION_GROUPS.find(g => g.id === groupId) || null;
 
-  // Sedes base: formato compatible + distritos + amenities + filtro de cancha (respeta TODOS los filtros).
+  // Sedes base REALES: formato compatible + distritos + amenities + filtro de cancha (respeta TODOS los filtros).
   const baseVenues = useMemo(() => {
-    const base = compatibleVenues(format, districts, amenities);
+    const base = championshipVenues(games, format, districts, amenities);
     return venueFilter.size === 0 ? base : base.filter(v => venueFilter.has(v.id));
-  }, [format, districts, amenities, venueFilter]);
+  }, [games, format, districts, amenities, venueFilter]);
 
-  // ÚNICA fuente de verdad: ¿este venue tiene AL MENOS un horario válido completo esa fecha?
-  const venueComplies = (v, k) => group != null && findValidTournamentSlots(venueMatrix(v, k), group).length > 0;
+  // ÚNICA fuente de verdad: ¿este venue tiene AL MENOS un horario válido esa fecha? (capacidad simultánea)
+  const venueComplies = (v, k) => group != null && championshipSlots(championshipVenueGrid(games, v.id, k, format), group).length > 0;
 
   // Check de fechas: una fecha tiene check si AL MENOS un venue base tiene ≥1 horario válido ese día.
   const dateChecks = useMemo(() => {
@@ -174,7 +213,7 @@ export default function ChampionshipOrganize() {
     if (!group) return s;
     for (const d of DATE_WINDOW) { const k = ymd(d); if (baseVenues.some(v => venueComplies(v, k))) s.add(k); }
     return s;
-  }, [group, baseVenues]);
+  }, [group, baseVenues, games, format]); // eslint-disable-line
 
   // Orden de venues para la fecha activa: primero los que cumplen, luego el resto (mismo orden base).
   const candidates = useMemo(() => {
@@ -182,30 +221,64 @@ export default function ChampionshipOrganize() {
     const yes = [], no = [];
     for (const v of baseVenues) (venueComplies(v, dateKey) ? yes : no).push(v);
     return [...yes, ...no];
-  }, [baseVenues, group, dateKey]);
+  }, [baseVenues, group, dateKey, games, format]); // eslint-disable-line
 
-  // Disponibilidad GLOBAL: ignora distrito/amenities/venueFilter → ¿existe ALGÚN venue compatible con el
-  // formato con horario válido para esta fecha? Distingue "cero global" (CASO A) de "cero con filtros" (CASO B).
-  const globalVenues = useMemo(() => compatibleVenues(format, new Set(), new Set()), [format]);
-  const globalHasAvailability = useMemo(
-    () => group != null && globalVenues.some(v => venueComplies(v, dateKey)),
-    [globalVenues, group, dateKey] // eslint-disable-line
-  );
+  // Disponibilidad GLOBAL REAL: ¿existe ALGÚN día (IGNORANDO distrito/sede/amenities) con una combinación
+  // válida para el formato? true = hay opciones en alguna parte; false = NO existe NINGUNA (empty global). §5.
+  const globalVenues = useMemo(() => championshipVenues(games, format, new Set(), new Set()), [games, format]);
+  const globalHasAnyAvailability = useMemo(() => {
+    if (!group) return false;
+    for (const d of DATE_WINDOW) { const k = ymd(d); if (globalVenues.some(v => venueComplies(v, k))) return true; }
+    return false;
+  }, [globalVenues, group, games, format]); // eslint-disable-line
 
   const resolvedVenue = candidates[Math.min(venueIdx, Math.max(0, candidates.length - 1))] || null;
-  const matrix = useMemo(() => (resolvedVenue ? venueMatrix(resolvedVenue, dateKey) : []), [resolvedVenue, dateKey]);
 
-  // Todos los horarios válidos del venue (misma función única). El usuario elige UNA franja completa.
-  const slots = useMemo(() => (group ? findValidTournamentSlots(matrix, group) : []), [matrix, group]);
+  // ── Booking lead (UX): usa champCfg (ciudad del inventario) → días de anticipación por rango del grupo. ──
+  // Bloquea fechas < HOY_LIMA + lead. Autoridad final = backend (quote/hold re-validan BOOKING_LEAD_NOT_MET).
+  // Misma regla conceptual del backend: EXACTAMENTE una booking_lead_rule que contenga [group.min, group.max].
+  const bookingLeadDays = useMemo(() => {
+    if (!group || !champCfg || !Array.isArray(champCfg.booking_lead_rules)) return 0;
+    const ms = champCfg.booking_lead_rules.filter(r =>
+      Number.isFinite(+r?.min_teams) && Number.isFinite(+r?.max_teams) && Number.isFinite(+r?.days) &&
+      +r.min_teams <= group.min && group.max <= +r.max_teams && +r.days >= 0);
+    return ms.length === 1 ? +ms[0].days : 0;   // 0/ambiguo → sin bloqueo local (backend valida)
+  }, [group, champCfg]);
+  const minAllowedKey = useMemo(() => {
+    if (!bookingLeadDays) return null;
+    return ymd(new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate() + bookingLeadDays)); // America/Lima
+  }, [bookingLeadDays]);
+
+  // Grid REAL de la sede+fecha (fields = columnas; retícula horaria por time+duration). Fuente única de
+  // matrix/segmentos (disponibilidad + slots), fields (columnas) y fieldGames (píldoras por game real).
+  const grid = useMemo(
+    () => (resolvedVenue ? championshipVenueGrid(games, resolvedVenue.id, dateKey, format)
+                         : { fields: [], baseHour: 0, hourRows: 0, segCount: 0, matrix: [], gamesGrid: [], hourLabels: [], fieldGames: [] }),
+    [resolvedVenue, dateKey, games, format]
+  );
+  // Dimensión VISUAL mínima del grid (regla SOLO visual, NO disponibilidad): mínimo 4 FILAS DE HORA.
+  const gridBaseHour = grid.hourRows > 0 ? grid.baseHour : 15;      // 3pm neutro si la fecha no tiene games reales
+  const visualRows = Math.max(4, grid.hourRows);                    // mínimo 4 horas visibles
+  const visualHours = Array.from({ length: visualRows }, (_, r) => hourLabel(gridBaseHour + r));
+  // Segmento (30 min) → etiqueta de reloj (soporta :30). Los slots vienen en índices de SEGMENTO.
+  const segLabel = (seg) => clockFromMin(grid.baseHour * 60 + seg * 30);
+
+  // Horarios válidos por CAPACIDAD SIMULTÁNEA con games COMPLETOS. Cada slot trae gameIds (dedupe REAL).
+  const slots = useMemo(() => (group ? championshipSlots(grid, group) : []), [grid, group]);
   const complies = slots.length > 0;
   const activeSlot = (complies && slotIdx != null) ? slots[Math.min(slotIdx, slots.length - 1)] : null;
-  const block = activeSlot ? activeSlot.cells : new Set(); // celdas del horario seleccionado (solo visual)
+  // games.id REALES del horario seleccionado (para el hold) = los preasignados por championshipSlots.
+  const selectedGameIds = activeSlot ? activeSlot.gameIds : [];
+  // Render de píldoras: geometría por game REAL (time+duration); selección por game.id.
+  const selSet = new Set(selectedGameIds);
+  const GROW = 28, GVINSET = 2, GRAD = 7, GLABELW = 54; // alto/hora, inset vertical (gap entre píldoras), radio, ancho eje
+  const gBaseMin = gridBaseHour * 60;
 
   const showCanchaCard = mode === 'oneday' && !contactMe;
 
   // Grilla: mínimo 4 columnas visuales (C1–C4). Si el venue tiene más canchas reales, se añaden y
   // se habilita scroll horizontal. Columnas c >= courts = "sin cancha" (inexistente / no elegible).
-  const courts = resolvedVenue?.courts || 0;
+  const courts = grid.fields.length;
   const cols = Math.max(4, courts);
   const scrollCols = cols > 4;
 
@@ -232,13 +305,13 @@ export default function ChampionshipOrganize() {
   // "fantasma" que no puede deseleccionarse desde el sheet (que se lista por distrito).
   useEffect(() => {
     if (!didMount.current) return;
-    const allowed = new Set(compatibleVenues(format, districts, amenities).map(v => v.id));
+    const allowed = new Set(championshipVenues(games, format, districts, amenities).map(v => v.id));
     setVenueFilter(prev => {
       if (prev.size === 0) return prev;
       const next = new Set([...prev].filter(id => allowed.has(id)));
       return next.size === prev.size ? prev : next;
     });
-  }, [format, districts, amenities]);
+  }, [format, districts, amenities, games]); // eslint-disable-line
 
   useEffect(() => { if (didMount.current) setVenueIdx(0); }, [format, districts, amenities, venueFilter, dateKey]);
   // Cambiar de venue/fecha/filtros/rango → limpiar el horario (queda SIN preseleccionar; el usuario elige).
@@ -247,10 +320,10 @@ export default function ChampionshipOrganize() {
   // CASO A ↔ disponibilidad: si NO existe disponibilidad GLOBAL, forzar personalización de Cancha
   // (bloqueada) y limpiar horario. Si vuelve a existir disponibilidad global, liberar el forzado.
   useEffect(() => {
-    if (!showCanchaCard || !group) return;                  // no aplica (Liga / formato custom / sin rango)
-    if (!globalHasAvailability) { setCourtForced(true); setCourtCustom(true); setSlotIdx(null); }
+    if (!showCanchaCard || !group || !format) return;       // no aplica (Liga / formato custom / sin rango / sin formato)
+    if (!globalHasAnyAvailability) { setCourtForced(true); setCourtCustom(true); setSlotIdx(null); } // empty GLOBAL real
     else if (courtForced) { setCourtForced(false); setCourtCustom(false); } // NO autoselecciona horario
-  }, [globalHasAvailability, showCanchaCard, group]); // eslint-disable-line
+  }, [globalHasAnyAvailability, showCanchaCard, group, format]); // eslint-disable-line
   useEffect(() => { didMount.current = true; }, []);
 
   // Restaura el scroll al volver desde "Ver mi campeonato" (rAF×2 para esperar el layout).
@@ -277,14 +350,28 @@ export default function ChampionshipOrganize() {
     }));
   }, [canchaReady]); // eslint-disable-line
 
+  // Selección automática del día disponible más próximo. Se dispara al abrir Cancha (Formato completo) y
+  // cuando un cambio de filtro/formato/inventario recalcula la disponibilidad (dateChecks). NO depende de
+  // dateKey → NO salta si el usuario elige manualmente un día vacío (§7). Solo salta si el día actual NO
+  // tiene disponibilidad y existe otro que sí. §3.
+  useEffect(() => {
+    if (!canchaReady) return;
+    // Primer día con disponibilidad Y que cumpla la anticipación mínima (>= minAllowedKey).
+    let target = null;
+    for (const d of DATE_WINDOW) { const k = ymd(d); if (dateChecks.has(k) && (!minAllowedKey || k >= minAllowedKey)) { target = k; break; } }
+    if (!target) return;                                                              // ningún día permitido con slot → sin salto
+    if (dateChecks.has(dateKey) && (!minAllowedKey || dateKey >= minAllowedKey)) return; // día actual válido y permitido → respetar
+    setDateKey(target);
+  }, [canchaReady, dateChecks, minAllowedKey]); // eslint-disable-line
+
   // Al elegir un horario, si el bloque recomendado cae fuera del área visible de la grilla,
   // hacer un scroll VERTICAL sutil (smooth) para revelarlo. `startHour` es el índice de fila (HORA).
   useEffect(() => {
     const el = gridVRef.current;
     if (!el || !activeSlot) return;
-    const ROW = 38; // 32 (celda) + 6 (margin) por fila
-    const firstTop = activeSlot.startHour * ROW;
-    const lastBottom = (activeSlot.endHour ?? activeSlot.startHour + 1) * ROW;
+    const ROW = 28; // celda 28px, filas SIN gap vertical (bloques continuos). startHour/endHour = segmentos → fila = seg/2.
+    const firstTop = Math.floor(activeSlot.startHour / 2) * ROW;
+    const lastBottom = Math.ceil((activeSlot.endHour ?? activeSlot.startHour + 2) / 2) * ROW;
     const inView = firstTop >= el.scrollTop && lastBottom <= el.scrollTop + el.clientHeight;
     if (inView) return;
     const target = Math.max(0, firstTop - 6);
@@ -298,6 +385,9 @@ export default function ChampionshipOrganize() {
       mode, format, groupId, contactMe, courtCustom, leagueQty, leagueUnit,
       districts: [...districts], amenities: [...amenities], venueFilter: [...venueFilter],
       dateKey, venueIdx, slotIdx,
+      venueId: resolvedVenue?.id ?? null,
+      city: resolvedVenue?.city ?? null,     // ciudad REAL del venue (autoridad de config en checkout)
+      selectedGameIds,                       // games.id REALES del horario elegido (para el hold)
       scrollTop: scrollRef.current?.scrollTop ?? 0,
     };
     const dsel = DATE_WINDOW.find(d => ymd(d) === dateKey);
@@ -312,10 +402,16 @@ export default function ChampionshipOrganize() {
       venueName: resolvedVenue?.name ?? null,
       venueDistrict: resolvedVenue?.district ?? null,
       venueAddress: resolvedVenue?.address ?? null,
-      slotLabel: activeSlot ? `${clockLabel(activeSlot.startHour)} – ${clockLabel(activeSlot.endHour)}` : null,
+      slotLabel: activeSlot ? `${segLabel(activeSlot.startHour)} – ${segLabel(activeSlot.endHour)}` : null,
       configLabel: complies ? configLabel : null,
       complies,
-      venueAmenities: resolvedVenue?.amenities?.map(a => AMENITY_LABEL[a] || a) ?? [],
+      venueId: resolvedVenue?.id ?? null,
+      city: resolvedVenue?.city ?? null,      // ciudad REAL del venue → checkout la usa para config/quote
+      selectedGameIds,                        // se propaga hasta ChampionshipCheckout (hold real)
+      // amenities REALES = objeto { parking:bool, showers:bool, covered:bool } → etiquetas de las activas.
+      venueAmenities: resolvedVenue?.amenities
+        ? Object.keys(resolvedVenue.amenities).filter(k => resolvedVenue.amenities[k]).map(a => AMENITY_LABEL[a] || a)
+        : [],
     };
     navigate('/championships/view', { state: { organizeState, summary } });
   }
@@ -347,10 +443,12 @@ export default function ChampionshipOrganize() {
   //   C) hay disponibilidad con la selección actual → sin aviso.
   const status = (() => {
     if (!showCanchaCard || !group) return null;
-    if (!globalHasAvailability) return { bg: '#FFF8EC', title: 'No encontramos disponibilidad', body: 'No te preocupes, continúa a Ver mi campeonato y te ayudaremos a encontrar una opción.' }; // CASO A
-    if (courtCustom) return null;       // personalización manual con disponibilidad global → sin aviso
-    if (complies) return null;          // CASO C
-    return { bg: '#FFF8EC', title: null, body: 'No hay disponibilidad con esta selección. Prueba otro horario o cambia los filtros.' }; // CASO B
+    if (!format) return null;                                 // sin formato seleccionado → sin caja global
+    // Empty state GLOBAL: SOLO cuando NO existe NINGUNA opción válida en ningún día/filtro/sede. §5/§6-B.
+    if (!globalHasAnyAvailability) return { bg: '#FFF8EC', title: 'No encontramos disponibilidad', body: 'No te preocupes, continúa a Ver mi campeonato y te ayudaremos a encontrar una opción.' };
+    // Caso A (§4/§6-A): hay disponibilidad en algún día/filtro pero el día/selección actual está vacío →
+    // SIN caja grande; el feedback vive en el header "Sin horarios disponibles en esta selección".
+    return null;
   })();
 
   const arrow = (d, enabled) => (
@@ -397,7 +495,7 @@ export default function ChampionshipOrganize() {
           </div>
 
           <div className="no-sb" style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2, marginBottom: 12 }}>
-            {FORMATS.map(f => <Chip key={f} active={format === f} onClick={() => setFormat(f)}>{f}</Chip>)}
+            {FORMATS.map(f => <Chip key={f} active={format === f} onClick={() => setFormat(prev => prev === f ? null : f)}>{f}</Chip>)}
           </div>
 
           {mode === 'liga' ? (
@@ -420,19 +518,23 @@ export default function ChampionshipOrganize() {
             <>
               <div style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>¿Cuántos equipos participan?</div>
               <div style={{ fontSize: 12.5, color: SUB, marginTop: 3, marginBottom: 10 }}>Elige el tamaño del campeonato. Te sugerimos cuántas horas y canchas reservar; la cantidad exacta se ajusta después.</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
                 {RECOMMENDATION_GROUPS.map(g => {
                   const ppt = PLAYERS_PER_TEAM[format];
                   const active = groupId === g.id && !contactMe;
+                  const teams = g.min === g.max ? `${g.min}` : `${g.min}–${g.max}`;
+                  const pr = playersRange(g.min, g.max, ppt);   // rango referencial (min–max), admite suplentes
+                  const players = `${pr.min}–${pr.max}`;
                   return (
-                    <button key={g.id} onClick={() => { setGroupId(g.id); setContactMe(false); }} className="pressable" style={{
-                      textAlign: 'left', padding: '10px 12px', borderRadius: 12,
+                    <button key={g.id} onClick={() => { if (active) { setGroupId(null); } else { setGroupId(g.id); setContactMe(false); } }} className="pressable" style={{
+                      textAlign: 'left', padding: '9px 10px', borderRadius: 12,
                       border: active ? '1px solid transparent' : `1px solid ${HAIR}`,
                       background: active ? '#E8F1FF' : '#fff', cursor: 'pointer', fontFamily: 'inherit',
                       WebkitTapHighlightColor: 'transparent', outline: 'none',
                     }}>
-                      <div style={{ fontSize: 14.5, fontWeight: 800, color: active ? BLUE : TEXT, letterSpacing: -0.2 }}>{g.min}–{g.max} equipos</div>
-                      <div style={{ fontSize: 12, color: SUB, marginTop: 2 }}>{g.min * ppt}–{g.max * ppt} jugadores</div>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: active ? BLUE : TEXT, letterSpacing: -0.2, whiteSpace: 'nowrap' }}>{teams}</div>
+                      <div style={{ fontSize: 11.5, color: SUB, marginTop: 1 }}>equipos</div>
+                      <div style={{ fontSize: 11, color: SUB, marginTop: 2 }}>{players} jugadores</div>
                     </button>
                   );
                 })}
@@ -477,13 +579,17 @@ export default function ChampionshipOrganize() {
             <div className="no-sb" style={{ display: 'flex', gap: 8, overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 8, marginBottom: 6 }}>
               {DATE_WINDOW.map(d => {
                 const k = ymd(d); const lab = dateChip(d);
-                return <DateCell key={k} top={lab.top} bottom={lab.bottom} isToday={k === TODAY_KEY} active={dateKey === k} check={dateChecks.has(k)} onClick={() => setDateKey(k)} />;
+                const blocked = !!minAllowedKey && k < minAllowedKey;   // anticipación mínima no cumplida
+                return <DateCell key={k} top={lab.top} bottom={lab.bottom} isToday={k === TODAY_KEY} active={dateKey === k} check={dateChecks.has(k) && !blocked} disabled={blocked} onClick={() => setDateKey(k)} />;
               })}
             </div>
 
-            {!resolvedVenue ? (
+            {invLoading ? (
+              // minHeight reserva el alto del bloque de horarios+grilla → la pantalla no salta al cargar.
+              <div style={{ fontSize: 13, color: SUB, padding: '8px 0', minHeight: 300 }}>Cargando disponibilidad…</div>
+            ) : !resolvedVenue ? (
               // minHeight reserva el alto del bloque de horarios+grilla → al aparecer una cancha la pantalla no salta.
-              <div style={{ fontSize: 13, color: SUB, padding: '8px 0', minHeight: 300 }}>No hay canchas compatibles con {format} para el filtro actual.</div>
+              <div style={{ fontSize: 13, color: SUB, padding: '8px 0', minHeight: 300 }}>{format ? `No hay canchas compatibles con ${format} para el filtro actual.` : 'Elige un formato para ver disponibilidad.'}</div>
             ) : (
               <>
                 {/* Venue + grilla = UNA sola unidad (sub-marco) → clara separación de los filtros de arriba. */}
@@ -501,31 +607,58 @@ export default function ChampionshipOrganize() {
                 {/* Grilla INFORMATIVA (canchas × horas) — algo más compacta (celdas 28, alto máx menor). */}
                 <div style={{ position: 'relative', paddingRight: 8 }}>
                 <div className="no-sb" style={{ overflowX: scrollCols ? 'auto' : 'visible', WebkitOverflowScrolling: 'touch' }}>
-                  <div style={{ minWidth: scrollCols ? cols * 50 + 52 : undefined }}>
-                    <div style={{ display: 'flex', gap: 6, marginBottom: 5, paddingLeft: 52 }}>
+                  <div style={{ minWidth: scrollCols ? cols * 50 + GLABELW + 6 : undefined }}>
+                    {/* Cabecera C1..Cn — alineada con las columnas del body (paddingLeft = ancho eje + gap). */}
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 5, paddingLeft: GLABELW + 6 }}>
                       {Array.from({ length: cols }, (_, c) => (
                         <div key={c} style={{ flex: scrollCols ? '0 0 44px' : 1, minWidth: 0, textAlign: 'center', fontSize: 11, color: c < courts ? SUB : '#C7C7CC' }}>C{c + 1}</div>
                       ))}
                     </div>
-                    <div ref={gridVRef} onScroll={updateGridThumb} className="no-sb" style={{ maxHeight: 132, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
-                    {HOURS.map((hLabel, h) => (
-                      <div key={h} style={{ display: 'flex', gap: 6, marginBottom: 5, alignItems: 'center' }}>
-                        <div style={{ width: 46, fontSize: 11, color: SUB, flexShrink: 0 }}>{hLabel}</div>
-                        {Array.from({ length: cols }, (_, c) => {
-                          // Solo VISUALIZACIÓN (no editable): bloque recomendado / libre no usada / ocupada / sin cancha.
-                          const exists = c < courts;
-                          const inBlock = block.has(`${c}-${h}`);
-                          const free = exists && matrix[c][h];
-                          const cell = !exists ? NON_ELIGIBLE
-                            : inBlock ? { background: '#DCE8FF', border: `1px solid ${BLUE}` }
-                            : free ? { background: '#fff', border: `1px solid ${HAIR}` }
-                            : { background: '#E8E8EC', border: '1px solid #E8E8EC' };
-                          return (
-                            <div key={c} style={{ flex: scrollCols ? '0 0 44px' : 1, minWidth: 0, height: 28, borderRadius: 8, ...cell }} />
-                          );
-                        })}
+                    {/* Body: eje horario (nowrap) + columnas de píldoras. Cada game real = UNA píldora con
+                        geometría por time+duration (soporta :15/:45 visual); games distintos = píldoras con
+                        pequeño gap; mismo game.id cruzando una hora = una sola pieza continua. */}
+                    <div ref={gridVRef} onScroll={updateGridThumb} className="no-sb" style={{ maxHeight: 4 * GROW, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                      <div style={{ display: 'flex', height: visualRows * GROW, position: 'relative' }}>
+                        {/* Línea punteada MUY fina en cada límite de hora (encima): una píldora que cruza la hora
+                            (p.ej. 8:30–9:30) se ve pasar por el medio de esa línea → se entiende que abarca la hora. */}
+                        {Array.from({ length: visualRows - 1 }, (_, i) => (
+                          <div key={`hl${i}`} style={{ position: 'absolute', left: GLABELW + 6, right: 0, top: (i + 1) * GROW, borderTop: '1px dotted rgba(0,0,0,0.16)', pointerEvents: 'none', zIndex: 2 }} />
+                        ))}
+                        <div style={{ width: GLABELW, flexShrink: 0 }}>
+                          {visualHours.map((hLabel, h) => (
+                            <div key={h} style={{ height: GROW, fontSize: 11, color: SUB, display: 'flex', alignItems: 'center', whiteSpace: 'nowrap' }}>{hLabel}</div>
+                          ))}
+                        </div>
+                        <div style={{ flex: 1, display: 'flex', gap: 6, marginLeft: 6 }}>
+                          {Array.from({ length: cols }, (_, c) => {
+                            const exists = c < courts;               // columna con field real (c>=courts = placeholder)
+                            const colStyle = { flex: scrollCols ? '0 0 44px' : 1, minWidth: 0, position: 'relative', height: visualRows * GROW };
+                            // Base: una PÍLDORA por HORA (no disponible = gris; placeholder = rayado), separadas por gap.
+                            const basePills = Array.from({ length: visualRows }, (_, h) => (
+                              <div key={`b${h}`} style={{
+                                position: 'absolute', left: 0, right: 0, top: h * GROW + GVINSET, height: GROW - 2 * GVINSET,
+                                borderRadius: GRAD, ...(exists ? { background: '#ECECEF' } : NON_ELIGIBLE),
+                              }} />
+                            ));
+                            // Píldoras de GAMES reales (disponible/seleccionado) por geometría time+duration. Una píldora = un
+                            // game (una sola pieza), aunque cruce una hora. Games distintos = píldoras con pequeño gap.
+                            const gamePills = exists ? (grid.fieldGames[c] || []).map(g => {
+                              const top = ((g.startMin - gBaseMin) / 60) * GROW;
+                              const hgt = (g.durationMin / 60) * GROW;
+                              if (top + hgt <= 0 || top >= visualRows * GROW) return null; // fuera del viewport
+                              const sel = selSet.has(g.id);
+                              return (
+                                <div key={g.id} style={{
+                                  position: 'absolute', left: 0, right: 0,
+                                  top: top + GVINSET, height: Math.max(6, hgt - 2 * GVINSET),
+                                  borderRadius: GRAD, background: sel ? '#DCE8FF' : '#fff', border: `1px solid ${sel ? BLUE : HAIR}`,
+                                }} />
+                              );
+                            }) : null;
+                            return <div key={c} style={colStyle}>{basePills}{gamePills}</div>;
+                          })}
+                        </div>
                       </div>
-                    ))}
                     </div>
                   </div>
                 </div>
@@ -541,21 +674,21 @@ export default function ChampionshipOrganize() {
                 {/* ── DECISIÓN DEL USUARIO — elegir un horario disponible (protagonismo alto, tras el grid). ── */}
                 <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${HAIR}` }}>
                   <div style={{ fontSize: 13.5, fontWeight: 800, color: TEXT, letterSpacing: -0.1, marginBottom: 8 }}>
-                    {slots.length > 0 ? 'Elige un horario disponible' : 'Sin horarios disponibles'}
+                    Elige un horario disponible
                   </div>
                   <div className="no-sb" style={{ display: 'flex', gap: 8, overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 2 }}>
                     {slots.length > 0 ? slots.map((s, i) => {
                       const on = slotIdx != null && i === Math.min(slotIdx, slots.length - 1);
                       // Selección FINAL con azul FILLED (más protagonismo que el azul claro de los filtros).
                       return (
-                        <Chip key={s.startHour} active={on} onClick={() => { setSlotIdx(i); setCourtCustom(false); }}
+                        <Chip key={s.startHour} active={on} onClick={() => { setCourtCustom(false); setSlotIdx(on ? null : i); }}
                           style={{ height: 30, padding: '0 11px', fontSize: 12.5, ...(on ? { background: BLUE, color: '#fff', border: '1px solid transparent', fontWeight: 700 } : { border: '1px solid #C9D6F5', fontWeight: 700 }) }}>
-                          {clockLabel(s.startHour)} – {clockLabel(s.endHour)}
+                          {segLabel(s.startHour)} – {segLabel(s.endHour)}
                         </Chip>
                       );
                     }) : (
                       <div style={{ flexShrink: 0, height: 34, padding: '0 14px', borderRadius: 999, border: `1px dashed ${HAIR}`, background: SOFT, color: SUB, fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', cursor: 'default' }}>
-                        Sin horario disponible
+                        Sin horario disponible en esta selección
                       </div>
                     )}
                   </div>
@@ -609,12 +742,12 @@ export default function ChampionshipOrganize() {
 
       {districtSheet && (
         <PickSheet title="Elige distritos" onClose={() => setDistrictSheet(false)}
-          items={DISTRICTS.map(d => ({ value: d, label: d }))}
+          items={championshipDistricts(games).map(d => ({ value: d, label: d }))}
           selected={districts} onToggle={(v) => toggleSet(setDistricts, v)} />
       )}
       {venueSheet && (
         <PickSheet title="Elige canchas" onClose={() => setVenueSheet(false)}
-          items={compatibleVenues(format, districts, amenities).map(v => ({ value: v.id, label: v.name, sub: `${v.district} · ${v.courts} canchas` }))}
+          items={championshipVenues(games, format, districts, amenities).map(v => ({ value: v.id, label: v.name, sub: `${v.district} · ${v.courts} canchas` }))}
           selected={venueFilter} onToggle={(v) => toggleSet(setVenueFilter, v)} />
       )}
     </div>

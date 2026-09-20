@@ -26,6 +26,7 @@ import { buildGameShareUrl } from '../utils/share';
 import { fetchPendingSlotExpiry, markSlotReservationNotified, getPendingRewards, markRewardsCommunicated } from '../services/reservationService';
 import { saveRating, fetchMyRatings, upsertRatingRows, markPopupShown, getLocalRatings, setLocalRatings } from '../services/ratingService';
 import { getMyWaitlistGamesFull } from '../services/waitlistService';
+import { getChampionshipById } from '../services/championshipService';
 import { useForegroundTick } from '../hooks/useForegroundTick';
 import { uploadAvatar, getAvatarUrl } from '../utils/avatar';
 import { useGlobalRoles } from '../hooks/useGlobalRoles';
@@ -2497,6 +2498,7 @@ export default function Profile() {
         .eq('host_user_id', uid)
         .in('type', ['match', 'rental'])
         .in('status', ['published', 'reserved', 'completed', 'expired'])
+        .is('championship_id', null)   // Campeonatos: un game retenido/reservado por un campeonato NO es un Rental/Match administrable del host original
         .then(async ({ data, error }) => {
           setHostedFresh(true);
           if (error) { console.warn('[Profile] hosted games:', error.message); }
@@ -2805,9 +2807,30 @@ export default function Profile() {
     ? (_champLe?.quantity ? `${_champLe.quantity} ${_champLe.type === 'people' ? 'personas' : 'equipos'}` : '')
     : (_champSum.group ? (_champSum.group.min === _champSum.group.max ? `${_champSum.group.min} equipos` : `${_champSum.group.min}–${_champSum.group.max} equipos`) : '');
   const champVenueLine = [_champSum.venueName, champTeamsLabel].filter(Boolean).join(' · ');
-  const champStatusLabel = champ?.status === 'payment_validation' ? 'Validando pago'
-    : champ?.status === 'registration_closed' ? 'Inscripciones cerradas'
-    : champ?.status === 'registration_open' ? 'Publicado'
+  const [realChampStatus, setRealChampStatus] = useState(null); // Campeonato REAL (transfer): status del backend
+  // Campeonato REAL (transfer): reconcilia el mock (sessionStorage) con el estado del backend. Persistencia
+  // tras refresh: cv.championship.status ya se guardó al confirmar ("Validando pago"); esta lectura mínima
+  // (RLS acota al owner) lo mantiene fiel a Supabase si el estado cambió (p.ej. Admin futuro). §18.
+  useEffect(() => {
+    const rid = champ?.realId;
+    if (!rid) return;
+    let alive = true;
+    getChampionshipById({ championshipId: rid }).then(({ data }) => {
+      if (!alive || !data?.status) return;
+      setRealChampStatus(data.status);
+      if (data.status !== champ.status) {
+        try {
+          const cv = JSON.parse(sessionStorage.getItem('championship_view_state')) || {};
+          if (cv.championship) { cv.championship.status = data.status; sessionStorage.setItem('championship_view_state', JSON.stringify(cv)); }
+        } catch {}
+      }
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [champ?.realId]); // eslint-disable-line
+  const champStatus = realChampStatus ?? champ?.status;   // status efectivo (real si existe)
+  const champStatusLabel = champStatus === 'payment_validation' ? 'Validando pago'
+    : champStatus === 'registration_closed' ? 'Inscripciones cerradas'
+    : champStatus === 'registration_open' ? 'Publicado'
     : 'Pendiente publicar';
   const openChampionship = () => navigate('/championships/view', { state: { summary: _champCv?.summary, organizeState: _champCv?.organizeState, cvReturn: true, from: 'profile' } });
   const openChampRequest = () => navigate('/championships/contact', { state: { summary: champReq?.originalSummary, organizeState: champReq?.originalOrganizeState, championshipName: champReq?.championshipName, existingRequest: true } });
@@ -2815,7 +2838,7 @@ export default function Profile() {
   // El campeonato pagado se INTEGRA como evento en la agrupación por fecha existente (misma cabecera/orden).
   const _champDateKey = _champCv?.organizeState?.dateKey || null;
   const _champT24 = champTo24(_champStart);
-  const champEvent = (champ && (champ.status === 'payment_validation' || champ.status === 'pending_publish' || champ.status === 'registration_open' || champ.status === 'registration_closed') && _champDateKey && _champT24)
+  const champEvent = (champ && (champStatus === 'payment_validation' || champStatus === 'pending_publish' || champStatus === 'registration_open' || champStatus === 'registration_closed') && _champDateKey && _champT24)
     ? { __champ: true, id: '__champ', dateKey: _champDateKey, time24: _champT24, date: formatDateLabel(_champDateKey), time: champTime, ampm: champAmpm }
     : null;
   const upcomingAll     = champEvent ? sortByDt([...upcoming, champEvent], false) : upcoming;

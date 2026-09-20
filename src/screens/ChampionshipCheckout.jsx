@@ -1,9 +1,28 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { TEXT, SUB, HAIR, ORANGE, BLUE, GREEN } from '../constants';
 import { CtaButton, TopBar } from '../components/checkout/CheckoutUI';
 import PaymentSheet from '../components/checkout/PaymentSheet';
-import { CHAMPIONSHIP_BASE_PRICE, CHAMPIONSHIP_EXTRAS, CHAMPIONSHIP_BANK, championshipTotal, soles, makeRegistrationKey, computeRegistrationClose, CHAMPIONSHIP_REGISTRATION_CLOSE_DAYS } from '../data/championshipCheckoutMock';
+import { CHAMPIONSHIP_BANK, soles, makeRegistrationKey, computeRegistrationClose } from '../data/championshipCheckoutMock';
+import { uuidv4 } from '../lib/uuid';
+import { createTransferHold, confirmTransfer as confirmTransferRpc, releaseTransferHold, quoteChampionship, getChampionshipConfig } from '../services/championshipService';
+
+// Emoji del círculo por code de extra (la config no envía emoji). Fallback genérico.
+const EXTRA_EMOJI = { trophy: '🏆', medals: '🥇', photography: '📷', filming: '🎥' };
+// Errores backend → mensaje controlado para la UX.
+function champErrorMessage(msg) {
+  const m = String(msg || '');
+  if (/CHAMPIONSHIP_AVAILABILITY_BLOCKED/.test(m)) return 'Ese horario ya no está disponible. Elige otro.'; // §10: sin mencionar Admin
+  if (/AVAILABILITY_CHANGED/.test(m)) return 'La disponibilidad cambió. Vuelve a consultar los horarios.';
+  if (/BOOKING_LEAD_NOT_MET/.test(m)) return 'La fecha elegida no cumple la anticipación mínima.';
+  if (/CHAMPIONSHIP_BOOKING_LEAD_CONFIG_UNAVAILABLE/.test(m)) return 'Configuración de anticipación no disponible.';
+  if (/CHAMPIONSHIP_FORMAT_UNAVAILABLE/.test(m)) return 'El formato seleccionado no está disponible.';
+  if (/CHAMPIONSHIP_CONFIG_UNAVAILABLE/.test(m)) return 'La configuración de esta ciudad no está disponible.';
+  if (/EXTRA_QUANTITY_OUT_OF_RANGE/.test(m)) return 'Cantidad de un extra fuera de rango.';
+  if (/EXTRA_NOT_AVAILABLE/.test(m)) return 'Uno de los extras ya no está disponible.';
+  if (/DUPLICATE_EXTRA/.test(m)) return 'Extra repetido en la selección.';
+  return 'No pudimos calcular el precio. Inténtalo de nuevo.';
+}
 
 // Mismo session-state que ChampionshipView (mock, sin Supabase).
 const CV_KEY = 'championship_view_state';
@@ -24,6 +43,37 @@ function SummaryRow({ label, value }) {
   );
 }
 
+// Puestos: 1=oro, 2=plata, 3=bronce. Iconos (no emojis) ~21px. Se muestran SOLO tantos como quantity.
+const MEDAL_COLORS = ['#E3B341', '#AEB2BD', '#C6803C']; // oro, plata, bronce
+function TrophyMini({ color, size = 21 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <path d="M7 4h10v3.5a5 5 0 0 1-10 0V4Z" fill={color} />
+      <path d="M7 5.4H4.6V6a2.5 2.5 0 0 0 2.5 2.5M17 5.4h2.4V6A2.5 2.5 0 0 1 16.9 8.5" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M12 12.4V15" stroke={color} strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M8.5 19.2c0-1.4 1.3-2.3 3.5-2.3s3.5.9 3.5 2.3Z" fill={color} />
+    </svg>
+  );
+}
+function MedalMini({ color, size = 21 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <path d="M9 3l2.6 6M15 3l-2.6 6" stroke={color} strokeWidth="1.7" strokeLinecap="round" />
+      <circle cx="12" cy="15" r="5.2" fill={color} />
+      <circle cx="12" cy="15" r="2.1" fill="#fff" fillOpacity="0.5" />
+    </svg>
+  );
+}
+// Iconos dinámicos de puestos: exactamente `qty` iconos (oro→plata→bronce), sin grises ni huecos.
+function PodiumIcons({ kind, qty }) {
+  const Icon = kind === 'trophy' ? TrophyMini : MedalMini;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }} aria-hidden="true">
+      {Array.from({ length: qty }, (_, i) => <Icon key={i} color={MEDAL_COLORS[i]} />)}
+    </div>
+  );
+}
+
 export default function ChampionshipCheckout() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -36,7 +86,7 @@ export default function ChampionshipCheckout() {
   // Crea el campeonato con el `status` inicial según el método de pago y navega a Profile con la confirmación.
   //  - Electrónico (tarjeta/Yape/pasarela): pago confirmado → 'pending_publish' (puede publicar).
   //  - Transferencia: voucher enviado → 'payment_validation' ("Validando pago"); AlGrass valida antes de publicar.
-  const createChampionship = (status, champConfirm) => {
+  const createChampionship = (status, champConfirm, extra = {}) => {
     setPayOpen(false);
     const cv = readCV() || {};
     cv.championship = {
@@ -46,29 +96,177 @@ export default function ChampionshipCheckout() {
       registrationKey: makeRegistrationKey(championshipName),
       registrationClosesAt: computeRegistrationClose(organizeState?.dateKey),
       publishedAt: null,
+      realId: extra.realId ?? null,   // id REAL en Supabase (transfer). null = flujo mock (electrónico).
     };
     writeCV(cv);
     // Navegar YA a Profile; la confirmación aparece SOBRE Profile (replace → Back no vuelve al checkout).
     navigate('/profile', { replace: true, state: { champConfirm } });
   };
-  const confirmPayment = () => createChampionship('pending_publish', 'created');            // electrónico
-  const confirmTransferPayment = () => createChampionship('payment_validation', 'created_validation'); // transferencia
+  const confirmPayment = () => createChampionship('pending_publish', 'created');            // electrónico (mock)
 
-  const base = CHAMPIONSHIP_BASE_PRICE;
-  const [selected, setSelected] = useState(() => new Set());   // ids de extras
   const [receipt, setReceipt] = useState('boleta');            // 'boleta' | 'factura'
   const [ruc, setRuc] = useState('');
   const [razon, setRazon] = useState('');
   const [direccion, setDireccion] = useState('');
   const [payOpen, setPayOpen] = useState(false);
 
-  const total = championshipTotal(base, selected);
-  const selectedExtras = CHAMPIONSHIP_EXTRAS.filter(e => selected.has(e.id));
-  const toggleExtra = (id) => setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  // Ciudad (autoridad de config) + formato: derivados del flujo real (venue/grupo elegidos). El backend
+  // igual re-deriva ciudad de los games; aquí city solo sirve para PINTAR el catálogo de extras.
+  const city = summary.city || organizeState?.city || null;
+  const groupId = organizeState?.groupId || null;
+  // games.id REALES seleccionados en el grid. Fuente ÚNICA del hold/quote. [] en el flujo "personalizar".
+  const selectedGameIds = summary.selectedGameIds || organizeState?.selectedGameIds || [];
+
+  // ── Config REAL por ciudad (catálogo de extras + precios unitarios para PINTAR). NO es autoridad. ──
+  const [cfg, setCfg] = useState(null);
+  useEffect(() => {
+    if (!city) { setCfg(null); return; }
+    let alive = true;
+    getChampionshipConfig({ city }).then(({ data, error }) => {
+      if (!alive) return;
+      if (error) { console.warn('[championship config]', error.message); setCfg(null); return; }
+      setCfg(data);
+    });
+    return () => { alive = false; };
+  }, [city]);
+  const catalog = cfg?.extras || [];   // [{code,name,unit_price,units_per_item,min_quantity,max_quantity,sort_order}]
+
+  // Cantidad por extra (0..max_quantity). Toggle (min==max==1) → 0/1. Fuente de verdad de la selección.
+  const [qty, setQty] = useState({});                          // { [code]: n }
+  const getQty = (code) => qty[code] ?? 0;
+  const setQtyFor = (code, next, max) => setQty(q => ({ ...q, [code]: Math.min(max, Math.max(0, next)) }));
+  // Payload para quote/hold: SOLO qty>0, únicamente {code, quantity} (nunca precio).
+  const extrasPayload = catalog.filter(e => getQty(e.code) > 0).map(e => ({ code: e.code, quantity: getQty(e.code) }));
+  const extrasKey = JSON.stringify(extrasPayload);
+
+  // ── QUOTE REAL = autoridad del precio (court/referee/fee/extras/total). Async con guard de carrera. ──
+  const [quote, setQuote] = useState(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState(null);
+  const quoteReqRef = useRef(0);
+  const gameIdsKey = selectedGameIds.join(',');
+  useEffect(() => {
+    // Flujo "personalizar" / sin selección real / sin formato → no se cotiza (no hay canchas que reservar).
+    if (!selectedGameIds.length || !groupId) { setQuote(null); setQuoteError(null); setQuoteLoading(false); return; }
+    const reqId = ++quoteReqRef.current;
+    setQuoteLoading(true); setQuoteError(null);
+    quoteChampionship({ gameIds: selectedGameIds, groupId, extras: extrasPayload }).then(({ data, error }) => {
+      if (reqId !== quoteReqRef.current) return;   // respuesta vieja → NO sobrescribe una cotización más nueva
+      setQuoteLoading(false);
+      if (error) { setQuote(null); setQuoteError(champErrorMessage(error.message)); return; }
+      setQuote(data);
+    }).catch((e) => {
+      if (reqId !== quoteReqRef.current) return;
+      setQuoteLoading(false); setQuote(null); setQuoteError(champErrorMessage(e?.message));
+    });
+  }, [gameIdsKey, groupId, extrasKey]); // eslint-disable-line
+
+  const total = quote?.amount_total != null ? Number(quote.amount_total) : null;
+  const hasValidQuote = !!quote && !quoteLoading && !quoteError && total != null;
+
+  // Stepper EXACTO de Partidos (ConfirmReservation.stepBtn): círculo, borde BLUE.
+  const stepBtn = (onClick, disabled, plus) => (
+    <button onClick={onClick} disabled={disabled}
+      style={{ width: 28, height: 28, borderRadius: '50%', border: `1.6px solid ${disabled ? '#D6D6DC' : BLUE}`, background: 'transparent', cursor: disabled ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, opacity: disabled ? 0.5 : 1, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+        <path d={plus ? 'M8 4v8M4 8h8' : 'M4 8h8'} stroke={disabled ? '#9A9AA0' : BLUE} strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    </button>
+  );
 
   // Validación frontend básica de Factura (independiente del método de pago).
   const rucValid = /^\d{11}$/.test(ruc);
   const facturaOk = receipt === 'boleta' || (rucValid && razon.trim().length > 0 && direccion.trim().length > 0);
+
+  // ── Hold de Transferencia REAL (Supabase) ────────────────────────────────────────────────────
+  const champHoldRef = useRef({ id: null, key: null, gameIds: [] });
+  const resetAttempt = () => { champHoldRef.current = { id: null, key: null, gameIds: [] }; };
+
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const eventDate = DATE_RE.test(organizeState?.dateKey || '') ? organizeState.dateKey : null;
+
+  // p_config del hold: group_id + extras[{code,quantity}] son lo autoritativo que consume el backend;
+  // el resto es metadata visual para championship.format_config. NO se envía precio/city/venue/fecha como autoridad.
+  const buildHoldConfig = () => ({
+    name: championshipName,
+    privacy: 'private',
+    registration_key: makeRegistrationKey(championshipName),
+    results_public: true,
+    group_id: groupId,                 // AUTORIDAD del formato (backend resuelve service_court_hours/lead)
+    extras: extrasPayload,             // [{code, quantity}] — sin precio
+    format_config: {
+      summary, organizeState,
+      formatLabel: summary.formatLabel, group: summary.group,
+      venueName: summary.venueName, slotLabel: summary.slotLabel, configLabel: summary.configLabel,
+    },
+  });
+
+  // onReserve: crea el hold REAL con los games.id EXACTOS que el usuario eligió en el grid real.
+  // Idempotente (§7/§10): reusa key+gameIds en reintentos → no duplica. Sin selección real → no crea hold.
+  const reserveChampionshipHold = async () => {
+    const h = champHoldRef.current;
+    if (!h.key) h.key = uuidv4();
+    if (!h.gameIds.length) {
+      if (!selectedGameIds.length) return { error: 'AVAILABILITY_CHANGED' }; // §8/§10: sin IDs reales → volver a disponibilidad
+      h.gameIds = selectedGameIds;
+    }
+    // Validación explícita ANTES de la RPC (§4): fecha real válida. Sin defaults arbitrarios.
+    if (!eventDate) return { error: 'INVALID_DATE' };
+    if (!groupId) return { error: 'CHAMPIONSHIP_FORMAT_UNAVAILABLE' };   // sin formato → el backend no puede tarifar
+    const config = buildHoldConfig();
+    console.log('[championship hold] request', { groupId, eventDate, extras: config.extras, selectedGameIds: h.gameIds, idempotencyKey: h.key });
+    const { data, error } = await createTransferHold({ gameIds: h.gameIds, idempotencyKey: h.key, config });
+    if (error) {
+      // AVAILABILITY_CHANGED o bloqueo vigente de Championship (carrera: Admin bloqueó tras abrir la pantalla).
+      // En ambos el reintento con la misma key NO puede resolverlo → volver a disponibilidad a re-consultar. §7/§10.
+      if (/AVAILABILITY_CHANGED|CHAMPIONSHIP_AVAILABILITY_BLOCKED/.test(error.message || '')) { resetAttempt(); return { error: 'AVAILABILITY_CHANGED' }; }
+      return { error: error.message || 'NETWORK' };  // reintentable con la MISMA key (idempotencia backend)
+    }
+    h.id = data.id;
+    console.log('[championship hold] creado', { championshipId: data.id, gameIds: h.gameIds, holdExpiresAt: data.hold_expires_at });
+    return { holdExpiresAt: data.hold_expires_at };
+  };
+
+  // onRelease: liberación voluntaria (X / Salir / cambiar método). Si falla NO limpiamos (§13): el sheet
+  // mantiene el estado y reintenta; el cron es fallback.
+  const releaseChampionshipHold = async () => {
+    const id = champHoldRef.current.id;
+    if (!id) { resetAttempt(); return {}; }
+    const { error } = await releaseTransferHold({ championshipId: id });
+    if (error) return { error: error.message || 'NETWORK' };
+    console.log('[championship hold] liberado (user_canceled)', { championshipId: id });
+    resetAttempt();
+    return {};
+  };
+
+  // onConfirm(proof): confirma la transferencia. Éxito → order=validation, championship=payment_validation;
+  // persistimos mínimo (realId) y navegamos a Profile ("Validando pago"). Los games siguen reserved.
+  const confirmChampionshipTransfer = async (/* proof (mock) */) => {
+    const id = champHoldRef.current.id;
+    if (!id) return { error: 'NO_HOLD' };
+    // TODO STORAGE: comprobante MOCK → voucherRef=null (Fase 2 lo dejó nullable). Al conectar Storage,
+    // subir el archivo del owner y enviar su ref real aquí (y el backend deberá exigirlo).
+    const { data, error } = await confirmTransferRpc({ championshipId: id, voucherRef: null });
+    if (error) {
+      if (/HOLD_EXPIRED/.test(error.message || '')) { resetAttempt(); return { error: 'HOLD_EXPIRED' }; }
+      return { error: error.message || 'NETWORK' };
+    }
+    console.log('[championship transfer] confirmado → payment_validation', { championshipId: data.id });
+    resetAttempt();
+    createChampionship('payment_validation', 'created_validation', { realId: data.id });
+    return {};
+  };
+
+  // onExpire: el contador llegó a 0. El frontend NO toca games (autoridad = backend/cron). Solo
+  // invalida el intento (key/id/gameIds) → la próxima "Reservar" es un intento nuevo con key nueva. §14.
+  const expireChampionshipHold = () => { resetAttempt(); };
+
+  // AVAILABILITY_CHANGED: cerrar sheet, limpiar intento y volver a Crear campeonato a re-consultar disponibilidad. §9.
+  const availabilityChangedBack = () => {
+    resetAttempt();
+    setPayOpen(false);
+    navigate('/championships/organize', organizeState ? { state: { organizeState } } : undefined);
+  };
 
   const back = () => navigate(-1);
 
@@ -87,33 +285,62 @@ export default function ChampionshipCheckout() {
           <SummaryRow label="Sede" value={summary.venueName} />
           <SummaryRow label="Horario" value={summary.slotLabel} />
           <SummaryRow label="Canchas" value={summary.configLabel} />
-          <SummaryRow label="Precio base" value={soles(base)} />
         </div>
 
-        {/* ── Agregar extras (mismo patrón/interacción que Agregar jugadores) ── */}
+        {/* ── Agregar extras (catálogo REAL de config; active=true, ordenados por sort_order) ── */}
+        {catalog.length > 0 && (
         <div style={{ padding: '14px 16px', borderTop: `1px solid ${HAIR}` }}>
           <div style={sectionTitle}>Agregar extras</div>
           <div style={{ marginTop: 4 }}>
-            {CHAMPIONSHIP_EXTRAS.map((e, i) => {
-              const on = selected.has(e.id);
-              return (
-                <button key={e.id} onClick={() => toggleExtra(e.id)} style={{
-                  width: '100%', textAlign: 'left', padding: '11px 0', background: 'transparent', border: 'none', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', gap: 12, borderTop: i === 0 ? 'none' : `1px solid ${HAIR}`, WebkitTapHighlightColor: 'transparent', outline: 'none', fontFamily: 'inherit',
-                }}>
-                  <span style={{ width: 42, height: 42, borderRadius: '50%', background: '#F2F2F4', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 21, flexShrink: 0 }}>{e.emoji}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 15.5, fontWeight: 700, color: TEXT }}>{e.label}</div>
-                    <div style={{ fontSize: 12.5, color: SUB, marginTop: 1 }}>+ {soles(e.price)}</div>
+            {catalog.map((e, i) => {
+              const q = getQty(e.code);
+              const withQty = e.max_quantity > 1;                                       // stepper (0..max)
+              const on = q > 0;                                                          // toggle (min==max==1) usa 0/1
+              const label = e.units_per_item > 1 ? `${e.name} (${e.units_per_item})` : e.name;
+              const rowStyle = {
+                width: '100%', textAlign: 'left', padding: '11px 0', background: 'transparent',
+                display: 'flex', alignItems: 'center', gap: 12, borderTop: i === 0 ? 'none' : `1px solid ${HAIR}`,
+                WebkitTapHighlightColor: 'transparent', outline: 'none',
+              };
+              const emojiCircle = <span style={{ width: 42, height: 42, borderRadius: '50%', background: '#F2F2F4', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 21, flexShrink: 0 }}>{EXTRA_EMOJI[e.code] || '🎟️'}</span>;
+              const nameBlock = (
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 15.5, fontWeight: 700, color: TEXT }}>{label}</div>
+                  <div style={{ fontSize: 12.5, color: SUB, marginTop: 1 }}>+ {soles(e.unit_price)}</div>
+                </div>
+              );
+              // max>1 → contador min..max (con iconos de puesto para trophy/medals). NO se hardcodean límites.
+              if (withQty) {
+                const podium = e.code === 'trophy' ? 'trophy' : e.code === 'medals' ? 'medal' : null;
+                return (
+                  <div key={e.code} style={rowStyle}>
+                    {emojiCircle}
+                    {nameBlock}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                      {podium && <PodiumIcons kind={podium} qty={q} />}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {stepBtn(() => setQtyFor(e.code, q - 1, e.max_quantity), q <= 0, false)}
+                        <span style={{ minWidth: 26, textAlign: 'center', fontSize: 19, fontWeight: 800, color: TEXT }}>{q}</span>
+                        {stepBtn(() => setQtyFor(e.code, q + 1, e.max_quantity), q >= e.max_quantity, true)}
+                      </div>
+                    </div>
                   </div>
+                );
+              }
+              // min==max==1 → toggle simple (checkbox), quantity 0/1.
+              return (
+                <div key={e.code} onClick={() => setQtyFor(e.code, on ? 0 : 1, e.max_quantity)} className="pressable" role="button" tabIndex={0} style={{ ...rowStyle, cursor: 'pointer' }}>
+                  {emojiCircle}
+                  {nameBlock}
                   <span style={{ width: 24, height: 24, borderRadius: 7, flexShrink: 0, border: `1.6px solid ${on ? ORANGE : '#C7C7CC'}`, background: on ? ORANGE : '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                     {on && <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7.2l3 3L11.5 4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
                   </span>
-                </button>
+                </div>
               );
             })}
           </div>
         </div>
+        )}
 
         {/* ── Comprobante (antes de Pagar; método de pago va recién en la pasarela) ── */}
         <div style={{ padding: '14px 16px', borderTop: `1px solid ${HAIR}` }}>
@@ -144,35 +371,57 @@ export default function ChampionshipCheckout() {
         <div style={{ height: 8 }} />
       </div>
 
-      {/* ── Footer sticky: desglose + Total + Pagar (mismo patrón que ConfirmReservation) ── */}
+      {/* ── Footer sticky: desglose REAL (quote) + Total + Confirmar ── */}
       <div className="cr-footer-ios-test" style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '10px 16px calc(12px + env(safe-area-inset-bottom))' }}>
         <div style={{ padding: '4px 0 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
-            <span>Campeonato</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(base)}</span>
-          </div>
-          {selectedExtras.map(e => (
-            <div key={e.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
-              <span>{e.label}</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(e.price)}</span>
+          {quote ? (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
+                <span>Canchas</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(quote.court_amount)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
+                <span>Árbitros</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(quote.referee_amount)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
+                <span>Organización AlGrass</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(quote.algrass_fee_amount)}</span>
+              </div>
+              {(quote.extras || []).map(x => (
+                <div key={x.code} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
+                  <span>{x.name}{x.quantity > 1 ? ` ×${x.quantity}` : ''}</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(x.amount)}</span>
+                </div>
+              ))}
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, paddingTop: 8, borderTop: `1px solid ${HAIR}`, marginTop: 4, fontSize: 15, fontWeight: 700, color: TEXT, letterSpacing: -0.1 }}>
+                <span>Total</span><span style={{ whiteSpace: 'nowrap' }}>{soles(quote.amount_total)}</span>
+              </div>
+            </>
+          ) : (
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB, minHeight: 20, alignItems: 'center' }}>
+              <span>{quoteError ? quoteError : quoteLoading ? 'Calculando precio…' : 'Selecciona un horario para ver el precio'}</span>
+              {quoteLoading && <span style={{ width: 15, height: 15, borderRadius: '50%', border: '2.5px solid rgba(0,0,0,0.15)', borderTop: `2.5px solid ${BLUE}`, display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />}
             </div>
-          ))}
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, paddingTop: 8, borderTop: `1px solid ${HAIR}`, marginTop: 4, fontSize: 15, fontWeight: 700, color: TEXT, letterSpacing: -0.1 }}>
-            <span>Total</span><span style={{ whiteSpace: 'nowrap' }}>{soles(total)}</span>
-          </div>
+          )}
         </div>
 
-        <CtaButton onPress={() => setPayOpen(true)} disabled={!facturaOk}>
-          Confirmar
+        <CtaButton onPress={() => setPayOpen(true)} disabled={!facturaOk || !hasValidQuote}>
+          {quoteLoading ? 'Calculando…' : 'Confirmar'}
         </CtaButton>
       </div>
 
       {/* Pasarela reutilizada de Partidos + método Transferencia (solo Campeonato). MOCK. */}
       {payOpen && (
         <PaymentSheet
-          amount={total}
+          amount={total ?? 0}
           currency="S/"
           onClose={() => setPayOpen(false)}
-          onPaid={confirmPayment}                 // electrónico → campeonato 'pending_publish'
-          transfer={{ bank: CHAMPIONSHIP_BANK, onConfirm: confirmTransferPayment }} // transferencia → 'payment_validation'
+          onPaid={confirmPayment}                 // electrónico → campeonato 'pending_publish' (mock)
+          transfer={{
+            bank: CHAMPIONSHIP_BANK,
+            onReserve: reserveChampionshipHold,             // create_championship_transfer_hold (hold REAL)
+            onRelease: releaseChampionshipHold,             // release_championship_transfer_hold
+            onConfirm: confirmChampionshipTransfer,         // confirm_championship_transfer → 'payment_validation'
+            onExpire: expireChampionshipHold,               // contador 0 → invalida intento (cron libera)
+            onAvailabilityChanged: availabilityChangedBack, // §9
+          }}
         />
       )}
     </div>
