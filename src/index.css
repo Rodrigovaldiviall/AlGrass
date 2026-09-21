@@ -70,6 +70,25 @@ input:-webkit-autofill:hover {
 @keyframes spin          { to   { transform: rotate(360deg); } }
 @keyframes gdFade        { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .gd-morph-content { animation: none !important; } }
+/* Intento de combinación INVÁLIDA en la tabla de Cancha (Crear campeonato): TODOS los bloques del intento
+   (games existentes + faltantes) se pintan rojo, con shake horizontal inicial (~0.4s) + fade-out al final
+   (~1s total). Tras la animación, el JS limpia el rojo (el mensaje persiste aparte). Respeta reduced-motion. */
+@keyframes champInvalidRed {
+  0%   { transform: translateX(0);   opacity: 1; }
+  8%   { transform: translateX(-3px); }
+  16%  { transform: translateX(3px); }
+  24%  { transform: translateX(-2px); }
+  32%  { transform: translateX(2px); }
+  40%  { transform: translateX(0); opacity: 1; }
+  80%  { opacity: 1; }
+  100% { transform: translateX(0); opacity: 0; }
+}
+.champ-invalid { animation: champInvalidRed 1s ease forwards; }
+@media (prefers-reduced-motion: reduce) { .champ-invalid { animation: none; opacity: 1; } }
+/* Skeleton del restore (View → Back) de Crear campeonato: shimmer MUY sutil. Reduced-motion → estático. */
+@keyframes champSkelShimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.champ-skel { background: linear-gradient(90deg, #E9EAEE 25%, #F3F4F7 37%, #E9EAEE 63%); background-size: 200% 100%; animation: champSkelShimmer 1.4s ease-in-out infinite; border-radius: 8px; }
+@media (prefers-reduced-motion: reduce) { .champ-skel { animation: none; background: #E9EAEE; } }
 @keyframes intro-fade-up { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes intro-overlay-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes intro-item-in    { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }

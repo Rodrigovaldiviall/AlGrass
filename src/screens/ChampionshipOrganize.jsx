@@ -11,6 +11,7 @@ import {
 import {
   fetchChampionshipInventory, championshipVenues, championshipDistricts,
   championshipVenueGrid, championshipSlots, hourLabel, clockFromMin, gameBlockedByChampionship,
+  buildInsufficientPreview, championshipSlotForAnchor, championshipCombinationValid,
 } from '../services/championshipAvailabilityService';
 
 // Mismo patrón de fechas que Partidos (DateCell): día abreviado + número, 30 días de horizonte.
@@ -133,11 +134,18 @@ function CheckboxCard({ checked, onToggle, label, expanded, locked = false }) {
   );
 }
 
+// Borrador de "Crear campeonato" persistido en sessionStorage: sobrevive a CUALQUIER salida/vuelta
+// (atrás del dispositivo, "Ver mi campeonato", etc.). "Crear nuevo campeonato" (Championships) lo BORRA
+// → arranque limpio. Es el mismo patrón de session-state que championship_view_state.
+const ORG_DRAFT_KEY = 'championship_organize_draft';
+function readOrgDraft() { try { return JSON.parse(sessionStorage.getItem(ORG_DRAFT_KEY)); } catch { return null; } }
+
 export default function ChampionshipOrganize() {
   const navigate = useNavigate();
   const location = useLocation();
-  // Estado restaurado al volver desde "Ver mi campeonato" (frontend, sin persistencia).
-  const restore = location.state?.organizeState || null;
+  // Estado restaurado: prioridad al state de navegación (volver desde "Ver mi campeonato"); si no, el
+  // borrador de sessionStorage (atrás/re-montaje). "Crear nuevo campeonato" limpia el borrador → null.
+  const restore = location.state?.organizeState || readOrgDraft();
 
   // Paso del flujo de creación: 'intro' (pantalla informativa) → 'form' (configuración actual).
   // Al VOLVER a editar (restore presente) se entra directo al formulario (la intro solo aparece al
@@ -145,8 +153,10 @@ export default function ChampionshipOrganize() {
   const [step, setStep] = useState(restore ? 'form' : 'intro');
 
   const [mode, setMode] = useState(restore?.mode ?? 'oneday');            // 'oneday' | 'liga'
-  const [format, setFormat] = useState(restore?.format ?? DEFAULT_FORMAT);  // 7v7 por defecto
-  const [groupId, setGroupId] = useState(restore?.groupId ?? null);         // rango de tamaño (uno de los 4 grupos)
+  const [format, setFormat] = useState(restore?.format ?? DEFAULT_FORMAT);  // nuevo → 7v7 por defecto; restore → restaura
+  // NUEVO campeonato → SIN cantidad/grupo de equipos preseleccionado (null). Restore/edición → respeta
+  // EXACTAMENTE la selección previa (incluido null). La primera elección la hace el usuario.
+  const [groupId, setGroupId] = useState(restore ? (restore.groupId ?? null) : null);
   const [contactMe, setContactMe] = useState(restore?.contactMe ?? false);
   // Liga: cantidad única + unidad (equipos|personas), SIN cálculo automático entre ambos.
   const [leagueQty, setLeagueQty] = useState(restore?.leagueQty ?? '');
@@ -158,6 +168,22 @@ export default function ChampionshipOrganize() {
   const [dateKey, setDateKey] = useState(restore?.dateKey ?? TODAY_KEY);
   const [venueIdx, setVenueIdx] = useState(restore?.venueIdx ?? 0);
   const [slotIdx, setSlotIdx] = useState(restore?.slotIdx ?? null); // horario NO preseleccionado (null = ninguno)
+  // Variante MANUAL válida elegida desde la tabla (p.ej. A+B+D en vez de la representativa A+B+C del slot).
+  // Validada por championshipSlotForAnchor (misma autoridad). Si está, SUSTITUYE a los gameIds del slot
+  // representativo como selección real; slotIdx apunta al slot representativo del MISMO horario (highlight
+  // de la zona inferior sin duplicar opciones). null = se usa la combinación representativa del slot.
+  const [manualGameIds, setManualGameIds] = useState(restore?.manualGameIds ?? null);
+  // Identidad ESTABLE de la selección real (gameIds + venue + horario), independiente de índices de slots.
+  // Se fija al COMMITear una selección y sirve para, al cambiar FILTROS, revalidarla contra el nuevo contexto
+  // (mismo venue/fecha) y preservarla si sigue siendo válida — sin depender de un slotIdx viejo (los arrays
+  // de slots pueden reordenarse). Restore la inicializa con la selección restaurada (startHour se deriva).
+  const selMetaRef = useRef(
+    restore && Array.isArray(restore.selectedGameIds) && restore.selectedGameIds.length
+      ? { gameIds: restore.selectedGameIds, venueId: restore.venueId ?? null, startHour: null }
+      : null
+  );
+  const commitSel = (gameIds, venueId, startHour) => { selMetaRef.current = (Array.isArray(gameIds) && gameIds.length) ? { gameIds, venueId: venueId ?? null, startHour: startHour ?? null } : null; };
+  const clearSelMeta = () => { selMetaRef.current = null; };
   const [courtCustom, setCourtCustom] = useState(restore?.courtCustom ?? false); // "que me contacten" en Cancha
   const [courtForced, setCourtForced] = useState(false); // CASO A: personalización OBLIGATORIA por cero disponibilidad GLOBAL
   const [districtSheet, setDistrictSheet] = useState(false);
@@ -239,6 +265,13 @@ export default function ChampionshipOrganize() {
 
   const resolvedVenue = candidates[Math.min(venueIdx, Math.max(0, candidates.length - 1))] || null;
 
+  // EMPTY_FORMAT = el formato NO tiene NINGUNA disponibilidad real utilizable en ningún venue ni fecha del
+  // inventario Championship, ANTES de aplicar filtros del usuario. Autoridad = globalHasAnyAvailability
+  // (recorre TODAS las fechas de DATE_WINDOW y TODOS los globalVenues —sin distrito/amenities/venueFilter—
+  // comprobando venueComplies = existe ≥1 slot válido). NO es globalVenues.length (eso es compatibilidad
+  // ESTRUCTURAL, no disponibilidad). Cuando es true → se oculta TODA la UI de selección de cancha.
+  const isEmptyFormat = !!group && !!format && !globalHasAnyAvailability;
+
   // ── Booking lead (UX): usa champCfg (ciudad del inventario) → días de anticipación por rango del grupo. ──
   // Bloquea fechas < HOY_LIMA + lead. Autoridad final = backend (quote/hold re-validan BOOKING_LEAD_NOT_MET).
   // Misma regla conceptual del backend: EXACTAMENTE una booking_lead_rule que contenga [group.min, group.max].
@@ -272,12 +305,66 @@ export default function ChampionshipOrganize() {
   const slots = useMemo(() => (group ? championshipSlots(grid, group) : []), [grid, group]);
   const complies = slots.length > 0;
   const activeSlot = (complies && slotIdx != null) ? slots[Math.min(slotIdx, slots.length - 1)] : null;
-  // games.id REALES del horario seleccionado (para el hold) = los preasignados por championshipSlots.
-  const selectedGameIds = activeSlot ? activeSlot.gameIds : [];
+  // games.id REALES del horario seleccionado (para el hold): variante MANUAL validada si existe, si no la
+  // combinación representativa del slot. En ambos casos son gameIds validados por la misma autoridad.
+  const selectedGameIds = manualGameIds ?? (activeSlot ? activeSlot.gameIds : []);
   // Render de píldoras: geometría por game REAL (time+duration); selección por game.id.
   const selSet = new Set(selectedGameIds);
   const GROW = 28, GVINSET = 2, GRAD = 7, GLABELW = 54; // alto/hora, inset vertical (gap entre píldoras), radio, ancho eje
   const gBaseMin = gridBaseHour * 60;
+
+  // ── Tabla como ACCESO ALTERNATIVO de selección (misma fuente de verdad = slotIdx). ────────────────
+  // Al pulsar una píldora (game real) resolvemos a qué opción de "Elige un horario" pertenece usando la
+  // MISMA autoridad (championshipSlots → slot.gameIds). NO se recalcula disponibilidad ni se crea estado
+  // propio de selección en la tabla. Si el game está en ≥1 slot → seleccionamos el de menor startHour
+  // (mismo criterio que el auto-select). Si NO está en ningún slot completo → PREVIEW visual insuficiente.
+  //
+  // PREVIEW INSUFICIENTE = estado local EXCLUSIVAMENTE visual (buildInsufficientPreview): representa el
+  // INTENTO COMPLETO del formato en celdas-hora completas, y COMO LA COMBINACIÓN NO CUMPLE, TODO el intento
+  // (games existentes + bloques faltantes) se pinta en ROJO — nunca azul/parcial. NO crea slot, NO toca
+  // slotIdx/selectedGameIds/canContinue/quote/hold; NUNCA declara reservable (eso solo championshipSlots).
+  // El ROJO es TEMPORAL (shake inicial + fade ~1s vía CSS, luego se limpia); el MENSAJE PERSISTE aparte.
+  const [preview, setPreview] = useState(null);           // { availIds→existingIds, missing:[{f,seg}] } | null (visual temporal)
+  const [insufMsg, setInsufMsg] = useState(false);        // mensaje inferior de insuficiencia (persiste tras el fade)
+  const previewTimer = useRef(null);
+  const clearPreview = () => { setPreview(null); setInsufMsg(false); if (previewTimer.current) clearTimeout(previewTimer.current); };
+  useEffect(() => () => { if (previewTimer.current) clearTimeout(previewTimer.current); }, []);
+  function selectFromGrid(gameId) {
+    // 1) TOGGLE: si el game pulsado ya está en la selección real ACTUAL (representativa o manual) → quitar.
+    //    Cuenta como interacción manual (auto-select no la recupera; no vuelve a la representativa).
+    if (slotIdx != null && selectedGameIds.includes(gameId)) { setSlotIdx(null); setManualGameIds(null); clearSelMeta(); return; }
+    // 2) El game pertenece a la combinación REPRESENTATIVA de algún slot → seleccionar ese slot (sin variante).
+    const idx = slots.findIndex(s => s.gameIds.includes(gameId));  // slots asc → primera = más temprana
+    if (idx >= 0) { clearPreview(); setManualGameIds(null); setCourtCustom(false); setSlotIdx(idx); commitSel(slots[idx].gameIds, resolvedVenue?.id, slots[idx].startHour); return; }
+    // 3) Game "alternativo": ¿existe una combinación VÁLIDA (misma autoridad) que lo INCLUYA? → variante manual.
+    //    Ej.: A+B+C representativa; pulso D y A+B+D también cumple → se selecciona A+B+D (cambio de alternativa).
+    const variant = championshipSlotForAnchor(grid, group, gameId);
+    if (variant) {
+      const repIdx = slots.findIndex(s => s.startHour === variant.startHour);   // slot representativo del MISMO horario
+      clearPreview(); setCourtCustom(false);
+      setManualGameIds(variant.gameIds);
+      setSlotIdx(repIdx >= 0 ? repIdx : null);                  // highlight de la zona inferior sin duplicar opción
+      commitSel(variant.gameIds, resolvedVenue?.id, variant.startHour);
+      return;
+    }
+    // 4) NO existe combinación válida que incluya el game → NUEVA intención INVÁLIDA. Un click manual en otra
+    //    celda sustituye la intención: se ABANDONA la selección válida anterior ANTES de pintar el rojo (nunca
+    //    azul+rojo a la vez) y NO se restaura tras el fade. Deriva todo lo demás: la zona inferior se desmarca,
+    //    selectedGameIds→[], canContinue→false (slotIdx null; auto-select por groupId ya aplicado → no la recupera).
+    setSlotIdx(null); setManualGameIds(null); clearSelMeta();
+    if (previewTimer.current) clearTimeout(previewTimer.current);
+    const p = buildInsufficientPreview(grid, group, gameId, cols);
+    setInsufMsg(true);
+    if (p) {
+      setPreview(p);
+      previewTimer.current = setTimeout(() => setPreview(null), 1000);   // fade CSS ~1s → limpiar rojo; el mensaje QUEDA
+    } else {
+      setPreview(null);
+    }
+  }
+  const errSet = preview ? new Set(preview.existingIds) : null;   // games del intento inválido → ROJO
+  // Limpiar preview + mensaje al cambiar formato/fecha/venue/filtros (contexto de disponibilidad).
+  useEffect(() => { clearPreview(); }, [groupId, dateKey, venueIdx, format, districts, amenities, venueFilter]); // eslint-disable-line
 
   const showCanchaCard = mode === 'oneday' && !contactMe;
 
@@ -289,6 +376,7 @@ export default function ChampionshipOrganize() {
 
   // Scroll de la pantalla: se guarda en organizeState al ir a "Ver mi campeonato" y se restaura al volver.
   const scrollRef = useRef(null);
+  const scrollTopRef = useRef(restore?.scrollTop ?? 0);   // scrollTop vivo (onScroll) → persistir aun al desmontar
   const activeDateRef = useRef(null);   // celda de fecha activa → auto-scroll horizontal de la tira
 
   // Indicador vertical sutil de la grilla (aparece solo si hay overflow de horas).
@@ -319,25 +407,79 @@ export default function ChampionshipOrganize() {
     });
   }, [format, districts, amenities, games]); // eslint-disable-line
 
-  useEffect(() => { if (didMount.current) setVenueIdx(0); }, [format, districts, amenities, venueFilter, dateKey]);
-  // Cambiar de venue/fecha/filtros/rango → limpiar el horario (queda SIN preseleccionar; el usuario elige).
-  useEffect(() => { if (didMount.current) setSlotIdx(null); }, [format, districts, amenities, venueFilter, dateKey, groupId, venueIdx]);
+  // Reset de contexto NO-filtros (formato/fecha): mostrar el primer venue. Los FILTROS se tratan aparte
+  // (abajo) para poder PRESERVAR una selección que siga siendo válida. El cambio manual de venue lo maneja
+  // cycleVenue directamente (por eso venueIdx ya no dispara el limpiado de horario).
+  useEffect(() => { if (didMount.current) setVenueIdx(0); }, [format, dateKey]);
+  // Formato/fecha/rango → limpiar el horario (queda SIN preseleccionar; el usuario elige). NO incluye filtros
+  // ni venueIdx: los filtros preservan si siguen válidos; el venue manual limpia en cycleVenue.
+  useEffect(() => { if (didMount.current) { setSlotIdx(null); setManualGameIds(null); clearSelMeta(); } }, [format, dateKey, groupId]);
+
+  // FILTROS (distrito/cancha/amenities): un cambio de filtro NO es un cambio de intención. Si la selección
+  // actual sigue siendo VÁLIDA en el nuevo contexto (mismo venue presente + games siguen formando una
+  // combinación válida según la MISMA autoridad), se PRESERVA exactamente (representativa o manual) y se
+  // recalcula venueIdx/slotIdx de forma derivada (por identidad/horario, NO por índice viejo). Si deja de
+  // ser válida (venue excluido o combinación inválida) → se limpia. Sin selección → primer venue.
+  useEffect(() => {
+    if (!didMount.current) return;
+    const meta = selMetaRef.current;
+    if (!meta || !meta.gameIds?.length) { setVenueIdx(0); return; }        // sin selección → comportamiento previo
+    const vIdx = candidates.findIndex(v => v.id === meta.venueId);         // ¿el venue de la selección sigue disponible?
+    const g = vIdx >= 0 ? championshipVenueGrid(games, meta.venueId, dateKey, format) : null;
+    if (!g || !championshipCombinationValid(g, group, meta.gameIds)) {     // venue excluido o combinación ya no válida
+      clearSelMeta(); setManualGameIds(null); setSlotIdx(null); setVenueIdx(0);
+      return;
+    }
+    // PRESERVAR: fijar venueIdx al venue de la selección + recalcular slotIdx por HORARIO (no por índice).
+    setVenueIdx(vIdx);
+    const nslots = championshipSlots(g, group);
+    let sh = meta.startHour;
+    if (sh == null) { const v = championshipSlotForAnchor(g, group, meta.gameIds[0]); sh = v?.startHour ?? null; selMetaRef.current = { ...meta, startHour: sh }; }
+    const nIdx = sh != null ? nslots.findIndex(s => s.startHour === sh) : -1;
+    setSlotIdx(nIdx >= 0 ? nIdx : null);                                   // manualGameIds se mantiene tal cual
+  }, [districts, amenities, venueFilter]); // eslint-disable-line
+
+  // Ciclo de auto-select por FORMATO+GRUPO mediante flags "armados". Un CAMBIO REAL de format/group los ARMA
+  // (rearma el ciclo) — incluso si el formato intermedio no tenía disponibilidad (5–6 → 7–8 EMPTY → 5–6: el
+  // 7–8 no consume el flag, así que al volver a 5–6 SÍ vuelve a auto-seleccionar). La deselección MANUAL no
+  // cambia format/group → no rearma. Restore/back arranca DESARMADO → NO auto-selecciona (respeta la
+  // selección restaurada). El guard didMount salta el disparo del montaje (declarado antes del didMount-effect).
+  const autoDateArmedRef = useRef(!restore);
+  const autoSlotArmedRef = useRef(!restore);
+  useEffect(() => { if (didMount.current) { autoDateArmedRef.current = true; autoSlotArmedRef.current = true; } }, [format, groupId]); // eslint-disable-line
 
   // CASO A ↔ disponibilidad: si NO existe disponibilidad GLOBAL, forzar personalización de Cancha
   // (bloqueada) y limpiar horario. Si vuelve a existir disponibilidad global, liberar el forzado.
   useEffect(() => {
+    if (invLoading) return;                                 // durante la carga del inventario NO es "empty" real → no forzar ni limpiar (preserva restore)
     if (!showCanchaCard || !group || !format) return;       // no aplica (Liga / formato custom / sin rango / sin formato)
-    if (!globalHasAnyAvailability) { setCourtForced(true); setCourtCustom(true); setSlotIdx(null); } // empty GLOBAL real
+    if (!globalHasAnyAvailability) { setCourtForced(true); setCourtCustom(true); setSlotIdx(null); setManualGameIds(null); clearSelMeta(); } // empty GLOBAL real
     else if (courtForced) { setCourtForced(false); setCourtCustom(false); } // NO autoselecciona horario
-  }, [globalHasAnyAvailability, showCanchaCard, group, format]); // eslint-disable-line
+  }, [globalHasAnyAvailability, showCanchaCard, group, format, invLoading]); // eslint-disable-line
   useEffect(() => { didMount.current = true; }, []);
 
-  // Restaura el scroll al volver desde "Ver mi campeonato" (rAF×2 para esperar el layout).
+  // Restaura el scroll al volver desde "Ver mi campeonato". DEBE esperar a que cargue el inventario para que
+  // el contenido (tabla/horarios) esté maquetado y el scroll pueda alcanzar la posición guardada; se aplica
+  // UNA sola vez. Mientras tanto, restoringRef suprime los auto-scrolls (a Cancha / tira de fechas) para que
+  // no "suban" la pantalla y peleen con el restore.
+  const restoringRef = useRef(!!restore?.scrollTop);
+  const scrollRestoredRef = useRef(false);
+  // Velo de loading SOLO cuando hay scroll que restaurar (View → Back): el contenido se monta pero se oculta
+  // (visibility:hidden → conserva layout/scrollHeight) hasta que el scroll se aplica → el usuario NO ve el
+  // contenido arriba ni el salto. En nueva creación (sin restore.scrollTop) es false → comportamiento actual.
+  const [restoreVeil, setRestoreVeil] = useState(!!restore?.scrollTop);
   useEffect(() => {
+    if (scrollRestoredRef.current) return;
     const y = restore?.scrollTop;
-    if (!y || !scrollRef.current) return;
-    requestAnimationFrame(() => requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: y, behavior: 'instant' })));
-  }, []); // eslint-disable-line
+    if (!y) { scrollRestoredRef.current = true; restoringRef.current = false; setRestoreVeil(false); return; }
+    if (invLoading || !scrollRef.current) return;   // esperar el contenido final (inventario cargado) → hay altura para el scroll
+    scrollRestoredRef.current = true;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ top: y, behavior: 'instant' });
+      restoringRef.current = false;                 // liberar auto-scrolls tras restaurar
+      setRestoreVeil(false);                         // scroll ya aplicado → revelar contenido (sin flash/salto)
+    }));
+  }, [invLoading]); // eslint-disable-line
 
   // Formato → Cancha: Cancha aparece solo cuando Formato está completo (Torneo con rango elegido).
   // Al pasar de incompleto→completo, auto-scroll suave UNA sola vez a la sección Cancha (progresión).
@@ -346,6 +488,7 @@ export default function ChampionshipOrganize() {
   const canchaReady = showCanchaCard && !!group;   // Formato completo → revelar Cancha
   useEffect(() => {
     if (!canchaReady) { canchaScrolledRef.current = false; return; } // se resetea si vuelve a incompleto
+    if (restoringRef.current) { canchaScrolledRef.current = true; return; } // restaurando scroll → no auto-scrollear a Cancha
     if (canchaScrolledRef.current) return;          // ya hicimos el scroll una vez
     canchaScrolledRef.current = true;
     requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -360,20 +503,44 @@ export default function ChampionshipOrganize() {
   // cuando un cambio de filtro/formato/inventario recalcula la disponibilidad (dateChecks). NO depende de
   // dateKey → NO salta si el usuario elige manualmente un día vacío (§7). Solo salta si el día actual NO
   // tiene disponibilidad y existe otro que sí. §3.
+  // Día válido más próximo. ARMADO (ciclo nuevo: cambio de formato/grupo) → SIEMPRE salta al más próximo del
+  // nuevo formato, aunque el día anterior siguiera siendo válido. DESARMADO (mismo ciclo) → respeta el día
+  // elegido por el usuario si mantiene disponibilidad. Usa la MISMA autoridad (dateChecks).
   useEffect(() => {
     if (!canchaReady) return;
     // Primer día con disponibilidad Y que cumpla la anticipación mínima (>= minAllowedKey).
     let target = null;
     for (const d of DATE_WINDOW) { const k = ymd(d); if (dateChecks.has(k) && (!minAllowedKey || k >= minAllowedKey)) { target = k; break; } }
     if (!target) return;                                                              // ningún día permitido con slot → sin salto
-    if (dateChecks.has(dateKey) && (!minAllowedKey || dateKey >= minAllowedKey)) return; // día actual válido y permitido → respetar
-    setDateKey(target);
+    if (!autoDateArmedRef.current && dateChecks.has(dateKey) && (!minAllowedKey || dateKey >= minAllowedKey)) return; // desarmado + día válido → respetar
+    autoDateArmedRef.current = false;
+    if (dateKey !== target) setDateKey(target);                                       // ciclo nuevo O día actual inválido → día más próximo
   }, [canchaReady, dateChecks, minAllowedKey]); // eslint-disable-line
+
+  // Preselección del primer horario válido del día más próximo — UN ciclo por cada FORMATO+GRUPO (NO solo
+  // groupId, para que cambiar el formato de fútbol 7v7→6v6 rearme el ciclo aunque el groupId no cambie). La
+  // deselección/selección MANUAL del usuario NO lo rearma (el key del ciclo no cambia). Solo auto-selecciona
+  // cuando la fecha ya es la MÁS PRÓXIMA del ciclo (el date-effect ya la fijó) → evita consumir el ciclo en la
+  // fecha anterior antes de que salte. Restore: se inicializa con el key restaurado → NO auto-selecciona.
+  useEffect(() => {
+    if (!groupId || !format) return;
+    if (invLoading || !canchaReady || courtCustom) return;                  // esperar disponibilidad real / no imponer si personaliza
+    if (!autoSlotArmedRef.current) return;                                  // consumido / restore / deselección manual → NO imponer
+    if (slots.length === 0) return;                                         // aún sin horarios → esperar
+    // Esperar a que la fecha se asiente en la más próxima del ciclo (misma autoridad dateChecks) → así el
+    // auto-select ocurre en la fecha correcta y no se consume en la fecha anterior antes de que salte.
+    let nearest = null;
+    for (const d of DATE_WINDOW) { const k = ymd(d); if (dateChecks.has(k) && (!minAllowedKey || k >= minAllowedKey)) { nearest = k; break; } }
+    if (nearest && dateKey !== nearest) return;
+    setSlotIdx(0);                                                          // primer horario del día más próximo
+    commitSel(slots[0].gameIds, resolvedVenue?.id, slots[0].startHour);     // identidad estable para preservar ante filtros
+    autoSlotArmedRef.current = false;
+  }, [format, groupId, invLoading, canchaReady, courtCustom, slots, dateKey, dateChecks, minAllowedKey]); // eslint-disable-line
 
   // Scroll horizontal automático: centra en la tira el día seleccionado (auto-seleccionado o manual),
   // para que el día disponible más próximo quede a la vista sin que el usuario tenga que desplazar.
   useEffect(() => {
-    if (!canchaReady) return;
+    if (!canchaReady || restoringRef.current) return;   // durante la restauración de scroll no mover la vista
     activeDateRef.current?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
   }, [dateKey, canchaReady]);
 
@@ -391,18 +558,30 @@ export default function ChampionshipOrganize() {
     requestAnimationFrame(() => { el.scrollTo({ top: target, behavior: 'smooth' }); updateGridThumb(); });
   }, [slotIdx, activeSlot?.startHour, activeSlot?.endHour, venueIdx, dateKey]); // eslint-disable-line
 
+  // Snapshot COMPLETO del estado de Organize (selección + scroll) — fuente única para navegar a "Ver mi
+  // campeonato" (location.state) y para persistir el borrador (sessionStorage) al salir/desmontar.
+  const buildOrganizeState = () => ({
+    mode, format, groupId, contactMe, courtCustom, leagueQty, leagueUnit,
+    districts: [...districts], amenities: [...amenities], venueFilter: [...venueFilter],
+    dateKey, venueIdx, slotIdx, manualGameIds,   // manualGameIds = variante manual válida (o null → representativa)
+    venueId: resolvedVenue?.id ?? null,
+    city: resolvedVenue?.city ?? null,     // ciudad REAL del venue (autoridad de config en checkout)
+    selectedGameIds,                       // games.id REALES del horario elegido (para el hold)
+    scrollTop: scrollRef.current?.scrollTop ?? scrollTopRef.current ?? 0,
+  });
+  // Persistir el borrador al desmontar (atrás del dispositivo, ir a Ver mi campeonato, etc.) con el estado
+  // más reciente. Un ref a la última versión evita capturar un cierre obsoleto. SOLO si el usuario ya está en
+  // el formulario (paso 'form'): en la intro no hay nada que guardar (y evita re-persistir un default en el
+  // doble-montaje de StrictMode tras "Crear nuevo", que debe arrancar en intro).
+  const buildRef = useRef(buildOrganizeState); buildRef.current = buildOrganizeState;
+  const stepRef = useRef(step); stepRef.current = step;
+  useEffect(() => () => { if (stepRef.current !== 'form') return; try { sessionStorage.setItem(ORG_DRAFT_KEY, JSON.stringify(buildRef.current())); } catch {} }, []);
+
   // Navega a "Ver mi campeonato" (modo demostración). Pasa (a) el estado para restaurar Organiza al
-  // volver y (b) el resumen resuelto para pintar. Sin persistencia (frontend/mock).
+  // volver y (b) el resumen resuelto para pintar. También persiste el borrador (sessionStorage).
   function goToView() {
-    const organizeState = {
-      mode, format, groupId, contactMe, courtCustom, leagueQty, leagueUnit,
-      districts: [...districts], amenities: [...amenities], venueFilter: [...venueFilter],
-      dateKey, venueIdx, slotIdx,
-      venueId: resolvedVenue?.id ?? null,
-      city: resolvedVenue?.city ?? null,     // ciudad REAL del venue (autoridad de config en checkout)
-      selectedGameIds,                       // games.id REALES del horario elegido (para el hold)
-      scrollTop: scrollRef.current?.scrollTop ?? 0,
-    };
+    const organizeState = buildOrganizeState();
+    try { sessionStorage.setItem(ORG_DRAFT_KEY, JSON.stringify(organizeState)); } catch {}
     const dsel = DATE_WINDOW.find(d => ymd(d) === dateKey);
     const lab = dsel ? dateChip(dsel) : null;
     const summary = {
@@ -434,6 +613,8 @@ export default function ChampionshipOrganize() {
   }
 
   function cycleVenue(dir) {
+    // Cambio MANUAL de venue = cambio de contexto → limpiar el horario/variante (el usuario elige en el nuevo venue).
+    setSlotIdx(null); setManualGameIds(null); clearSelMeta();
     // Sin vuelta: se detiene en el primero y en el último (izquierda → derecha).
     setVenueIdx(i => Math.max(0, Math.min(candidates.length - 1, i + dir)));
   }
@@ -457,8 +638,9 @@ export default function ChampionshipOrganize() {
   const status = (() => {
     if (!showCanchaCard || !group) return null;
     if (!format) return null;                                 // sin formato seleccionado → sin caja global
-    // Empty state GLOBAL: SOLO cuando NO existe NINGUNA opción válida en ningún día/filtro/sede. §5/§6-B.
-    if (!globalHasAnyAvailability) return { bg: '#FFF8EC', title: 'No encontramos disponibilidad', body: 'No te preocupes, continúa a Ver mi campeonato y te ayudaremos a encontrar una opción.' };
+    // Empty state GLOBAL (EMPTY_FORMAT): ya lo comunica el holder amarillo dentro de la sección Cancha
+    // (ver isEmptyFormat) → aquí NO se duplica el aviso.
+    if (!globalHasAnyAvailability) return null;
     // Caso A (§4/§6-A): hay disponibilidad en algún día/filtro pero el día/selección actual está vacío →
     // SIN caja grande; el feedback vive en el header "Sin horarios disponibles en esta selección".
     return null;
@@ -526,7 +708,40 @@ export default function ChampionshipOrganize() {
       </div>
 
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-      <div ref={scrollRef} className="no-sb" style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', paddingLeft: 16, paddingRight: 16, paddingTop: 14, paddingBottom: 24 }}>
+      {/* SKELETON del restore (View → Back): capa visual mientras el contenido real (detrás, visibility:hidden)
+          conserva layout/scrollHeight y se aplica el scroll. Como el regreso siempre queda al fondo (solo se
+          entra a View pulsando el botón, que está abajo), el skeleton representa esa vista: el HOLDER de Cancha
+          llenando el alto + "No encuentro" + el botón "Ver mi campeonato". NO spinner. */}
+      {restoreVeil && (
+        <div aria-hidden="true" style={{ position: 'absolute', inset: 0, zIndex: 5, background: SOFT, overflow: 'hidden', padding: '14px 16px', display: 'flex', flexDirection: 'column' }}>
+          {/* Holder de Cancha (ocupa el alto disponible) */}
+          <div style={{ flex: 1, minHeight: 0, background: '#fff', border: `1px solid ${HAIR}`, borderRadius: 16, padding: 16, marginBottom: 12, display: 'flex', flexDirection: 'column' }}>
+            <div className="champ-skel" style={{ width: 70, height: 14, marginBottom: 12 }} />
+            {/* Bloque superior neutro: filtros + fechas + tabla */}
+            <div style={{ flex: 1, minHeight: 0, background: '#ECEDF1', borderRadius: 14, padding: 10, marginBottom: 12, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                {Array.from({ length: 4 }).map((_, i) => <div key={i} className="champ-skel" style={{ width: 64, height: 28, borderRadius: 999 }} />)}
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                {Array.from({ length: 6 }).map((_, i) => <div key={i} className="champ-skel" style={{ width: 50, height: 52, borderRadius: 11 }} />)}
+              </div>
+              <div style={{ flex: 1, minHeight: 0, background: '#FBFBFD', border: `1px solid ${HAIR}`, borderRadius: 14, padding: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div className="champ-skel" style={{ width: '55%', height: 12, marginBottom: 4 }} />
+                {Array.from({ length: 5 }).map((_, i) => <div key={i} className="champ-skel" style={{ flex: 1, minHeight: 14 }} />)}
+              </div>
+            </div>
+            {/* "Elige un horario disponible" */}
+            <div style={{ display: 'flex', gap: 8 }}>
+              {Array.from({ length: 3 }).map((_, i) => <div key={i} className="champ-skel" style={{ width: 96, height: 30, borderRadius: 999 }} />)}
+            </div>
+          </div>
+          {/* "No encuentro lo que busco" */}
+          <div className="champ-skel" style={{ height: 48, borderRadius: 14, marginBottom: 16 }} />
+          {/* Botón "Ver mi campeonato" */}
+          <div className="champ-skel" style={{ height: 54, borderRadius: 18 }} />
+        </div>
+      )}
+      <div ref={scrollRef} onScroll={e => { scrollTopRef.current = e.currentTarget.scrollTop; }} className="no-sb" style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', paddingLeft: 16, paddingRight: 16, paddingTop: 14, paddingBottom: 24, visibility: restoreVeil ? 'hidden' : 'visible' }}>
         {/* ── Tarjeta Formato ── */}
         <div style={CARD}>
           <div style={SECTION_TITLE}>Formato</div>
@@ -564,8 +779,9 @@ export default function ChampionshipOrganize() {
                   const ppt = PLAYERS_PER_TEAM[format];
                   const active = groupId === g.id && !contactMe;
                   const teams = g.min === g.max ? `${g.min}` : `${g.min}–${g.max}`;
-                  const pr = playersRange(g.min, g.max, ppt);   // rango referencial (min–max), admite suplentes
-                  const players = `${pr.min}–${pr.max}`;
+                  // Sin formato aún → el nº de jugadores por equipo no está definido: se omite el rango (no NaN).
+                  const pr = ppt ? playersRange(g.min, g.max, ppt) : null;   // rango referencial (min–max), admite suplentes
+                  const players = pr ? `${pr.min}–${pr.max}` : null;
                   return (
                     <button key={g.id} onClick={() => { if (active) { setGroupId(null); } else { setGroupId(g.id); setContactMe(false); } }} className="pressable" style={{
                       textAlign: 'left', padding: '9px 10px', borderRadius: 12,
@@ -575,7 +791,7 @@ export default function ChampionshipOrganize() {
                     }}>
                       <div style={{ fontSize: 15, fontWeight: 800, color: active ? BLUE : TEXT, letterSpacing: -0.2, whiteSpace: 'nowrap' }}>{teams}</div>
                       <div style={{ fontSize: 11.5, color: SUB, marginTop: 1 }}>equipos</div>
-                      <div style={{ fontSize: 11, color: SUB, marginTop: 2 }}>{players} jugadores</div>
+                      <div style={{ fontSize: 11, color: SUB, marginTop: 2 }}>{players ? `${players} jugadores` : ' '}</div>
                     </button>
                   );
                 })}
@@ -594,10 +810,10 @@ export default function ChampionshipOrganize() {
                     <div style={{ width: 22, height: 22, borderRadius: '50%', background: BLUE, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <svg width="13" height="13" viewBox="0 0 12 12" fill="none"><path d="M2.5 6.5l2.5 2.5 4.5-5" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
                     </div>
-                    <div style={{ fontSize: 14, fontWeight: 800, color: TEXT }}>Debes reservar: {group.courtHours} {group.courtHours === 1 ? 'hora' : 'horas'}</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: TEXT }}>Debes reservar: {group.courtHours} {group.courtHours === 1 ? 'hora' : 'horas'}.</div>
                   </div>
                   <div style={{ fontSize: 12, color: SUB, lineHeight: 1.5, paddingLeft: 30 }}>
-                    Buscamos la mejor disponibilidad. Partidos de 15 minutos + 5 de descanso. Todos los equipos juegan mínimo 3 partidos.
+                    Todos los equipos juegan mínimo 3 partidos de 15 minutos + 5 de descanso.
                   </div>
                 </div>
               )}
@@ -609,6 +825,11 @@ export default function ChampionshipOrganize() {
         {canchaReady && (
           <div ref={canchaRef} style={CARD}>
             <div style={SECTION_TITLE}>Cancha</div>
+
+            {/* ── BLOQUE SUPERIOR (buscar/filtrar disponibilidad): filtros + fechas + tabla. Superficie neutra
+                 (protagonismo reducido). NO disabled / NO opacity: todo sigue 100% interactivo y legible.
+                 FILTROS y FECHAS permanecen SIEMPRE visibles (también en EMPTY_FILTERS y EMPTY_FORMAT). ── */}
+            <div style={{ background: '#ECEDF1', borderRadius: 14, padding: 10, marginBottom: 12 }}>
 
             <div className="no-sb" style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, marginBottom: 10 }}>
               <Chip active={districts.size > 0} onClick={() => setDistrictSheet(true)}>{districts.size > 0 ? `Distrito · ${districts.size}` : 'Distrito'}</Chip>
@@ -628,12 +849,25 @@ export default function ChampionshipOrganize() {
             {invLoading ? (
               // minHeight reserva el alto del bloque de horarios+grilla → la pantalla no salta al cargar.
               <div style={{ fontSize: 13, color: SUB, padding: '8px 0', minHeight: 300 }}>Cargando disponibilidad…</div>
-            ) : !resolvedVenue ? (
-              // minHeight reserva el alto del bloque de horarios+grilla → al aparecer una cancha la pantalla no salta.
-              <div style={{ fontSize: 13, color: SUB, padding: '8px 0', minHeight: 300 }}>{format ? `No hay canchas compatibles con ${format} para el filtro actual.` : 'Elige un formato para ver disponibilidad.'}</div>
+            ) : (isEmptyFormat || !resolvedVenue) ? (
+              // EMPTY_FORMAT y EMPTY_FILTERS sustituyen EXACTAMENTE la MISMA zona (selector de venue + tabla +
+              // "Elige un horario") por un holder vacío del MISMO minHeight. Filtros y fechas (arriba) siguen
+              // visibles en ambos. Única diferencia:
+              //   · EMPTY_FORMAT (isEmptyFormat): mensaje con fondo AMARILLO; "No encuentro" marcado (courtForced).
+              //   · EMPTY_FILTERS (!resolvedVenue): mensaje SIN amarillo; "No encuentro" sin marcar.
+              <div style={{ minHeight: 270, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px 12px' }}>
+                {isEmptyFormat ? (
+                  <div style={{ maxWidth: 320, padding: '12px 14px', borderRadius: 12, background: '#FFF8EC', border: '1px solid #F0D8A0', textAlign: 'center', fontSize: 13, fontWeight: 600, color: TEXT, lineHeight: 1.5 }}>
+                    No hay disponibilidad para {format}{group ? ` de ${group.min === group.max ? group.min : `${group.min}–${group.max}`} equipos` : ''}. Prueba otra opción o continúa con «Ver mi campeonato».
+                  </div>
+                ) : (
+                  <div style={{ textAlign: 'center', fontSize: 13.5, fontWeight: 600, color: SUB, lineHeight: 1.5 }}>
+                    {format ? `No hay canchas compatibles con ${format} en esta selección. Intenta otros filtros.` : 'Elige un formato para ver disponibilidad.'}
+                  </div>
+                )}
+              </div>
             ) : (
-              <>
-                {/* Venue + grilla = UNA sola unidad (sub-marco) → clara separación de los filtros de arriba. */}
+                /* Venue + grilla = UNA sola unidad (sub-marco), dentro del bloque superior neutro. */
                 <div style={{ border: `1px solid ${HAIR}`, borderRadius: 14, background: '#FBFBFD', padding: 12, marginBottom: 2 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                   <button onClick={() => cycleVenue(-1)} disabled={venueIdx <= 0} style={arrowBtn}>{arrow('prev', venueIdx > 0)}</button>
@@ -687,16 +921,37 @@ export default function ChampionshipOrganize() {
                               const top = ((g.startMin - gBaseMin) / 60) * GROW;
                               const hgt = (g.durationMin / 60) * GROW;
                               if (top + hgt <= 0 || top >= visualRows * GROW) return null; // fuera del viewport
-                              const sel = selSet.has(g.id);
+                              const sel = selSet.has(g.id);                        // selección REAL (slot) → azul
+                              const err = !!(errSet && errSet.has(g.id));          // parte del intento INVÁLIDO → rojo
+                              // SOLO las píldoras de game (disponibilidad real) son tocables → acceso alternativo
+                              // de selección. No hover: click/tap directo. base/placeholder NO son tocables.
                               return (
-                                <div key={g.id} style={{
+                                <div key={g.id}
+                                  role="button"
+                                  onClick={() => selectFromGrid(g.id)}
+                                  className={err ? 'champ-invalid' : undefined}
+                                  style={{
                                   position: 'absolute', left: 0, right: 0,
                                   top: top + GVINSET, height: Math.max(6, hgt - 2 * GVINSET),
-                                  borderRadius: GRAD, background: sel ? '#DCE8FF' : '#fff', border: `1px solid ${sel ? BLUE : HAIR}`,
+                                  borderRadius: GRAD,
+                                  background: err ? '#FDECEC' : sel ? '#DCE8FF' : '#fff',
+                                  border: `1px solid ${err ? '#E24A4A' : sel ? BLUE : HAIR}`,
+                                  cursor: 'pointer', WebkitTapHighlightColor: 'transparent',
                                 }} />
                               );
                             }) : null;
-                            return <div key={c} style={colStyle}>{basePills}{gamePills}</div>;
+                            // Bloques FALTANTES (rojos) del intento inválido para esta columna. NO son games (sin gameId):
+                            // recuadro COMPLETO de una HORA (GROW), nunca media celda. Shake+fade con la misma animación.
+                            const missPills = preview ? preview.missing.filter(m => m.f === c).map(m => (
+                              <div key={`x${m.seg}`}
+                                className="champ-invalid"
+                                style={{
+                                  position: 'absolute', left: 0, right: 0,
+                                  top: m.seg * (GROW / 2) + GVINSET, height: GROW - 2 * GVINSET,
+                                  borderRadius: GRAD, background: '#FDECEC', border: '1px solid #E24A4A',
+                                }} />
+                            )) : null;
+                            return <div key={c} style={colStyle}>{basePills}{gamePills}{missPills}</div>;
                           })}
                         </div>
                       </div>
@@ -710,31 +965,42 @@ export default function ChampionshipOrganize() {
                   </div>
                 )}
                 </div>
-                </div>{/* fin del sub-marco venue+grilla */}
-
-                {/* ── DECISIÓN DEL USUARIO — elegir un horario disponible (protagonismo alto, tras el grid). ── */}
-                <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${HAIR}` }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 800, color: TEXT, letterSpacing: -0.1, marginBottom: 8 }}>
-                    Elige un horario disponible
-                  </div>
-                  <div className="no-sb" style={{ display: 'flex', gap: 8, overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 2 }}>
-                    {slots.length > 0 ? slots.map((s, i) => {
-                      const on = slotIdx != null && i === Math.min(slotIdx, slots.length - 1);
-                      // Selección FINAL con azul FILLED (más protagonismo que el azul claro de los filtros).
-                      return (
-                        <Chip key={s.startHour} active={on} onClick={() => { setCourtCustom(false); setSlotIdx(on ? null : i); }}
-                          style={{ height: 30, padding: '0 11px', fontSize: 12.5, ...(on ? { background: BLUE, color: '#fff', border: '1px solid transparent', fontWeight: 700 } : { border: '1px solid #C9D6F5', fontWeight: 700 }) }}>
-                          {segLabel(s.startHour)} – {segLabel(s.endHour)}
-                        </Chip>
-                      );
-                    }) : (
-                      <div style={{ flexShrink: 0, height: 34, padding: '0 14px', borderRadius: 999, border: `1px dashed ${HAIR}`, background: SOFT, color: SUB, fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', cursor: 'default' }}>
-                        Sin horario disponible en esta selección
-                      </div>
-                    )}
-                  </div>
                 </div>
-              </>
+            )}
+
+            {/* Mensaje de insuficiencia (X = horas requeridas del formato). PERSISTE tras el fade del rojo;
+                se limpia al seleccionar un slot válido o al cambiar formato/fecha/venue/filtros. */}
+            {insufMsg && group && (
+              <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 10, background: '#FDECEC', border: '1px solid #F3C0C0', color: '#B03A3A', fontSize: 12, fontWeight: 600, lineHeight: 1.4 }}>
+                Esta disponibilidad no cubre las {group.courtHours} horas en el formato adecuado.
+              </div>
+            )}
+            </div>{/* ── fin BLOQUE SUPERIOR (buscar/filtrar) neutro ── */}
+
+            {/* ── ZONA DE DECISIÓN (BLANCA, protagonista) — elegir un horario disponible. Se muestra en cuanto
+                 hay una cancha resuelta con disponibilidad cargada. Mismo lenguaje visual y misma lógica. ── */}
+            {!invLoading && resolvedVenue && !isEmptyFormat && (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 800, color: TEXT, letterSpacing: -0.1, marginBottom: 8 }}>
+                  Elige un horario disponible
+                </div>
+                <div className="no-sb" style={{ display: 'flex', gap: 8, overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 2 }}>
+                  {slots.length > 0 ? slots.map((s, i) => {
+                    const on = slotIdx != null && i === Math.min(slotIdx, slots.length - 1);
+                    // Selección FINAL con azul FILLED (más protagonismo que el azul claro de los filtros).
+                    return (
+                      <Chip key={s.startHour} active={on} onClick={() => { setCourtCustom(false); setManualGameIds(null); setSlotIdx(on ? null : i); if (on) clearSelMeta(); else commitSel(s.gameIds, resolvedVenue?.id, s.startHour); }}
+                        style={{ height: 30, padding: '0 11px', fontSize: 12.5, ...(on ? { background: BLUE, color: '#fff', border: '1px solid transparent', fontWeight: 700 } : { border: '1px solid #C9D6F5', fontWeight: 700 }) }}>
+                        {segLabel(s.startHour)} – {segLabel(s.endHour)}
+                      </Chip>
+                    );
+                  }) : (
+                    <div style={{ flexShrink: 0, height: 34, padding: '0 14px', borderRadius: 999, border: `1px dashed ${HAIR}`, background: SOFT, color: SUB, fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', cursor: 'default' }}>
+                      Sin horario disponible en esta selección
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
 
             {/* Personalización de Cancha (equivalente a la de Formato). Al marcar → courtCustom=true,
@@ -744,9 +1010,9 @@ export default function ChampionshipOrganize() {
               <CheckboxCard
                 checked={courtCustom}
                 locked={courtForced}
-                onToggle={() => { const next = !courtCustom; setCourtCustom(next); if (next) setSlotIdx(null); }}
-                label="No encuentro lo que busco. Quisiera que me contacten para personalizarlo."
-                expanded={'Continúa con Ver mi campeonato; nos pondremos en contacto contigo para coordinar todo.'}
+                onToggle={() => { const next = !courtCustom; setCourtCustom(next); if (next) { setSlotIdx(null); setManualGameIds(null); clearSelMeta(); } }}
+                label="No encuentro lo que busco"
+                expanded={'Continúa con "Ver mi campeonato"; nos pondremos en contacto contigo para coordinarlo de forma personalizada.'}
               />
             </div>
           </div>

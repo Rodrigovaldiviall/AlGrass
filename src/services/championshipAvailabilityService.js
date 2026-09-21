@@ -190,6 +190,16 @@ export function championshipVenueGrid(games, venueId, dateKey, format) {
 //
 // Asignación determinista por segmento: conservar las canchas del segmento anterior que sigan disponibles;
 // completar las faltantes por orden de índice de field; tomar SOLO requiredCourts (nunca todas las libres).
+// Perfil PURO de canchas requeridas por segmento (30 min) del formato: cada fase aporta `courts`
+// durante (hours×2) segmentos. p.ej. g1 [{2,1},{1,1}] → [2,2,1,1]. ÚNICA fuente del perfil; la usa
+// championshipSlots (reserva real) y la preview visual (sin decidir reservabilidad). No cambia lógica.
+export function championshipReqPerSeg(group) {
+  const req = [];
+  if (!group || !Array.isArray(group.phases)) return req;
+  for (const p of group.phases) for (let h = 0; h < p.hours * 2; h++) req.push(p.courts);
+  return req;
+}
+
 export function championshipSlots(grid, group) {
   const slots = [];
   if (!group || !grid || !grid.fields.length) return slots;
@@ -198,8 +208,7 @@ export function championshipSlots(grid, group) {
   const games = grid.gamesGrid;    // [field][seg] game | null
 
   // Perfil de canchas requeridas por segmento (30 min).
-  const reqPerSeg = [];
-  for (const p of group.phases) for (let h = 0; h < p.hours * 2; h++) reqPerSeg.push(p.courts);
+  const reqPerSeg = championshipReqPerSeg(group);
   const total = reqPerSeg.length;
   if (total === 0 || total > S) return slots;
 
@@ -260,6 +269,159 @@ export function championshipSlots(grid, group) {
     if (feasible) slots.push({ startHour: start, endHour: end, cells, gameIds: [...idSet] });
   }
   return slots;
+}
+
+// Igual que championshipSlots (MISMAS reglas de validez: reqPerSeg, continuidad de cancha, games
+// completos) pero PRIORIZANDO un game ANCLA en la asignación y aceptando SOLO ventanas cuyo slot válido
+// INCLUYA ese ancla. Sirve a la selección MANUAL desde la tabla: `championshipSlots` materializa una única
+// combinación representativa por horario (p.ej. A+B+C) y deja fuera alternativas igualmente válidas
+// (A+B+D). Este helper encuentra la variante válida que usa la cancha pulsada, sin duplicar el criterio de
+// validez. Devuelve el slot { startHour, endHour, cells, gameIds } más temprano que incluye el ancla, o null.
+export function championshipSlotForAnchor(grid, group, anchorId) {
+  if (!group || !grid || !grid.fields.length) return null;
+  const F = grid.fields.length;
+  const S = grid.segCount;
+  const games = grid.gamesGrid;
+  const reqPerSeg = championshipReqPerSeg(group);
+  const total = reqPerSeg.length;
+  if (!total || total > S) return null;
+
+  const gAt = (f, s) => (s >= 0 && s < S ? games[f][s] : null);
+  const gameRange = (f, s) => {
+    const g = gAt(f, s); if (!g) return null;
+    let a = s; while (a - 1 >= 0 && gAt(f, a - 1)?.id === g.id) a--;
+    let b = s; while (b + 1 < S && gAt(f, b + 1)?.id === g.id) b++;
+    return { id: g.id, startSeg: a, endSeg: b + 1 };
+  };
+
+  for (let start = 0; start + total <= S; start++) {
+    const end = start + total;
+    const chosenByField = new Array(F).fill(null);
+    const cells = new Set();
+    const idSet = new Set();
+    let prevFields = new Set();
+    let feasible = true;
+    for (let o = 0; o < total && feasible; o++) {
+      const s = start + o;
+      const req = reqPerSeg[o];
+      for (let f = 0; f < F; f++) if (chosenByField[f] && chosenByField[f].endSeg <= s) chosenByField[f] = null;
+      let active = 0;
+      for (let f = 0; f < F; f++) { const cg = chosenByField[f]; if (cg && cg.startSeg <= s && s < cg.endSeg) active++; }
+      let need = req - active;
+      if (need > 0) {
+        const cand = [];
+        for (let f = 0; f < F; f++) {
+          if (chosenByField[f]) continue;
+          const r = gameRange(f, s);
+          if (r && r.startSeg === s && r.startSeg >= start && r.endSeg <= end) cand.push({ f, r });
+        }
+        // ÚNICA diferencia con championshipSlots: el ancla se elige primero cuando compite por un hueco.
+        cand.sort((x, y) => (x.r.id === anchorId ? -1 : 0) - (y.r.id === anchorId ? -1 : 0)
+          || (prevFields.has(x.f) ? 0 : 1) - (prevFields.has(y.f) ? 0 : 1) || x.f - y.f);
+        for (const { f, r } of cand) {
+          if (need <= 0) break;
+          chosenByField[f] = r;
+          for (let ss = r.startSeg; ss < r.endSeg; ss++) cells.add(`${f}-${ss}`);
+          idSet.add(r.id);
+          need--;
+        }
+        if (need > 0) { feasible = false; break; }
+      }
+      const cur = new Set();
+      for (let f = 0; f < F; f++) { const cg = chosenByField[f]; if (cg && cg.startSeg <= s && s < cg.endSeg) cur.add(f); }
+      prevFields = cur;
+    }
+    if (feasible && idSet.has(anchorId)) return { startHour: start, endHour: end, cells, gameIds: [...idSet] };
+  }
+  return null;   // ninguna ventana admite una combinación válida que use el ancla
+}
+
+// ¿El conjunto EXACTO de gameIds sigue constituyendo una combinación VÁLIDA para el formato en este grid?
+// Reutiliza la MISMA autoridad (championshipSlots para la representativa + championshipSlotForAnchor para
+// variantes manuales); NO define un criterio nuevo. Sirve para decidir, al cambiar filtros, si la
+// selección del usuario sigue siendo válida en el nuevo contexto (mismo venue/fecha), sin depender de
+// índices viejos. Devuelve true solo si algún slot válido tiene EXACTAMENTE esos gameIds.
+export function championshipCombinationValid(grid, group, gameIds) {
+  if (!Array.isArray(gameIds) || !gameIds.length) return false;
+  const set = new Set(gameIds);
+  const same = (arr) => arr.length === gameIds.length && arr.every(id => set.has(id));
+  if (championshipSlots(grid, group).some(s => same(s.gameIds))) return true;   // combinación representativa
+  for (const id of gameIds) { const v = championshipSlotForAnchor(grid, group, id); if (v && same(v.gameIds)) return true; }  // variante
+  return false;
+}
+
+// PREVIEW VISUAL de disponibilidad INSUFICIENTE (NO decide reservabilidad; eso solo lo hace
+// championshipSlots). Dado un game ANCLA que NO forma parte de ningún slot completo, representa el INTENTO
+// COMPLETO del formato en UNIDADES DE HORA (celdas completas de la tabla), NO en medias celdas de 30 min.
+// El perfil se expande a "por cada fase, `courts` bloques durante CADA una de sus `hours`" (p.ej.
+// g1 [{2,1},{1,1}] → hora1: 2 bloques, hora2: 1 bloque). Elige la ventana que CONTIENE al ancla y minimiza
+// faltantes (empate → inicio más temprano) y devuelve:
+//   · existingIds → games reales que ocupan un bloque-hora del intento (se pintarán ROJO, no azul);
+//   · missing [{f, seg}] → bloques-hora completos que faltan, en columnas libres ADYACENTES (derecha→izq).
+// TODO el intento se pinta rojo en el render (combinación inválida). Siempre incluye al ancla. `seg` es el
+// segmento de INICIO de la hora (par) → el bloque abarca la HORA entera. NUNCA inventa gameId.
+export function buildInsufficientPreview(grid, group, anchorId, cols) {
+  if (!group || !grid || !grid.fields.length) return null;
+  const phases = group.phases;
+  if (!Array.isArray(phases) || !phases.length) return null;
+  const F = grid.fields.length;
+  const S = grid.segCount;
+  const C = Math.max(cols || F, F);
+  const games = grid.gamesGrid;
+  const total = phases.reduce((a, p) => a + p.hours * 2, 0);   // segmentos totales de la ventana
+  if (!total || total > S) return null;
+
+  const gAt = (f, s) => (s >= 0 && s < S ? games[f][s] : null);
+  const gameRange = (f, s) => {
+    const g = gAt(f, s); if (!g) return null;
+    let a = s; while (a - 1 >= 0 && gAt(f, a - 1)?.id === g.id) a--;
+    let b = s; while (b + 1 < S && gAt(f, b + 1)?.id === g.id) b++;
+    return { id: g.id, f, startSeg: a, endSeg: b + 1 };
+  };
+  // Localizar el ancla.
+  let anchor = null;
+  for (let f = 0; f < F && !anchor; f++) for (let s = 0; s < S; s++) { const g = gAt(f, s); if (g && g.id === anchorId) { anchor = gameRange(f, s); break; } }
+  if (!anchor) return null;
+
+  let best = null;
+  for (let start = 0; start + total <= S; start++) {
+    if (!(start <= anchor.startSeg && anchor.endSeg <= start + total)) continue;  // la ventana debe contener al ancla
+    // Perfil por HORA de reloj: [{seg (inicio de hora), req}] expandiendo las fases.
+    const hourReq = []; let cur = start;
+    for (const p of phases) for (let h = 0; h < p.hours; h++) { hourReq.push({ seg: cur, req: p.courts }); cur += 2; }
+
+    const existingIds = new Set();
+    const missing = [];
+    let missingCount = 0;
+    let usedAnchor = false;
+    for (const { seg, req } of hourReq) {
+      const usedF = new Set();
+      // Games que cubren la HORA completa [seg, seg+2) en su columna (1h o más).
+      const cover = [];
+      for (let f = 0; f < F; f++) { const r = gameRange(f, seg); if (r && r.startSeg <= seg && r.endSeg >= seg + 2) cover.push(r); }
+      cover.sort((x, y) => (x.id === anchorId ? -1 : 0) - (y.id === anchorId ? -1 : 0) || x.f - y.f);   // ancla primero
+      let taken = 0;
+      for (const r of cover) { if (taken >= req) break; if (usedF.has(r.f)) continue; usedF.add(r.f); existingIds.add(r.id); if (r.id === anchorId) usedAnchor = true; taken++; }
+      const need = req - taken;
+      if (need > 0) {
+        // Colocar faltantes como bloques-hora completos en columnas libres, adyacentes: derecha primero, luego izq.
+        const usedArr = [...usedF];
+        const maxU = usedArr.length ? Math.max(...usedArr) : -1;
+        const minU = usedArr.length ? Math.min(...usedArr) : C;
+        const right = [], left = [], rest = [];
+        for (let f = 0; f < C; f++) { if (usedF.has(f)) continue; if (f > maxU) right.push(f); else if (f < minU) left.push(f); else rest.push(f); }
+        const order = [...right, ...left.reverse(), ...rest];
+        let placed = 0;
+        for (const f of order) { if (placed >= need) break; missing.push({ f, seg }); usedF.add(f); placed++; }
+        missingCount += need;
+      }
+    }
+    if (!usedAnchor) continue;                             // la ventana debe USAR el ancla
+    if (!best || missingCount < best.missingCount || (missingCount === best.missingCount && start < best.start)) {
+      best = { start, total, existingIds: [...existingIds], missing, missingCount };
+    }
+  }
+  return best;   // null si ninguna ventana compatible contiene/usa el ancla
 }
 
 // games.id REALES de un slot (bloque): recorre las celdas 'fi-s' (segmentos) y devuelve los IDs únicos

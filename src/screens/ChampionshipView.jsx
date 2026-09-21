@@ -65,7 +65,9 @@ export default function ChampionshipView() {
   const isCreated = !!rawChamp;                 // true = campeonato real del owner (no demo)
   const group = summary.group || null; // { min, max }
   const maxTeams = isLiga ? 999 : (group ? group.max : 8);     // Liga: sin límite (crear equipo permanente)
-  const initialTeams = isLiga ? 6 : (group ? group.min : 4);   // Liga: 6 equipos mock iniciales
+  // Demo (Torneo): 2 equipos de prueba hechos; los slots restantes hasta la capacidad (maxTeams) se
+  // muestran como escudos grises "crear equipo" (p.ej. 4 equipos → 2 hechos + 2 en gris). Liga: 6 mock.
+  const initialTeams = isLiga ? 6 : Math.min(2, group ? group.max : 4);
   // Badge de portada: Liga muestra su cantidad tentativa (equipos/personas); demás, el rango del grupo.
   const leagueEst = summary.leagueEstimate || null;
   const coverBadge = isLiga

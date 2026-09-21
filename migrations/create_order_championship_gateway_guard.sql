@@ -3,9 +3,14 @@
 -- ============================================================================
 -- BASE: la versión VIGENTE CORRECTA = restore_create_order_double_out_pending_guard.sql
 -- (contiene alternative_game_id, lock A+B ORDER BY id, twin pending guard, guard championship_id,
--- capacidad/idempotencia). Antes de aplicar ESTA migración, confirmar en la DB:
+-- capacidad/idempotencia). HUELLA LIVE CONFIRMADA (auditoría read-only):
+--     firma   = create_order(text,text,uuid,jsonb,numeric,text,jsonb,timestamptz,text)
+--     def_len = 8523
+--     def_md5 = c293f0fa7ba2dc0a1f97c3e4109838aa   -- create_order LIVE SIN el guard Gateway (CRG ausente)
+-- Antes de aplicar ESTA migración, confirmar en la DB que sigue siendo esa base:
 --     select pg_get_functiondef('public.create_order(text,text,uuid,jsonb,numeric,text,jsonb,timestamptz,text)'::regprocedure)
 --            ~* 'alternative_game_id';   -- debe ser TRUE (restore vivo). Si FALSE → DETENERSE, no aplicar.
+--     -- y md5(...) debe seguir siendo c293f0fa7ba2dc0a1f97c3e4109838aa. Si difiere → DETENERSE.
 --
 -- ÚNICO cambio funcional respecto a la base (restore):
 --   CAMBIO 1 (rental): además de los guards actuales, si ESTA Rental aparece en CRG de un Championship

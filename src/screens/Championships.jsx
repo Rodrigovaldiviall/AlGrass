@@ -203,7 +203,7 @@ export default function Championships() {
         {/* CTA flotante: fijo justo encima del TabBar, el contenido pasa por detrás */}
         <div style={{ position: 'absolute', left: 16, right: 16, bottom: 12, pointerEvents: 'none' }}>
           <button
-            onClick={() => navigate('/championships/organize')}
+            onClick={() => { try { sessionStorage.removeItem('championship_organize_draft'); } catch {} navigate('/championships/organize'); }}
             className="pressable"
             style={{
               pointerEvents: 'auto',
