@@ -9,6 +9,7 @@ import { readWaitlistBadge } from '../utils/waitlistBadge';
 const TABS = [
   { id: 'partidos',       icon: I.search,  label: 'Partidos',       route: '/games' },
   { id: 'campos',         icon: I.fields,  label: 'Canchas',         route: '/fields' },
+  { id: 'campeonatos',    icon: I.trophy,  label: 'Campeonatos',     route: '/championships' },
   { id: 'notificaciones', icon: I.bell,    label: 'Notificaciones', route: '/notifications' },
   { id: 'perfil',         icon: I.profile, label: 'Perfil',         route: '/profile' },
 ];
@@ -17,6 +18,7 @@ const TABS = [
 const ROOT_ROUTES = {
   '/games':         'partidos',
   '/fields':        'campos',
+  '/championships': 'campeonatos',
   '/notifications': 'notificaciones',
   '/profile':       'perfil',
 };
@@ -30,6 +32,7 @@ function tabFromPath(pathname) {
   if (pathname.startsWith('/profile'))       return 'perfil';
   if (pathname.startsWith('/email-changed')) return 'perfil'; // cierre del cambio de correo → Continuar lleva a Perfil
   if (pathname.startsWith('/notifications')) return 'notificaciones';
+  if (pathname.startsWith('/championships')) return 'campeonatos';
   if (pathname.startsWith('/fields'))        return 'campos';
   if (pathname.startsWith('/games'))         return 'partidos';
   // All other sub-screens (/settings, /game/:id, /checkout, …): preserve last root context

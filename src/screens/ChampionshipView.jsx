@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useLayoutEffect, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, RED } from '../constants';
 import Shield from '../components/championship/Shield';
 import PlayerAvatar from '../components/championship/PlayerAvatar';
@@ -19,6 +20,9 @@ const COVER_THEMES = ['#E24A4A', '#0EA5E9', '#2E9E5B', '#F5A524', '#8E44AD'];
 // Estado de ChampionshipView persistido en sessionStorage para conservarlo en el viaje a/desde
 // ChampionshipTeam (sin Context/Redux/Supabase; session state compatible con la arquitectura actual).
 const CV_KEY = 'championship_view_state';
+// Intención de acción protegida (checkout/contacto) pendiente de login. Se fija justo antes de ir a
+// /auth y se consume al regresar autenticado a esta pantalla para reanudar EXACTAMENTE la acción.
+const AUTH_RESUME_KEY = 'championship_auth_resume';
 function readCV() { try { return JSON.parse(sessionStorage.getItem(CV_KEY)); } catch { return null; } }
 function writeCV(o) { try { sessionStorage.setItem(CV_KEY, JSON.stringify(o)); } catch {} }
 
@@ -41,10 +45,15 @@ function Seg({ active, onClick, children }) {
 export default function ChampionshipView() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
   const nav = location.state || null;
   const persisted = readCV();
   const cvReturn = !!nav?.cvReturn;          // true = volvimos desde ChampionshipTeam
-  const restore = cvReturn ? persisted : null;
+  // Regreso desde /auth (login/registro): esta pantalla se remonta sin location.state, así que
+  // restauramos TODO desde persisted igual que cvReturn para volver EXACTAMENTE al estado previo.
+  // Se captura una sola vez al montar (la bandera se consume después) para no perder el restore.
+  const [authResuming] = useState(() => { try { return !!sessionStorage.getItem(AUTH_RESUME_KEY); } catch { return false; } });
+  const restore = (cvReturn || authResuming) ? persisted : null;
 
   const summary = nav?.summary ?? persisted?.summary ?? {};
   const organizeState = nav?.organizeState ?? persisted?.organizeState ?? null;
@@ -266,16 +275,39 @@ export default function ChampionshipView() {
   // Checkout habilitado solo con formato+cancha+horario resueltos y SIN personalización de cancha.
   // (El caso pendiente/personalizado tendrá "Contáctame para organizarlo", aún no construido.)
   const checkoutReady = complies && !summary.courtCustom;
+  // Gate de auth SOLO en la acción final. Sin sesión: persistimos el estado (persistCV) + la intención,
+  // y vamos al mismo /auth (patrón backPath) que el resto de acciones protegidas. Con sesión: intacto.
+  function requireAuth(action) {
+    if (user) { try { sessionStorage.removeItem(AUTH_RESUME_KEY); } catch {} return true; }
+    persistCV();
+    try { sessionStorage.setItem(AUTH_RESUME_KEY, action); } catch {}
+    navigate('/auth', { state: { backPath: '/championships/view' } });
+    return false;
+  }
   function goToCheckout() {
     if (!checkoutReady) return;
+    if (!requireAuth('checkout')) return;
     persistCV();
     navigate('/championships/checkout', { state: { summary, organizeState, championshipName: name, coverTheme } });
   }
   // Formato/cancha pendientes → "Contáctame para organizarlo" (flujo mock de contacto, no checkout).
   function goToContact() {
+    if (!requireAuth('contact')) return;
     persistCV();
     navigate('/championships/contact', { state: { summary, organizeState, championshipName: name } });
   }
+
+  // Reanudación tras login/registro: al regresar autenticado con una intención pendiente, se ejecuta
+  // la MISMA acción final (checkout/contacto) con el estado ya restaurado (restore=persisted). Si el
+  // usuario canceló el login (vuelve sin sesión), se descarta la intención para no reanudar luego.
+  useEffect(() => {
+    let pending; try { pending = sessionStorage.getItem(AUTH_RESUME_KEY); } catch {}
+    if (!pending) return;
+    if (!user) { try { sessionStorage.removeItem(AUTH_RESUME_KEY); } catch {} return; }
+    try { sessionStorage.removeItem(AUTH_RESUME_KEY); } catch {}
+    if (pending === 'checkout') goToCheckout();
+    else if (pending === 'contact') goToContact();
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: SOFT, overflow: 'hidden' }}>

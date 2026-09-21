@@ -20,11 +20,11 @@ function dateChip(d) {
   if (k === TODAY_KEY) return { top: 'Hoy', bottom: d.getDate() };
   return { top: DOW_ES[d.getDay()], bottom: d.getDate() };
 }
-function DateCell({ top, bottom, active, isToday, onClick, check, disabled }) {
+function DateCell({ top, bottom, active, isToday, onClick, check, disabled, refEl }) {
   const topColor = active ? '#fff' : (isToday ? BLUE : SUB);
   const bottomColor = active ? '#fff' : TEXT;
   return (
-    <button onClick={disabled ? undefined : onClick} disabled={disabled} style={{
+    <button ref={refEl} onClick={disabled ? undefined : onClick} disabled={disabled} style={{
       position: 'relative',
       flex: '0 0 auto', width: 50, height: 52, borderRadius: 11,
       background: active ? BLUE : '#fff', border: `1px solid ${active ? BLUE : HAIR}`,
@@ -138,6 +138,11 @@ export default function ChampionshipOrganize() {
   const location = useLocation();
   // Estado restaurado al volver desde "Ver mi campeonato" (frontend, sin persistencia).
   const restore = location.state?.organizeState || null;
+
+  // Paso del flujo de creación: 'intro' (pantalla informativa) → 'form' (configuración actual).
+  // Al VOLVER a editar (restore presente) se entra directo al formulario (la intro solo aparece al
+  // crear desde cero). Es un step interno: NO añade ruta ni cambia el back de la edición.
+  const [step, setStep] = useState(restore ? 'form' : 'intro');
 
   const [mode, setMode] = useState(restore?.mode ?? 'oneday');            // 'oneday' | 'liga'
   const [format, setFormat] = useState(restore?.format ?? DEFAULT_FORMAT);  // 7v7 por defecto
@@ -284,6 +289,7 @@ export default function ChampionshipOrganize() {
 
   // Scroll de la pantalla: se guarda en organizeState al ir a "Ver mi campeonato" y se restaura al volver.
   const scrollRef = useRef(null);
+  const activeDateRef = useRef(null);   // celda de fecha activa → auto-scroll horizontal de la tira
 
   // Indicador vertical sutil de la grilla (aparece solo si hay overflow de horas).
   const gridVRef = useRef(null);
@@ -363,6 +369,13 @@ export default function ChampionshipOrganize() {
     if (dateChecks.has(dateKey) && (!minAllowedKey || dateKey >= minAllowedKey)) return; // día actual válido y permitido → respetar
     setDateKey(target);
   }, [canchaReady, dateChecks, minAllowedKey]); // eslint-disable-line
+
+  // Scroll horizontal automático: centra en la tira el día seleccionado (auto-seleccionado o manual),
+  // para que el día disponible más próximo quede a la vista sin que el usuario tenga que desplazar.
+  useEffect(() => {
+    if (!canchaReady) return;
+    activeDateRef.current?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+  }, [dateKey, canchaReady]);
 
   // Al elegir un horario, si el bloque recomendado cae fuera del área visible de la grilla,
   // hacer un scroll VERTICAL sutil (smooth) para revelarlo. `startHour` es el índice de fila (HORA).
@@ -457,12 +470,55 @@ export default function ChampionshipOrganize() {
     </svg>
   );
 
+  // ── Paso INTRO: pantalla informativa previa al formulario. Contiene el MISMO texto que antes vivía
+  // arriba del formulario (movido, no duplicado). "Continuar" → paso 'form'. Atrás → Campeonatos.
+  if (step === 'intro') {
+    return (
+      <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: SOFT, overflow: 'hidden' }}>
+        <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 8, paddingRight: 16, flexShrink: 0 }}>
+          <div style={{ height: 26, display: 'flex', alignItems: 'center', position: 'relative' }}>
+            <button onClick={() => navigate('/championships')} style={{ position: 'absolute', left: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            </button>
+            <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>Crear nuevo campeonato</div>
+          </div>
+        </div>
+
+        <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', paddingLeft: 16, paddingRight: 16, paddingTop: 14 }}>
+          <div style={{ display: 'flex', gap: 10, background: '#E8F1FF', borderRadius: 14, padding: '12px 12px 12px 12px', marginBottom: 16 }}>
+            <div style={{ width: 32, height: 32, borderRadius: '50%', background: BLUE, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                <path d="M7 4h10v5a5 5 0 0 1-10 0V4z" stroke="#fff" strokeWidth="1.7" strokeLinejoin="round" />
+                <path d="M7 6H4.5v1.5A2.5 2.5 0 0 0 7 10M17 6h2.5v1.5A2.5 2.5 0 0 1 17 10" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M12 14v3M9 20.5h6M9.5 20.5c0-1.4.8-2.3 2.5-2.3s2.5.9 2.5 2.3" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
+            <div style={{ minWidth: 0, fontSize: 13, color: SUB, lineHeight: 1.55 }}>
+              <div>Te ayudamos con la organización: solo elige el <span style={{ color: BLUE, fontWeight: 700 }}>formato</span> y la <span style={{ color: BLUE, fontWeight: 700 }}>cancha</span>; nosotros nos encargamos del resto: organizador, árbitros y mucho más.</div>
+              <div style={{ marginTop: 8 }}>En <span style={{ color: ORANGE, fontWeight: 700 }}>Ver mi campeonato</span> verás la etapa de <span style={{ textDecoration: 'underline' }}>Inscripciones</span> y <span style={{ textDecoration: 'underline' }}>Calendario y resultados</span>.</div>
+              <div style={{ marginTop: 8 }}>Despreocúpate y juega.</div>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ padding: '10px 16px calc(12px + env(safe-area-inset-bottom))', background: SOFT }}>
+          <button onClick={() => setStep('form')} className="pressable" style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: 54,
+            background: ORANGE, color: '#1B1B1F', border: 'none', borderRadius: 18,
+            boxShadow: '0 6px 18px rgba(245,165,36,0.40)', cursor: 'pointer',
+            fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, WebkitTapHighlightColor: 'transparent', outline: 'none',
+          }}>Continuar</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: SOFT, overflow: 'hidden' }}>
       {/* Header compacto 44px */}
       <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 8, paddingRight: 16, flexShrink: 0 }}>
         <div style={{ height: 26, display: 'flex', alignItems: 'center', position: 'relative' }}>
-          <button onClick={() => navigate('/championships')} style={{ position: 'absolute', left: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+          <button onClick={() => restore ? navigate('/championships') : setStep('intro')} style={{ position: 'absolute', left: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
           <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>Crear nuevo campeonato</div>
@@ -470,22 +526,7 @@ export default function ChampionshipOrganize() {
       </div>
 
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-      <div ref={scrollRef} className="no-sb" style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', paddingLeft: 16, paddingRight: 16, paddingTop: 14, paddingBottom: status ? 130 : 88 }}>
-        <div style={{ display: 'flex', gap: 10, background: '#E8F1FF', borderRadius: 14, padding: '12px 12px 12px 12px', marginBottom: 16 }}>
-          <div style={{ width: 32, height: 32, borderRadius: '50%', background: BLUE, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-              <path d="M7 4h10v5a5 5 0 0 1-10 0V4z" stroke="#fff" strokeWidth="1.7" strokeLinejoin="round" />
-              <path d="M7 6H4.5v1.5A2.5 2.5 0 0 0 7 10M17 6h2.5v1.5A2.5 2.5 0 0 1 17 10" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M12 14v3M9 20.5h6M9.5 20.5c0-1.4.8-2.3 2.5-2.3s2.5.9 2.5 2.3" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </div>
-          <div style={{ minWidth: 0, fontSize: 13, color: SUB, lineHeight: 1.55 }}>
-            <div>Te ayudamos con la organización: solo elige el <span style={{ color: BLUE, fontWeight: 700 }}>formato</span> y la <span style={{ color: BLUE, fontWeight: 700 }}>cancha</span>; nosotros nos encargamos del resto: organizador, árbitros y mucho más.</div>
-            <div style={{ marginTop: 8 }}>En <span style={{ color: ORANGE, fontWeight: 700 }}>Ver mi campeonato</span> verás la etapa de <span style={{ textDecoration: 'underline' }}>Inscripciones</span> y <span style={{ textDecoration: 'underline' }}>Calendario y resultados</span>.</div>
-            <div style={{ marginTop: 8 }}>Despreocúpate y juega.</div>
-          </div>
-        </div>
-
+      <div ref={scrollRef} className="no-sb" style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', paddingLeft: 16, paddingRight: 16, paddingTop: 14, paddingBottom: 24 }}>
         {/* ── Tarjeta Formato ── */}
         <div style={CARD}>
           <div style={SECTION_TITLE}>Formato</div>
@@ -553,11 +594,10 @@ export default function ChampionshipOrganize() {
                     <div style={{ width: 22, height: 22, borderRadius: '50%', background: BLUE, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <svg width="13" height="13" viewBox="0 0 12 12" fill="none"><path d="M2.5 6.5l2.5 2.5 4.5-5" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
                     </div>
-                    <div style={{ fontSize: 14, fontWeight: 800, color: TEXT }}>Recomendado: {recoMain}</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: TEXT }}>Debes reservar: {group.courtHours} {group.courtHours === 1 ? 'hora' : 'horas'}</div>
                   </div>
-                  {recoExtra && <div style={{ fontSize: 13, fontWeight: 700, color: BLUE, paddingLeft: 30, marginBottom: 4 }}>{recoExtra}</div>}
                   <div style={{ fontSize: 12, color: SUB, lineHeight: 1.5, paddingLeft: 30 }}>
-                    Buscamos la mejor disponibilidad — puedes ajustarla. Partidos de 15 minutos + 5 de descanso. Duración de reloj ~{group.clockHours} horas.
+                    Buscamos la mejor disponibilidad. Partidos de 15 minutos + 5 de descanso. Todos los equipos juegan mínimo 3 partidos.
                   </div>
                 </div>
               )}
@@ -580,7 +620,8 @@ export default function ChampionshipOrganize() {
               {DATE_WINDOW.map(d => {
                 const k = ymd(d); const lab = dateChip(d);
                 const blocked = !!minAllowedKey && k < minAllowedKey;   // anticipación mínima no cumplida
-                return <DateCell key={k} top={lab.top} bottom={lab.bottom} isToday={k === TODAY_KEY} active={dateKey === k} check={dateChecks.has(k) && !blocked} disabled={blocked} onClick={() => setDateKey(k)} />;
+                const noAvail = !dateChecks.has(k);                     // día sin disponibilidad → gris deshabilitado (como rentals)
+                return <DateCell key={k} refEl={dateKey === k ? activeDateRef : null} top={lab.top} bottom={lab.bottom} isToday={k === TODAY_KEY} active={dateKey === k} check={dateChecks.has(k) && !blocked} disabled={blocked || noAvail} onClick={() => setDateKey(k)} />;
               })}
             </div>
 
@@ -710,13 +751,11 @@ export default function ChampionshipOrganize() {
             </div>
           </div>
         )}
-      </div>
 
-      {/* Aviso de horas-cancha + CTA final, ambos flotantes sobre el contenido (sin holder blanco),
-          dentro del contenedor relative → encima del TabBar. */}
-      <div style={{ position: 'absolute', left: 16, right: 16, bottom: 12, pointerEvents: 'none' }}>
+        {/* Aviso de horas-cancha + CTA "Ver mi campeonato" — INLINE al final del formulario (antes
+            flotaba absolute sobre el contenido). Misma lógica de disabled/onClick/goToView. */}
         {status && (
-          <div style={{ padding: '10px 12px', borderRadius: 12, background: status.bg, marginBottom: 10, boxShadow: '0 2px 12px rgba(0,0,0,0.10)' }}>
+          <div style={{ padding: '10px 12px', borderRadius: 12, background: status.bg, marginTop: 16, marginBottom: 10 }}>
             {status.title && <div style={{ fontSize: 13.5, fontWeight: 800, color: status.titleColor || TEXT }}>{status.title}</div>}
             {status.body && <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.4, marginTop: status.title ? 3 : 0 }}>{status.body}</div>}
           </div>
@@ -726,8 +765,8 @@ export default function ChampionshipOrganize() {
           disabled={!canContinue}
           className={canContinue ? 'pressable' : undefined}
           style={{
-            pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            width: '100%', height: 54,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: '100%', height: 54, marginTop: status ? 0 : 20,
             background: canContinue ? ORANGE : '#E8E8EC', color: canContinue ? '#1B1B1F' : '#9A9AA0',
             border: 'none', borderRadius: 18,
             boxShadow: canContinue ? '0 6px 18px rgba(245,165,36,0.40)' : 'none', cursor: canContinue ? 'pointer' : 'not-allowed',
