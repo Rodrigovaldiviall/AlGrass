@@ -47,7 +47,7 @@ function BankRow({ label, value, copyable = false, masked = false }) {
   );
 }
 
-export default function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPreCharge, onPaid, onRejected, transfer = null }) {
+export default function PaymentSheet({ amount, currency = 'S/.', label, onClose, onPreCharge, onPaid, onRejected, onAvailabilityChanged, transfer = null }) {
   // Campeonato (transfer): Transferencia seleccionada/expandida por default. Partidos: Yape (sin cambios).
   const [activeTab, setActiveTab] = useState(transfer ? 'transfer' : 'yape');
   const [open, setOpen] = useState(false);
@@ -203,6 +203,13 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
       return;
     }
     if (pre?.error) {
+      // Gateway Championship: la carrera en la ADQUISICIÓN (create_championship_gateway_order) devuelve
+      // 'AVAILABILITY_CHANGED' → mostramos aquí el overlay in-sheet (no arrancamos el mock, conservamos config).
+      if (pre.error === 'AVAILABILITY_CHANGED') {
+        setPaying('idle');
+        setAvailabilityChanged(true);
+        return;
+      }
       // create_order abortó (NO_CAPACITY, etc.): el padre ya mostró el overlay; cerrar sheet.
       setPaying('idle');
       setOpen(false);
@@ -620,10 +627,10 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
           </div>
           <div style={{ fontSize: 20, fontWeight: 800, color: TEXT, letterSpacing: -0.4, textAlign: 'center' }}>La disponibilidad cambió</div>
           <div style={{ marginTop: 8, fontSize: 14, color: SUB, textAlign: 'center', lineHeight: 1.45 }}>
-            Durante el proceso, una o más de las canchas seleccionadas fueron reservadas. Vuelve a consultar la disponibilidad para crear tu campeonato con horarios disponibles.
+            Durante el proceso, puede ser que una o más canchas seleccionadas fueran reservadas. Vuelve a consultar la disponibilidad.
           </div>
           <div style={{ marginTop: 28, width: '100%', maxWidth: 320 }}>
-            <CtaButton onPress={() => { setOpen(false); setTimeout(() => transfer?.onAvailabilityChanged?.(), 220); }}>
+            <CtaButton onPress={() => { setOpen(false); setTimeout(() => (transfer?.onAvailabilityChanged ?? onAvailabilityChanged)?.(), 220); }}>
               Volver a crear campeonato
             </CtaButton>
           </div>

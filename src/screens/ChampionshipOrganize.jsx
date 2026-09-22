@@ -212,10 +212,12 @@ export default function ChampionshipOrganize() {
     return cs.length ? cs[0] : null;
   }, [gamesAll]);
   const [champCfg, setChampCfg] = useState(null);
+  const [champCfgResolved, setChampCfgResolved] = useState(false);   // fetch de config terminado (éxito o error)
   useEffect(() => {
-    if (!invCity) { setChampCfg(null); return; }
+    if (!invCity) { setChampCfg(null); setChampCfgResolved(true); return; }
+    setChampCfgResolved(false);
     let alive = true;
-    getChampionshipConfig({ city: invCity }).then(({ data, error }) => { if (alive) setChampCfg(error ? null : data); });
+    getChampionshipConfig({ city: invCity }).then(({ data, error }) => { if (alive) { setChampCfg(error ? null : data); setChampCfgResolved(true); } });
     return () => { alive = false; };
   }, [invCity]);
   const availabilityBlocks = Array.isArray(champCfg?.availability_blocks) ? champCfg.availability_blocks : [];
@@ -254,27 +256,11 @@ export default function ChampionshipOrganize() {
     return [...yes, ...no];
   }, [baseVenues, group, dateKey, games, format]); // eslint-disable-line
 
-  // Disponibilidad GLOBAL REAL: ¿existe ALGÚN día (IGNORANDO distrito/sede/amenities) con una combinación
-  // válida para el formato? true = hay opciones en alguna parte; false = NO existe NINGUNA (empty global). §5.
-  const globalVenues = useMemo(() => championshipVenues(games, format, new Set(), new Set()), [games, format]);
-  const globalHasAnyAvailability = useMemo(() => {
-    if (!group) return false;
-    for (const d of DATE_WINDOW) { const k = ymd(d); if (globalVenues.some(v => venueComplies(v, k))) return true; }
-    return false;
-  }, [globalVenues, group, games, format]); // eslint-disable-line
-
-  const resolvedVenue = candidates[Math.min(venueIdx, Math.max(0, candidates.length - 1))] || null;
-
-  // EMPTY_FORMAT = el formato NO tiene NINGUNA disponibilidad real utilizable en ningún venue ni fecha del
-  // inventario Championship, ANTES de aplicar filtros del usuario. Autoridad = globalHasAnyAvailability
-  // (recorre TODAS las fechas de DATE_WINDOW y TODOS los globalVenues —sin distrito/amenities/venueFilter—
-  // comprobando venueComplies = existe ≥1 slot válido). NO es globalVenues.length (eso es compatibilidad
-  // ESTRUCTURAL, no disponibilidad). Cuando es true → se oculta TODA la UI de selección de cancha.
-  const isEmptyFormat = !!group && !!format && !globalHasAnyAvailability;
-
   // ── Booking lead (UX): usa champCfg (ciudad del inventario) → días de anticipación por rango del grupo. ──
   // Bloquea fechas < HOY_LIMA + lead. Autoridad final = backend (quote/hold re-validan BOOKING_LEAD_NOT_MET).
   // Misma regla conceptual del backend: EXACTAMENTE una booking_lead_rule que contenga [group.min, group.max].
+  // Se declara ANTES de globalHasAnyAvailability porque el empty-state (isEmptyFormat) también debe respetar
+  // la anticipación: un formato cuya ÚNICA disponibilidad cae dentro del lead = SIN fecha válida = empty.
   const bookingLeadDays = useMemo(() => {
     if (!group || !champCfg || !Array.isArray(champCfg.booking_lead_rules)) return 0;
     const ms = champCfg.booking_lead_rules.filter(r =>
@@ -286,6 +272,27 @@ export default function ChampionshipOrganize() {
     if (!bookingLeadDays) return null;
     return ymd(new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate() + bookingLeadDays)); // America/Lima
   }, [bookingLeadDays]);
+
+  // Disponibilidad GLOBAL REAL: ¿existe ALGÚN día VÁLIDO (IGNORANDO distrito/sede/amenities) con una
+  // combinación válida para el formato Y que cumpla la anticipación mínima (minAllowedKey)? true = hay
+  // opciones bookeables en alguna parte; false = NO existe NINGUNA fecha/slot válido (empty global). §5.
+  // Mismo criterio que usa el auto-select (dateChecks + minAllowedKey) → todos los formatos comparten ruta:
+  // si existe ≥1 fecha válida → flujo normal; si no → MISMO empty state para 4 / 5-6 / 7-8.
+  const globalVenues = useMemo(() => championshipVenues(games, format, new Set(), new Set()), [games, format]);
+  const globalHasAnyAvailability = useMemo(() => {
+    if (!group) return false;
+    for (const d of DATE_WINDOW) { const k = ymd(d); if ((!minAllowedKey || k >= minAllowedKey) && globalVenues.some(v => venueComplies(v, k))) return true; }
+    return false;
+  }, [globalVenues, group, games, format, minAllowedKey]); // eslint-disable-line
+
+  const resolvedVenue = candidates[Math.min(venueIdx, Math.max(0, candidates.length - 1))] || null;
+
+  // EMPTY_FORMAT = el formato NO tiene NINGUNA disponibilidad real utilizable en ningún venue ni fecha del
+  // inventario Championship, ANTES de aplicar filtros del usuario. Autoridad = globalHasAnyAvailability
+  // (recorre TODAS las fechas de DATE_WINDOW y TODOS los globalVenues —sin distrito/amenities/venueFilter—
+  // comprobando venueComplies = existe ≥1 slot válido). NO es globalVenues.length (eso es compatibilidad
+  // ESTRUCTURAL, no disponibilidad). Cuando es true → se oculta TODA la UI de selección de cancha.
+  const isEmptyFormat = !!group && !!format && !globalHasAnyAvailability;
 
   // Grid REAL de la sede+fecha (fields = columnas; retícula horaria por time+duration). Fuente única de
   // matrix/segmentos (disponibilidad + slots), fields (columnas) y fieldGames (píldoras por game real).
@@ -378,6 +385,11 @@ export default function ChampionshipOrganize() {
   const scrollRef = useRef(null);
   const scrollTopRef = useRef(restore?.scrollTop ?? 0);   // scrollTop vivo (onScroll) → persistir aun al desmontar
   const activeDateRef = useRef(null);   // celda de fecha activa → auto-scroll horizontal de la tira
+  // Centra en la tira la fecha YA seleccionada por la lógica existente (no decide fecha; solo desplaza).
+  // Único helper de scroll horizontal → reutilizado por el effect de dateKey y por el reveal del veil.
+  const centerActiveDate = (behavior = 'smooth') => {
+    activeDateRef.current?.scrollIntoView({ behavior, inline: 'center', block: 'nearest' });
+  };
 
   // Indicador vertical sutil de la grilla (aparece solo si hay overflow de horas).
   const gridVRef = useRef(null);
@@ -448,6 +460,24 @@ export default function ChampionshipOrganize() {
   const autoSlotArmedRef = useRef(!restore);
   useEffect(() => { if (didMount.current) { autoDateArmedRef.current = true; autoSlotArmedRef.current = true; } }, [format, groupId]); // eslint-disable-line
 
+  // Validación del restore (View → Back): al cargar el inventario, si el DÍA restaurado ya NO tiene
+  // disponibilidad (p.ej. cambió la fecha/el inventario), la selección restaurada quedó OBSOLETA → se limpia
+  // y se REARMA el auto-select como un ciclo nuevo (día válido más próximo + primer horario). Si el día sigue
+  // válido, no toca nada (respeta la selección). Corre UNA vez tras !invLoading.
+  const restoreCheckedRef = useRef(false);
+  useEffect(() => {
+    if (restoreCheckedRef.current || !restore || invLoading) return;
+    if (invCity && !champCfgResolved) return;   // esperar a que resuelva champCfg → minAllowedKey (anticipación) y blocks finales
+    restoreCheckedRef.current = true;
+    // Día restaurado válido = tiene disponibilidad Y cumple la anticipación mínima (minAllowedKey).
+    const dateOk = group && dateChecks.has(dateKey) && (!minAllowedKey || dateKey >= minAllowedKey);
+    if (group && dateChecks.size > 0 && !dateOk) {
+      setSlotIdx(null); setManualGameIds(null); clearSelMeta();
+      autoDateArmedRef.current = true;
+      autoSlotArmedRef.current = true;
+    }
+  }, [invLoading, champCfgResolved, dateChecks, minAllowedKey]); // eslint-disable-line
+
   // CASO A ↔ disponibilidad: si NO existe disponibilidad GLOBAL, forzar personalización de Cancha
   // (bloqueada) y limpiar horario. Si vuelve a existir disponibilidad global, liberar el forzado.
   useEffect(() => {
@@ -473,13 +503,22 @@ export default function ChampionshipOrganize() {
     const y = restore?.scrollTop;
     if (!y) { scrollRestoredRef.current = true; restoringRef.current = false; setRestoreVeil(false); return; }
     if (invLoading || !scrollRef.current) return;   // esperar el contenido final (inventario cargado) → hay altura para el scroll
+    if (invCity && !champCfgResolved) return;        // esperar a que resuelva champCfg → minAllowedKey (anticipación) y blocks finales
+    // Esperar además a que el contenido esté ASENTADO: día VÁLIDO (con disponibilidad Y que cumpla la
+    // anticipación mínima) o sin cancha / sin disponibilidad (nada que corregir). Así el velo NO se retira
+    // mostrando "hoy" para luego saltar al primer día realmente válido.
+    const cancha = mode === 'oneday' && !contactMe && !!group;   // = canchaReady (aún no declarado aquí)
+    const dateOk = dateChecks.has(dateKey) && (!minAllowedKey || dateKey >= minAllowedKey);
+    const settled = !cancha || courtCustom || dateChecks.size === 0 || dateOk;
+    if (!settled) return;
     scrollRestoredRef.current = true;
     requestAnimationFrame(() => requestAnimationFrame(() => {
       scrollRef.current?.scrollTo({ top: y, behavior: 'instant' });
+      if (dateOk) centerActiveDate('instant');       // fecha válida marcada → dejarla visible en la tira ANTES de revelar (empty/no-fecha → no scroll)
       restoringRef.current = false;                 // liberar auto-scrolls tras restaurar
-      setRestoreVeil(false);                         // scroll ya aplicado → revelar contenido (sin flash/salto)
+      setRestoreVeil(false);                         // scroll ya aplicado + contenido asentado → revelar (sin flash/salto)
     }));
-  }, [invLoading]); // eslint-disable-line
+  }, [invLoading, champCfgResolved, mode, contactMe, group, courtCustom, dateChecks, dateKey, minAllowedKey]); // eslint-disable-line
 
   // Formato → Cancha: Cancha aparece solo cuando Formato está completo (Torneo con rango elegido).
   // Al pasar de incompleto→completo, auto-scroll suave UNA sola vez a la sección Cancha (progresión).
@@ -540,8 +579,8 @@ export default function ChampionshipOrganize() {
   // Scroll horizontal automático: centra en la tira el día seleccionado (auto-seleccionado o manual),
   // para que el día disponible más próximo quede a la vista sin que el usuario tenga que desplazar.
   useEffect(() => {
-    if (!canchaReady || restoringRef.current) return;   // durante la restauración de scroll no mover la vista
-    activeDateRef.current?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    if (!canchaReady || restoringRef.current) return;   // durante la restauración de scroll no mover la vista (el reveal del veil la centra)
+    centerActiveDate('smooth');
   }, [dateKey, canchaReady]);
 
   // Al elegir un horario, si el bloque recomendado cae fuera del área visible de la grilla,

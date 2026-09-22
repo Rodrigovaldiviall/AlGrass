@@ -2860,6 +2860,15 @@ export default function Profile() {
   const upcomingAll     = champEvents.length ? sortByDt([...upcoming, ...champEvents], false) : upcoming;
   const visibleUpcoming = upcomingExpanded ? upcomingAll : upcomingAll.slice(0, 10);
 
+  // Campeonato recién creado oculto tras "Ver más": expandir mientras el overlay de confirmación aún se ve,
+  // para que al continuar su fila ya esté renderizada (ref) y el effect de scroll (highlightedRef) la centre.
+  // Mismo criterio que el highlight de partidos (índice >= 10 → expandir). Solo expande; no marca ni scrollea.
+  useEffect(() => {
+    if ((champConfirm !== 'created' && champConfirm !== 'created_validation') || !dataReady || !contentVisible) return;
+    const realId = _champCv?.championship?.realId;
+    if (realId && upcomingAll.findIndex(g => g.id === realId) >= 10) setUpcomingExpanded(true);
+  }, [champConfirm, dataReady, contentVisible, upcomingAll]); // eslint-disable-line
+
   useEffect(() => {
     if (!dataReady) return;
     try {
@@ -3527,7 +3536,7 @@ export default function Profile() {
           title="¡Campeonato creado!"
           lines={[
             'Ya puedes encontrarlo en Próximos eventos. Cuando estés listo, entra para prepararlo y publicarlo.',
-            'Comparte la clave con los jugadores cuando abras las inscripciones.',
+            'Crea y comparte la clave de acceso con los jugadores cuando abras las inscripciones.',
           ]}
           onContinue={() => { setChampConfirm(null); setHighlightedId(_champCv?.championship?.realId || null); }}
         />

@@ -5,7 +5,7 @@ import { CtaButton, TopBar } from '../components/checkout/CheckoutUI';
 import PaymentSheet from '../components/checkout/PaymentSheet';
 import { CHAMPIONSHIP_BANK, soles, makeRegistrationKey, computeRegistrationClose } from '../data/championshipCheckoutMock';
 import { uuidv4 } from '../lib/uuid';
-import { createTransferHold, confirmTransfer as confirmTransferRpc, releaseTransferHold, quoteChampionship, getChampionshipConfig } from '../services/championshipService';
+import { createTransferHold, confirmTransfer as confirmTransferRpc, releaseTransferHold, quoteChampionship, getChampionshipConfig, createGatewayOrder, confirmGatewayPayment, failGateway } from '../services/championshipService';
 
 // Emoji del círculo por code de extra (la config no envía emoji). Fallback genérico.
 const EXTRA_EMOJI = { trophy: '🏆', medals: '🥇', photography: '📷', filming: '🎥' };
@@ -264,6 +264,53 @@ export default function ChampionshipCheckout() {
     navigate('/championships/organize', organizeState ? { state: { organizeState } } : undefined);
   };
 
+  // ── PASARELA (Gateway) REAL: acquire lógico EN "PAGAR" → mock cobro → confirm/fail ───────────────
+  // El acquire ocurre en onPreCharge (justo al pulsar Pagar, ANTES del mock del cobro), NO al seleccionar.
+  // Idempotente por intento (key estable). No usa create_order normal ni duplica orders.
+  const gatewayRef = useRef({ id: null, key: null });
+  const resetGateway = () => { gatewayRef.current = { id: null, key: null }; };
+
+  // onPreCharge(method): adquiere el pending lógico Gateway. Si pierde la carrera (AVAILABILITY_CHANGED /
+  // NO_CAPACITY) → devuelve ese error y el sheet muestra "La disponibilidad cambió" (sin iniciar el mock).
+  const gatewayPreCharge = async (method) => {
+    const g = gatewayRef.current;
+    if (!g.key) g.key = uuidv4();
+    if (!selectedGameIds.length) return { error: 'AVAILABILITY_CHANGED' };  // sin IDs reales → volver a disponibilidad
+    if (!eventDate) return { error: 'INVALID_DATE' };
+    if (!groupId) return { error: 'CHAMPIONSHIP_FORMAT_UNAVAILABLE' };       // sin formato → backend no puede tarifar
+    const config = { ...buildHoldConfig(), payment_method: method || 'gateway' };
+    const { data, error } = await createGatewayOrder({ gameIds: selectedGameIds, idempotencyKey: g.key, config });
+    if (error) {
+      if (/AVAILABILITY_CHANGED|NO_CAPACITY|CHAMPIONSHIP_AVAILABILITY_BLOCKED/.test(error.message || '')) { resetGateway(); return { error: 'AVAILABILITY_CHANGED' }; }
+      return { error: error.message || 'NETWORK' };   // reintentable con la MISMA key (idempotencia backend)
+    }
+    g.id = data.id;
+    return { championshipId: data.id };
+  };
+
+  // onPaid: el mock aprobó → confirmar el pago (materializa reserved + championship_id + 1 spend). Solo
+  // aquí los games pasan a reserved. Éxito → campeonato 'pending_publish' (mismo destino/UX que hoy).
+  const gatewayPaid = async (/* method, proof */) => {
+    const id = gatewayRef.current.id;
+    if (!id) return;
+    const { error } = await confirmGatewayPayment({ championshipId: id });
+    if (error) {
+      // Carrera al confirmar (algún game se tomó) o expiró → volver a disponibilidad a re-consultar.
+      resetGateway();
+      availabilityChangedBack();
+      return;
+    }
+    resetGateway();
+    createChampionship('pending_publish', 'created', { realId: id });
+  };
+
+  // onRejected: el mock rechazó el cobro → cancelar el pending (games siguen published, sin spend/refund).
+  const gatewayRejected = async () => {
+    const id = gatewayRef.current.id;
+    if (id) { await failGateway({ championshipId: id, reason: 'payment_rejected' }); }
+    resetGateway();
+  };
+
   const back = () => navigate(-1);
 
   return (
@@ -409,7 +456,10 @@ export default function ChampionshipCheckout() {
           amount={total ?? 0}
           currency="S/"
           onClose={() => setPayOpen(false)}
-          onPaid={confirmPayment}                 // electrónico → campeonato 'pending_publish' (mock)
+          onPreCharge={gatewayPreCharge}          // Gateway: acquire lógico ANTES del mock del cobro
+          onPaid={gatewayPaid}                    // mock aprobó → confirm_championship_gateway_payment
+          onRejected={gatewayRejected}            // mock rechazó → fail_championship_gateway
+          onAvailabilityChanged={availabilityChangedBack}  // acquire perdió la carrera → volver a disponibilidad
           transfer={{
             bank: CHAMPIONSHIP_BANK,
             onReserve: reserveChampionshipHold,             // create_championship_transfer_hold (hold REAL)

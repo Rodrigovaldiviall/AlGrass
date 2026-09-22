@@ -469,6 +469,8 @@ export default function ConfirmReservation() {
   const [promoError, setPromoError]     = useState('');
   const [promoLoading, setPromoLoading] = useState(false);
   const [freeConfirming, setFreeConfirming] = useState(false);
+  // Fase 2 del MISMO overlay (solo credit): a los ~6s cambia el copy a "Está tardando más de lo habitual".
+  const [confirmSlow, setConfirmSlow] = useState(false);
   // Scrim de safe-area inferior SOLO durante freeConfirming ("Estamos confirmando tu reserva…" en
   // pago con crédito; overlay rgba(10,10,15,0.88), instantáneo). NO creditLoading, NO capacityError,
   // NO confirmedGame. #27272C/0s. Al navegar a /profile este efecto se desmonta (cleanup) → body
@@ -493,6 +495,8 @@ export default function ConfirmReservation() {
   // "ya resuelto" (evita navegación/terminal duplicados) y un guard de montaje (evita
   // setState/navigate tras unmount). El poll consulta SIEMPRE el MISMO orderId.
   const pollTimerRef        = useRef(null);
+  const slowTimerRef        = useRef(null);   // timer de la fase 2 (copy "está tardando") — credit
+  const confirmOverlayAtRef = useRef(0);      // t0 = instante en que aparece el overlay (credit) → ancla de fases/deadline
   const checkoutResolvedRef = useRef(false);
   const mountedRef          = useRef(true);
   useEffect(() => {
@@ -500,6 +504,7 @@ export default function ConfirmReservation() {
     return () => {
       mountedRef.current = false;
       if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
+      if (slowTimerRef.current) { clearTimeout(slowTimerRef.current); slowTimerRef.current = null; }
     };
   }, []);
   const [showConfirmed, setShowConfirmed] = useState(false);
@@ -789,6 +794,7 @@ export default function ConfirmReservation() {
       setTimeout(() => {
         setCreditLoading(false);
         setFreeConfirming(true);
+        confirmOverlayAtRef.current = Date.now();   // t0 de fases/deadline = aparición del overlay (credit)
         setTimeout(() => {
           if (addGuestsMode && guests.length === 0) handlePaid();
           else payWithCredit();
@@ -950,7 +956,8 @@ export default function ConfirmReservation() {
       amountTotal:       isInvited ? 0 : total,   // invited: 0; crédito: 0 si todo es crédito
       currency:          'PEN',
       financialSnapshot: buildMainSnapshot(provider),
-      pendingExpiresAt:  new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      // credit: TTL corto (15s); expire_orders lo cerrará tras vencer. invited y demás: 10 min actuales.
+      pendingExpiresAt:  new Date(Date.now() + (provider === 'credit' ? 15 * 1000 : 10 * 60 * 1000)).toISOString(),
       paymentProvider:   provider,
     });
     if (error || !data) {
@@ -970,43 +977,104 @@ export default function ConfirmReservation() {
     if (!orderId) { handlePaid(method); return; }
     setFreeConfirming(true);
 
+    // ── Tiempos DEFINITIVOS solo para payment_provider='credit' (transferencia/pasarela/invited
+    // conservan EXACTAMENTE la ruta actual: await simple + poll sin deadline). ──────────────────
+    //   · SLOW_AT (6s): el MISMO overlay cambia a "Está tardando más de lo habitual".
+    //   · CONFIRM_TIMEOUT (6s): confirmOrder no puede colgar el await → se pasa a reconciliación.
+    //   · DEADLINE (12s): corte visible finito → última reconciliación y basta (NO cancela la Order).
+    // Anclados en la aparición del overlay (confirmOverlayAtRef) para el usuario; el timeout técnico
+    // de confirmOrder se mide desde su propia llamada.
+    const isCredit = method === 'credit';
+    const t0 = (isCredit && confirmOverlayAtRef.current) ? confirmOverlayAtRef.current : Date.now();
+    const SLOW_AT = 6000, DEADLINE = 15000, CONFIRM_TIMEOUT = 6000;
+
+    const clearTimers = () => {
+      if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
+      if (slowTimerRef.current) { clearTimeout(slowTimerRef.current); slowTimerRef.current = null; }
+    };
+
     // Éxito confirmado UNA sola vez (directo o vía polling): reutiliza la navegación de
     // éxito existente. Nunca navega dos veces ni tras unmount.
     const resolveConfirmed = () => {
       if (checkoutResolvedRef.current || !mountedRef.current) return;
       checkoutResolvedRef.current = true;
-      if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
+      clearTimers();
       try { localStorage.removeItem(`pending_game_referral:${game?.id}`); } catch {}
       finishConfirmedNavigation();
     };
 
-    // Terminal NO confirmado (failed/expired, o capacidad agotada explícita): detiene el
-    // loading y muestra el error con el MECANISMO EXISTENTE (overlay capacityError).
+    // Terminal NO confirmado (failed/expired, capacidad explícita, o timeout reconciliado): detiene
+    // el loading y muestra el error con el MECANISMO EXISTENTE (overlay capacityError).
     const resolveTerminal = (token = null) => {
       if (checkoutResolvedRef.current || !mountedRef.current) return;
       checkoutResolvedRef.current = true;
-      if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
+      clearTimers();
       setFreeConfirming(false);
-      setNoChargeYet(false);   // confirm_order es POST-cobro → NO afirmar "sin cobro"
+      setConfirmSlow(false);
+      setNoChargeYet(false);   // confirm_order es POST-cobro → NO afirmar "sin cobro" (los tokens de timeout traen su copy)
       setCapacityError(token ?? (game?.type === 'rental' ? 'RENTAL_TAKEN' : 'GAME_FULL'));
     };
 
+    // Aplica un estado RESOLUTIVO de la Order. Devuelve true si resolvió (fuente única de verdad).
+    const applyStatus = (status) => {
+      if (status === 'confirmed') { resolveConfirmed(); return true; }
+      if (status === 'expired')   { resolveTerminal('ORDER_EXPIRED'); return true; }
+      if (status === 'failed')    { resolveTerminal(); return true; }
+      return false;   // pending / incierto
+    };
+
+    // Última reconciliación antes de declarar fallo (credit): NO cancela nada, solo LEE el estado real.
+    // confirm_order materializa ATÓMICAMENTE junto con status→confirmed ⇒ pending DEFINITIVO = nada
+    // materializado (sin reservation, sin débito, cancha sigue libre) → error recuperable "sin cobro".
+    // Lectura incierta (null) → no podemos afirmar "sin cobro" → copy neutral recuperable.
+    const finalReconcile = async () => {
+      if (checkoutResolvedRef.current || !mountedRef.current) return;
+      const { data: row, error: readErr } = await getOrderStatus({ orderId });
+      if (checkoutResolvedRef.current || !mountedRef.current) return;
+      const status = (!readErr && row) ? row.status : null;
+      if (applyStatus(status)) return;
+      resolveTerminal(status === 'pending' ? 'CONFIRM_UNRESOLVED' : 'CONFIRM_UNCERTAIN');
+    };
+
     // Poll del MISMO orderId hasta estado RESOLUTIVO. Un único timer (pollTimerRef).
-    // pending → seguir; lectura incierta (red/auth/RLS: error o data null) → NO se asume
-    // nada, la operación sigue INCIERTA y el overlay permanece → reintentar.
+    // pending → seguir; lectura incierta (red/auth/RLS: error o data null) → seguir. Credit: al vencer
+    // el DEADLINE, una última reconciliación y se detiene (nunca infinito). Otros métodos: como hoy.
     const pollStatus = async () => {
       if (checkoutResolvedRef.current || !mountedRef.current) return;
       const { data: row, error: readErr } = await getOrderStatus({ orderId });
       if (checkoutResolvedRef.current || !mountedRef.current) return;
-      const status = (!readErr && row) ? row.status : null;   // null = incierto → seguir
-      if (status === 'confirmed') { resolveConfirmed(); return; }
-      if (status === 'expired') { resolveTerminal('ORDER_EXPIRED'); return; }
-      if (status === 'failed')  { resolveTerminal(); return; }
+      const status = (!readErr && row) ? row.status : null;
+      if (applyStatus(status)) return;
+      if (isCredit && Date.now() - t0 >= DEADLINE) { finalReconcile(); return; }   // corte finito
       pollTimerRef.current = setTimeout(pollStatus, 1000);     // pending / incierto
     };
 
-    const { data, error } = await confirmOrder({ orderId, paymentProof });
+    // Fase 2 (solo credit): a los ~6s desde el overlay, cambiar el copy del MISMO overlay.
+    if (isCredit) {
+      slowTimerRef.current = setTimeout(() => {
+        if (checkoutResolvedRef.current || !mountedRef.current) return;
+        setConfirmSlow(true);
+      }, Math.max(0, t0 + SLOW_AT - Date.now()));
+    }
+
+    // confirmOrder con timeout técnico SOLO para credit: si no resuelve en CONFIRM_TIMEOUT, NO dejamos
+    // el await colgado ni mostramos error → pasamos a reconciliación (poll). El promise perdedor se
+    // consume (then/catch) para no dejar rechazos sin manejar; un éxito tardío lo detecta el poll.
+    let data = null, error = null, timedOut = false;
+    if (isCredit) {
+      const raced = await Promise.race([
+        confirmOrder({ orderId, paymentProof }).then(r => ({ r }), e => ({ e })),
+        new Promise(res => setTimeout(() => res({ timeout: true }), CONFIRM_TIMEOUT)),
+      ]);
+      if (raced.timeout) timedOut = true;
+      else if (raced.e) error = raced.e;
+      else ({ data, error } = raced.r);
+    } else {
+      ({ data, error } = await confirmOrder({ orderId, paymentProof }));
+    }
     if (checkoutResolvedRef.current || !mountedRef.current) return;
+
+    if (timedOut) { pollStatus(); return; }             // aún NO es fallo → reconciliar
     if (!error && data?.ok) { resolveConfirmed(); return; }
 
     // confirm_order devolvió error: NO cerramos el overlay ni volvemos a ConfirmReservation,
@@ -1016,6 +1084,17 @@ export default function ConfirmReservation() {
     let body = null;
     try { body = await error?.context?.json(); } catch {}
     const code = body?.error ?? null;
+    // AUTH_REQUIRED (401): SOLO credit. Demostrado que confirm_order retornó ANTES de materializeReservation
+    // (cero efectos) y que NO hay retry automático sobre esta order → no tiene sentido pollear ni esperar el
+    // deadline. Cerramos ESTE hold pending de inmediato con el mecanismo existente (fail_order, CAS pending→
+    // failed, terminal_reason existente 'payment_rejected' = "confirm no completó, sin cobro"). Si el cierre
+    // falla, NO afirmamos que quedó cerrada: el TTL/expire_orders es la red de seguridad. Igual salimos del
+    // loading y mostramos error de auth/reintento (nueva reserva → nueva order_id).
+    if (isCredit && code === 'AUTH_REQUIRED') {
+      try { await failOrder({ orderId, reason: 'payment_rejected' }); } catch {}
+      resolveTerminal('AUTH_REQUIRED');
+      return;
+    }
     // ORDER_EXPIRED: terminal explícito → overlay "Reserva expirada", SIN poll infinito.
     if (code === 'ORDER_EXPIRED') { resolveTerminal('ORDER_EXPIRED'); return; }
     if (code === 'GAME_FULL' || code === 'RENTAL_TAKEN' || code === 'INSUFFICIENT_CREDIT') { resolveTerminal(); return; }
@@ -1799,10 +1878,10 @@ export default function ConfirmReservation() {
         }}>
           <div style={{ width: 52, height: 52, borderRadius: '50%', border: '4px solid rgba(255,255,255,0.2)', borderTop: '4px solid #fff', animation: 'spin 0.9s linear infinite', marginBottom: 28 }} />
           <div style={{ fontSize: 18, fontWeight: 700, color: '#fff', letterSpacing: -0.3, textAlign: 'center', lineHeight: 1.3 }}>
-            Estamos confirmando tu reserva...
+            {confirmSlow ? 'Está tardando más de lo habitual' : 'Estamos confirmando tu reserva...'}
           </div>
           <div style={{ marginTop: 10, fontSize: 14, color: 'rgba(255,255,255,0.6)', textAlign: 'center' }}>
-            No cierres esta pantalla.
+            {confirmSlow ? 'Estamos verificando el estado de tu reserva.' : 'No cierres esta pantalla.'}
           </div>
         </div>
       )}
@@ -1816,18 +1895,35 @@ export default function ConfirmReservation() {
       {capacityError && (() => {
         const isExpired = capacityError === 'ORDER_EXPIRED';
         const isUnavail = capacityError === 'GAME_UNAVAILABLE';
+        // Timeout reconciliado de credit: la Order NO se confirmó dentro del tiempo visible. Recuperable.
+        //   · CONFIRM_UNRESOLVED: pending DEFINITIVO → nada se materializó (atómico) → afirmamos "sin cobro".
+        //   · CONFIRM_UNCERTAIN: lectura incierta → NO afirmamos "sin cobro" (copy neutral).
+        const isUnresolved = capacityError === 'CONFIRM_UNRESOLVED';
+        const isUncertain  = capacityError === 'CONFIRM_UNCERTAIN';
+        // AUTH_REQUIRED (credit 401): confirm_order cortó pre-materialización → sin cobro; reintento.
+        const isAuth       = capacityError === 'AUTH_REQUIRED';
         const isRentalType = game?.type === 'rental';
         const u = gameUnavailableCopy(isRentalType);   // copy ÚNICO compartido con GameDetail
         // capacidad = GAME_FULL / RENTAL_TAKEN / RESERVED_SLOTS_UNAVAILABLE (falta de cupos)
         const capTitle = isExpired ? 'Reserva expirada'
           : isUnavail ? u.title
+          : (isUnresolved || isUncertain || isAuth) ? 'No pudimos confirmar tu reserva'
+          : isRentalType ? 'La disponibilidad cambió'   // cancha: no son "cupos", es la cancha entera
           : 'No hay suficientes cupos disponibles';
         const capBody = isExpired
           ? 'El tiempo para completar la reserva terminó. Vuelve a intentarlo.'
           : isUnavail
             ? u.message
-            : 'Mientras realizabas la reserva, uno o más cupos fueron reservados. Vuelve para consultar la disponibilidad actual.';
-        // GAME_UNAVAILABLE → LISTA (u.path). Capacidad y ORDER_EXPIRED → detalle (navigate(-1)).
+            : isAuth
+              ? 'Hubo un problema con tu sesión y no se realizó ningún cobro. Inténtalo nuevamente.'
+              : isUnresolved
+              ? 'No se realizó ningún cobro. Inténtalo nuevamente.'
+              : isUncertain
+                ? 'Revísalo en «Próximos eventos»; si no aparece, inténtalo nuevamente.'
+                : isRentalType
+                  ? 'Durante el proceso, puede ser que la cancha seleccionada haya sido reservada. Vuelve a consultar la disponibilidad.'
+                  : 'Mientras realizabas la reserva, uno o más cupos fueron reservados. Vuelve para consultar la disponibilidad actual.';
+        // GAME_UNAVAILABLE → LISTA (u.path). Capacidad / ORDER_EXPIRED / timeout → detalle (navigate(-1)).
         const capCta = isUnavail ? u.cta : (isRentalType ? 'Volver a la cancha' : 'Volver al partido');
         const onCta = isUnavail ? () => navigate(u.path) : () => navigate(-1);
         return (

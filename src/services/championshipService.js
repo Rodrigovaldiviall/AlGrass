@@ -26,6 +26,33 @@ export function createTransferHold({ gameIds, idempotencyKey, config }) {
   });
 }
 
+// ── Championship GATEWAY (pending LÓGICO multicancha; pago por PASARELA) ──────────────────────
+// create_championship_gateway_order(RPC): al pulsar PAGAR, ANTES del cobro externo. Adquiere el pending
+// lógico (championship='gateway_hold', order='pending', N CRG). Los games SIGUEN published (no se reservan
+// hasta confirmar el pago). Idempotente por (payer, idempotencyKey). Errores: 'AVAILABILITY_CHANGED' /
+// 'NO_CAPACITY' (carrera: rental/match/otro gateway/transfer pending o físico). En error NO se creó nada.
+export function createGatewayOrder({ gameIds, idempotencyKey, config }) {
+  return supabase.rpc('create_championship_gateway_order', {
+    p_game_ids:        gameIds,
+    p_idempotency_key: idempotencyKey,
+    p_config:          config ?? {},
+  });
+}
+
+// confirm_championship_gateway_payment(RPC): el cobro externo (mock) aprobó → materializa ALL-OR-NONE
+// (games published→reserved+championship_id, order→confirmed, championship→pending_publish, 1 spend).
+// Idempotente. Errores: 'AVAILABILITY_CHANGED' (algún game se tomó antes de confirmar), 'ORDER_EXPIRED',
+// 'INVALID_STATE', 'NOT_OWNER'. SOLO aquí los games pasan a reserved.
+export function confirmGatewayPayment({ championshipId }) {
+  return supabase.rpc('confirm_championship_gateway_payment', { p_championship_id: championshipId });
+}
+
+// fail_championship_gateway(RPC): el cobro externo falló/rechazó → cancela el pending (order→failed,
+// borra CRG, championship→canceled). Games siguen published; SIN spend/refund/wallet. Idempotente.
+export function failGateway({ championshipId, reason = null }) {
+  return supabase.rpc('fail_championship_gateway', { p_championship_id: championshipId, p_reason: reason });
+}
+
 // quote_championship(RPC): precio REAL informativo (autoridad server-side). Devuelve el breakdown jsonb
 // (court/referee/fee/extras/amount_total). NO crea nada. El cliente envía games.id + group_id + extras{code,quantity};
 // nunca tarifas/service_court_hours/amount_total. Errores: CHAMPIONSHIP_*_UNAVAILABLE, BOOKING_LEAD_NOT_MET, EXTRA_*.
