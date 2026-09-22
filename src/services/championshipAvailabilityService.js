@@ -36,7 +36,7 @@ export async function fetchChampionshipInventory() {
       id, date_key, time, duration_min, format,
       fields:field_id (
         id, name, format, duration_min,
-        venues:venue_id ( id, name, district, address, city, venue_amenities:amenities )
+        venues:venue_id ( id, name, district, address, city, lat, lng, cover_image_path, cover_updated_at, venue_amenities:amenities )
       )
     `)
     .eq('type', 'rental')
@@ -66,6 +66,11 @@ export async function fetchChampionshipInventory() {
       address: venue?.address ?? '',
       city: venue?.city ?? '',
       amenities: venue?.venue_amenities ?? {},
+      // Datos de VENUE para el detalle /venue (foto/ubicación del VENUE, no de una cancha concreta).
+      venueLat: venue?.lat ?? null,
+      venueLng: venue?.lng ?? null,
+      venueCoverPath: venue?.cover_image_path ?? null,
+      venueCoverVersion: venue?.cover_updated_at ? new Date(venue.cover_updated_at).getTime() : null,
     };
   }).filter(g => g.venueId && g.fieldId && !Number.isNaN(g.startMin));
   // §11: resolución visual = 30 min. Si algún rental empieza en minutos distintos de :00/:30, avisarlo
@@ -113,6 +118,9 @@ export function championshipVenues(games, format, districtSet, amenitySet) {
       byVenue.set(g.venueId, {
         id: g.venueId, name: g.venueName, district: g.district, address: g.address,
         city: g.city, amenities: g.amenities || {}, fieldIds: new Set(),
+        // Venue-level para /venue: ubicación + foto del VENUE (compartida por todas sus canchas).
+        lat: g.venueLat ?? null, lng: g.venueLng ?? null,
+        coverPath: g.venueCoverPath ?? null, coverVersion: g.venueCoverVersion ?? null,
       });
     }
     byVenue.get(g.venueId).fieldIds.add(g.fieldId);

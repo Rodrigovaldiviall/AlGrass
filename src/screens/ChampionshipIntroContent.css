@@ -193,6 +193,10 @@
    la regla global .screen-shell ni afectar otras pantallas. El form (sin esta
    clase) queda intacto; mobile no se ve afectado (este bloque es >=1024).
    ============================================================ */
+/* X flotante de "cerrar" del intro: oculta por defecto (mobile usa la X del header azul);
+   solo se muestra en desktop, donde el header está oculto (regla display:flex más abajo). */
+.championship-intro-close { display: none; }
+
 @media (min-width: 1024px) {
   .screen-shell.championship-intro-shell {
     max-width: none;
@@ -200,6 +204,17 @@
     zoom: 1;          /* sin el 0.88 que encogía la intro */
     height: 100dvh;   /* al quitar el zoom, la altura vuelve a 100dvh (no 114dvh) */
   }
+
+  /* Control flotante de cerrar (esquina superior derecha del área de contenido). El wrapper
+     .screen-shell ya es position:relative en desktop, así que se ancla a él sin header ni barra. */
+  .championship-intro-close {
+    display: flex; align-items: center; justify-content: center;
+    position: absolute; top: 12px; right: 20px; z-index: 5;
+    width: 40px; height: 40px; border-radius: 999px;
+    background: transparent; border: none; cursor: pointer;
+    color: #45536F; transition: background .15s ease, color .15s ease;
+  }
+  .championship-intro-close:hover { background: rgba(0,0,0,0.05); color: #0B1B3A; }
 
   /* Header azul del intro: SOLO desktop se oculta (la nav global es el sidebar) → el contenido
      empieza directamente arriba. En mobile el header se conserva. */
