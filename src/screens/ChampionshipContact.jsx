@@ -1,14 +1,18 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, DANGER } from '../constants';
 import { CURRENT_USER_NAME } from '../data/championshipTeamsMock';
-// Catálogos existentes (no se duplican): formatos y distritos.
-import { FORMATS, DISTRICTS } from '../data/championshipFormats';
-// Mismo patrón de prefijo telefónico de Perfil (auditado y reutilizado sin tocar Profile).
-import { detectPrefix } from '../utils/profileData';
+// Catálogo de formatos + tramos de equipos (los distritos ya NO salen de aquí: se derivan de venues reales).
+import { FORMATS, RECOMMENDATION_GROUPS } from '../data/championshipFormats';
+// Mismo patrón de prefijo telefónico + etiquetas de mes de Perfil (reutilizados sin tocarlos).
+import { detectPrefix, MONTH_LABELS } from '../utils/profileData';
 // Selector de distritos (multiselección) reutilizado de Partidos.
 import DistrictSheet from '../components/DistrictSheet';
+// Inventario REAL de Campeonatos (fuente de ciudades/distritos) + config por ciudad (antelación mínima).
+import { fetchChampionshipInventory } from '../services/championshipAvailabilityService';
+import { getChampionshipConfig } from '../services/championshipService';
+import { peruTodayParts } from '../lib/peruTime';
 
 // Mismo session-state que ChampionshipView. Sin persistencia real (mock, sin Supabase).
 const CV_KEY = 'championship_view_state';
@@ -19,6 +23,57 @@ function readCity() { try { return JSON.parse(localStorage.getItem('pichanga_pro
 const CARD = { background: '#fff', borderRadius: 18, padding: '16px 16px', marginBottom: 12 };
 const inputStyle = { width: '100%', boxSizing: 'border-box', border: `1.5px solid ${HAIR}`, background: '#fff', height: 44, padding: '0 12px', fontSize: 16, color: TEXT, fontFamily: 'inherit', outline: 'none', borderRadius: 12, WebkitTapHighlightColor: 'transparent' };
 const selectStyle = { ...inputStyle, padding: '0 34px 0 12px', appearance: 'none', WebkitAppearance: 'none', background: `#fff url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 12px center` };
+// Select compacto para la fila Día|Mes|Año (mismo lenguaje que "Fecha de nacimiento"): flex + appearance:none
+// + min-width:0 para que quepa en mobile sin desbordar (reemplaza a <input type="date">).
+const dateSelStyle = { ...inputStyle, minWidth: 0, height: 44, padding: '0 28px 0 10px', fontSize: 15, appearance: 'none', WebkitAppearance: 'none', background: `#fff url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 10px center` };
+
+// Mínimo de equipos PERMITIDO (tramo base) derivado de los tramos reales, no hardcodeado (hoy = 4).
+const MIN_TEAMS = Math.min(...RECOMMENDATION_GROUPS.map(g => g.min));
+
+// ── Helpers de fecha (sin la lógica 18+ de birthdate.js) ────────────────────────────────────────────
+const daysInMonth = (y, m) => new Date(y, m, 0).getDate();          // m = 1..12 → 28/29/30/31 (bisiesto-aware)
+const partsToStr = (p) => (p && p.year && p.month && p.day)
+  ? `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}` : null;
+const strToParts = (s) => { if (!s || typeof s !== 'string') return null; const [y, m, d] = s.split('-').map(Number); return (y && m && d) ? { year: y, month: m, day: d } : null; };
+// a >= b (comparación de calendario por partes)
+const geParts = (a, b) => a.year !== b.year ? a.year > b.year : (a.month !== b.month ? a.month > b.month : a.day >= b.day);
+// Suma leadDays a hoy(Lima) y devuelve las partes de la fecha mínima permitida (rollover de mes/año correcto).
+const addLead = (today, leadDays) => { const d = new Date(today.year, today.month - 1, today.day + leadDays); return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() }; };
+// Re-encaja unas partes al mínimo: sube mes/año si están por debajo y resetea el día si deja de ser válido.
+const clampParts = (value, min) => {
+  let { year, month, day } = value;
+  if (year < min.year) { year = min.year; month = min.month; }
+  if (year === min.year && month < min.month) month = min.month;
+  const dayFrom = (year === min.year && month === min.month) ? min.day : 1;
+  const dayTo = daysInMonth(year, month);
+  if (day != null && (day < dayFrom || day > dayTo)) day = null;
+  return { year, month, day };
+};
+
+// Fila Día | Mes | Año con opciones acotadas por `min` (mínimo permitido). Día vacío = placeholder "Día".
+function DateTriple({ value, min, onChange, disabled }) {
+  const YEARS_AHEAD = 3;
+  const years = Array.from({ length: YEARS_AHEAD + 1 }, (_, i) => min.year + i);
+  const monthFrom = value.year === min.year ? min.month : 1;
+  const months = Array.from({ length: 12 - monthFrom + 1 }, (_, i) => monthFrom + i);
+  const dayFrom = (value.year === min.year && value.month === min.month) ? min.day : 1;
+  const dayTo = daysInMonth(value.year, value.month);
+  const days = Array.from({ length: Math.max(0, dayTo - dayFrom + 1) }, (_, i) => dayFrom + i);
+  return (
+    <div style={{ display: 'flex', gap: 8 }}>
+      <select disabled={disabled} value={value.day ?? ''} onChange={e => { const v = Number(e.target.value); onChange({ ...value, day: v || null }); }} style={{ ...dateSelStyle, flex: '0 0 84px', color: value.day ? TEXT : SUB }}>
+        <option value="">Día</option>
+        {days.map(d => <option key={d} value={d}>{d}</option>)}
+      </select>
+      <select disabled={disabled} value={value.month} onChange={e => onChange(clampParts({ ...value, month: Number(e.target.value) }, min))} style={{ ...dateSelStyle, flex: 1 }}>
+        {months.map(m => <option key={m} value={m}>{MONTH_LABELS[m - 1]}</option>)}
+      </select>
+      <select disabled={disabled} value={value.year} onChange={e => onChange(clampParts({ ...value, year: Number(e.target.value) }, min))} style={{ ...dateSelStyle, flex: '0 0 92px' }}>
+        {years.map(y => <option key={y} value={y}>{y}</option>)}
+      </select>
+    </div>
+  );
+}
 
 function Lbl({ children, required, optional }) {
   return (
@@ -67,7 +122,55 @@ export default function ChampionshipContact() {
   const isLiga = summary.mode === 'liga';
   const formatPending = !!summary.contactMe;
   const venuePending = !!summary.courtCustom || !summary.venueName;
-  const city = existing?.city || readCity();
+  // ── Inventario REAL de Campeonatos → ciudades/distritos dinámicos (sin hardcode) ──
+  const [inv, setInv] = useState(null);                 // games (con city/district) | null = cargando
+  const invLoading = inv == null;
+  useEffect(() => {
+    let alive = true;
+    fetchChampionshipInventory().then(({ games, error }) => { if (alive) setInv(error ? [] : (games || [])); });
+    return () => { alive = false; };
+  }, []);
+  const cities = useMemo(() => [...new Set((inv || []).map(g => g.city).filter(Boolean))].sort(), [inv]);
+  const profileCity = readCity();
+  // Prioridad: existing.city (si válida) → ciudad de perfil (si en cities) → primera del inventario → '' mientras carga.
+  const [selectedCity, setSelectedCity] = useState('');
+  useEffect(() => {
+    if (invLoading || (selectedCity && cities.includes(selectedCity))) return;
+    setSelectedCity((existing?.city && cities.includes(existing.city)) ? existing.city
+      : (cities.includes(profileCity) ? profileCity : (cities[0] || '')));
+  }, [invLoading, cities]); // eslint-disable-line
+  const districtsForCity = useMemo(
+    () => [...new Set((inv || []).filter(g => g.city === selectedCity).map(g => g.district).filter(Boolean))].sort(),
+    [inv, selectedCity]
+  );
+  // Restaurar districts: al resolver la ciudad la PRIMERA vez, descartar los que no pertenezcan a ella (punto 18).
+  const districtsInitRef = useRef(false);
+  useEffect(() => {
+    if (invLoading || !selectedCity || districtsInitRef.current) return;
+    districtsInitRef.current = true;
+    setDistricts(prev => prev.filter(d => districtsForCity.includes(d)));
+  }, [invLoading, selectedCity]); // eslint-disable-line
+  const onCityChange = (v) => { setSelectedCity(v); setDistricts([]); };   // cambiar ciudad limpia distritos (punto 5)
+
+  // ── Antelación mínima (booking_lead_rules del config por ciudad) → minParts ──
+  const [champCfg, setChampCfg] = useState(null);
+  useEffect(() => {
+    if (!selectedCity) { setChampCfg(null); return; }
+    let alive = true;
+    getChampionshipConfig({ city: selectedCity }).then(({ data, error }) => { if (alive) setChampCfg(error ? null : data); });
+    return () => { alive = false; };
+  }, [selectedCity]);
+  const leadDays = useMemo(() => {
+    const rules = Array.isArray(champCfg?.booking_lead_rules) ? champCfg.booking_lead_rules : [];
+    const valid = rules.filter(r => Number.isFinite(+r?.min_teams) && Number.isFinite(+r?.max_teams) && Number.isFinite(+r?.days)
+      && +r.min_teams >= 1 && +r.max_teams >= +r.min_teams && +r.days >= 0);
+    // Regla BASE = la cuyo rango incluye el mínimo de equipos permitido (MIN_TEAMS). Su `days` es la antelación
+    // mínima base de Campeonatos. NO depende del nº de equipos de este form ni del MAX. Sin match → 0 (fallback Organize).
+    const base = valid.find(r => +r.min_teams <= MIN_TEAMS && MIN_TEAMS <= +r.max_teams);
+    return base ? +base.days : 0;
+  }, [champCfg]);
+  const today = peruTodayParts();                                     // {year,month,day} en Lima (fuente de "hoy")
+  const minParts = useMemo(() => addLead(today, leadDays), [leadDays]); // eslint-disable-line
 
   // ── Valores iniciales (prefiere los de la solicitud existente) ──
   const initDistricts = existing?.districts ? [...existing.districts] : (Array.isArray(organizeState?.districts) ? [...organizeState.districts] : []);
@@ -84,9 +187,23 @@ export default function ChampionshipContact() {
   const [districts, setDistricts] = useState(initDistricts);
   const [districtSheetOpen, setDistrictSheetOpen] = useState(false);
   const toggleDistrict = (d) => setDistricts(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d]);
-  const [tentativeDate, setTentativeDate] = useState(existing?.tentativeDate || '');
-  const [startDate, setStartDate] = useState(existing?.tentativeStartDate || '');
-  const [endDate, setEndDate] = useState(existing?.tentativeEndDate || '');
+  // Fecha(s) como Día/Mes/Año. Día vacío hasta que el usuario elige. Mes/Año se rellenan a minParts (efectos).
+  const initDate = (s) => { const p = strToParts(s); return p ? { year: p.year, month: p.month, day: p.day } : { year: today.year, month: today.month, day: null }; };
+  const [tParts, setTParts] = useState(() => initDate(existing?.tentativeDate));
+  const [sParts, setSParts] = useState(() => initDate(existing?.tentativeStartDate));
+  const [eParts, setEParts] = useState(() => initDate(existing?.tentativeEndDate));
+  // Liga End: mínimo = max(minParts, Start). Si Start está completo y ≥ minParts → End no puede ser antes de Start.
+  const startComplete = !!(sParts.year && sParts.month && sParts.day);
+  const endMin = (startComplete && geParts(sParts, minParts)) ? sParts : minParts;
+  const fillMin = (p, min) => (p.year == null || p.month == null)
+    ? { year: min.year, month: min.month, day: null }        // sin mes/año aún → defaults del mínimo, día vacío
+    : clampParts(p, min);                                    // ya elegidos → re-encajar (día se resetea si < mínimo)
+  useEffect(() => { setTParts(prev => fillMin(prev, minParts)); setSParts(prev => fillMin(prev, minParts)); }, [minParts.year, minParts.month, minParts.day]); // eslint-disable-line
+  useEffect(() => { setEParts(prev => fillMin(prev, endMin)); }, [endMin.year, endMin.month, endMin.day]); // eslint-disable-line
+  // Contrato de submit intacto: strings YYYY-MM-DD | null (null mientras el día esté vacío).
+  const tentativeDate = partsToStr(tParts);
+  const startDate = partsToStr(sParts);
+  const endDate = partsToStr(eParts);
   const [matchDuration, setMatchDuration] = useState(initMatchSel);
   const [matchDurationCustom, setMatchDurationCustom] = useState(initMatchCustom);
   const [format, setFormat] = useState(initFormat);
@@ -128,7 +245,7 @@ export default function ChampionshipContact() {
     company: company.trim() || null,
     jobTitle: jobTitle.trim() || null,
     message: message.trim() || null,
-    city,
+    city: selectedCity,
     districts: districts.length ? districts : null,
     ...(isLiga
       ? { tentativeStartDate: startDate || null, tentativeEndDate: endDate || null, matchDuration: effMatchDuration }
@@ -173,9 +290,9 @@ export default function ChampionshipContact() {
     setJobTitle(req.jobTitle || '');
     setMessage(req.message || '');
     setDistricts(req.districts ? [...req.districts] : []);
-    setTentativeDate(req.tentativeDate || '');
-    setStartDate(req.tentativeStartDate || '');
-    setEndDate(req.tentativeEndDate || '');
+    setTParts(initDate(req.tentativeDate));
+    setSParts(initDate(req.tentativeStartDate));
+    setEParts(initDate(req.tentativeEndDate));
     setFormat(req.format || '');
     const opts = (req.format === '11v11') ? [70, 80, 90] : [30, 40, 50, 60];
     const m = req.matchDuration ?? null;
@@ -202,7 +319,13 @@ export default function ChampionshipContact() {
 
         <div style={{ marginBottom: 12 }}>
           <Lbl>Ciudad</Lbl>
-          <div style={{ ...inputStyle, background: SOFT, border: `1px solid ${HAIR}`, display: 'flex', alignItems: 'center', color: TEXT }}>{city}</div>
+          <select value={selectedCity} onChange={e => onCityChange(e.target.value)} disabled={invLoading || cities.length === 0} style={{ ...selectStyle, color: selectedCity ? TEXT : SUB }}>
+            {invLoading
+              ? <option value="">Cargando…</option>
+              : cities.length === 0
+                ? <option value="">Sin ciudades disponibles</option>
+                : cities.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
         </div>
 
         <div style={{ marginBottom: 12 }}>
@@ -216,17 +339,17 @@ export default function ChampionshipContact() {
           <>
             <div style={{ marginBottom: 12 }}>
               <Lbl optional>Fecha tentativa de inicio</Lbl>
-              <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={inputStyle} />
+              <DateTriple value={sParts} min={minParts} onChange={setSParts} disabled={invLoading} />
             </div>
             <div style={{ marginBottom: 12 }}>
               <Lbl optional>Fecha tentativa de fin</Lbl>
-              <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={inputStyle} />
+              <DateTriple value={eParts} min={endMin} onChange={setEParts} disabled={invLoading} />
             </div>
           </>
         ) : (
           <div style={{ marginBottom: 12 }}>
             <Lbl optional>Fecha tentativa</Lbl>
-            <input type="date" value={tentativeDate} onChange={e => setTentativeDate(e.target.value)} style={inputStyle} />
+            <DateTriple value={tParts} min={minParts} onChange={setTParts} disabled={invLoading} />
           </div>
         )}
 
@@ -360,7 +483,7 @@ export default function ChampionshipContact() {
 
       {/* Overlays (comunes) */}
       {districtSheetOpen && (
-        <DistrictSheet city={city} districts={DISTRICTS} selected={districts} onToggle={toggleDistrict} onClear={() => setDistricts([])} onClose={() => setDistrictSheetOpen(false)} />
+        <DistrictSheet city={selectedCity} districts={districtsForCity} selected={districts} onToggle={toggleDistrict} onClear={() => setDistricts([])} onClose={() => setDistrictSheetOpen(false)} />
       )}
       {confirmDelete && (
         <div className="sheet-overlay" onClick={() => setConfirmDelete(false)} style={{ position: 'fixed', inset: 0, zIndex: 250, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', background: 'rgba(0,0,0,0.35)', padding: '0 16px calc(24px + env(safe-area-inset-bottom))' }}>
