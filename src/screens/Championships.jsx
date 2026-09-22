@@ -203,13 +203,7 @@ export default function Championships() {
         {/* CTA flotante: fijo justo encima del TabBar, el contenido pasa por detrás */}
         <div style={{ position: 'absolute', left: 16, right: 16, bottom: 12, pointerEvents: 'none' }}>
           <button
-            onClick={() => {
-              try { sessionStorage.removeItem('championship_organize_draft'); } catch {}
-              // Desktop (≥1024, breakpoint del proyecto): pasa por la pantalla informativa nueva.
-              // Mobile: comportamiento actual intacto (directo al flujo, con su intro interno).
-              const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
-              navigate(isDesktop ? '/championships/intro' : '/championships/organize');
-            }}
+            onClick={() => { try { sessionStorage.removeItem('championship_organize_draft'); } catch {} navigate('/championships/organize'); }}
             className="pressable"
             style={{
               pointerEvents: 'auto',

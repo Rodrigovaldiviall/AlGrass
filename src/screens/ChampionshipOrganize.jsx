@@ -13,6 +13,11 @@ import {
   buildInsufficientPreview, championshipSlotForAnchor, championshipCombinationValid,
 } from '../services/championshipAvailabilityService';
 import ConfirmExitDialog from '../components/ConfirmExitDialog';
+import './ChampionshipIntroContent.css';
+import cimg01 from '../assets/championship-intro/01-app.webp';
+import cimg02 from '../assets/championship-intro/02-arbitro.webp';
+import cimg03 from '../assets/championship-intro/03-organizador.webp';
+import cimg04 from '../assets/championship-intro/04-celebracion.webp';
 
 // Mismo patrón de fechas que Partidos (DateCell): día abreviado + número, 30 días de horizonte.
 const DOW_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
@@ -150,9 +155,7 @@ export default function ChampionshipOrganize() {
   // Paso del flujo de creación: 'intro' (pantalla informativa) → 'form' (configuración actual).
   // Al VOLVER a editar (restore presente) se entra directo al formulario (la intro solo aparece al
   // crear desde cero). Es un step interno: NO añade ruta ni cambia el back de la edición.
-  // Desde la pantalla informativa DESKTOP nueva (ChampionshipIntro → "Empezar") se entra directo al
-  // FORMATO, saltando el intro interno (evita doble intro). Restore/back también entra en 'form'.
-  const [step, setStep] = useState((restore || location.state?.fromIntro) ? 'form' : 'intro');
+  const [step, setStep] = useState(restore ? 'form' : 'intro');
   const [confirmExit, setConfirmExit] = useState(false);   // X = salir del flujo → confirmación
 
   const [mode, setMode] = useState(restore?.mode ?? 'oneday');            // 'oneday' | 'liga'
@@ -698,40 +701,136 @@ export default function ChampionshipOrganize() {
   // arriba del formulario (movido, no duplicado). "Continuar" → paso 'form'. Atrás → Campeonatos.
   if (step === 'intro') {
     return (
-      <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: SOFT, overflow: 'hidden' }}>
-        <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 8, paddingRight: 16, flexShrink: 0 }}>
+      <div className="screen-shell championship-intro-shell" style={{ display: 'flex', flexDirection: 'column', background: SOFT, overflow: 'hidden' }}>
+        {/* Header azul del intro: se OCULTA en desktop (>=1024, donde la nav global es el sidebar);
+            en mobile se conserva intacto (flecha/X = salida directa a /championships, sin confirm). */}
+        <div className="championship-intro-header" style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 8, paddingRight: 16, flexShrink: 0 }}>
           <div style={{ height: 26, display: 'flex', alignItems: 'center', position: 'relative' }}>
             <button onClick={() => navigate('/championships')} style={{ position: 'absolute', left: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </button>
             <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>Crear nuevo campeonato</div>
+            {/* X en el INTRO: salida DIRECTA a Campeonatos, SIN confirmación (aún no hay datos que perder). */}
+            <button onClick={() => navigate('/championships')} aria-label="Salir" style={{ position: 'absolute', right: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="#fff" strokeWidth="2" strokeLinecap="round" /></svg>
+            </button>
           </div>
         </div>
 
         <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', paddingLeft: 16, paddingRight: 16, paddingTop: 14 }}>
-          <div style={{ display: 'flex', gap: 10, background: '#E8F1FF', borderRadius: 14, padding: '12px 12px 12px 12px', marginBottom: 16 }}>
-            <div style={{ width: 32, height: 32, borderRadius: '50%', background: BLUE, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                <path d="M7 4h10v5a5 5 0 0 1-10 0V4z" stroke="#fff" strokeWidth="1.7" strokeLinejoin="round" />
-                <path d="M7 6H4.5v1.5A2.5 2.5 0 0 0 7 10M17 6h2.5v1.5A2.5 2.5 0 0 1 17 10" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M12 14v3M9 20.5h6M9.5 20.5c0-1.4.8-2.3 2.5-2.3s2.5.9 2.5 2.3" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </div>
-            <div style={{ minWidth: 0, fontSize: 13, color: SUB, lineHeight: 1.55 }}>
-              <div>Te ayudamos con la organización: solo elige el <span style={{ color: BLUE, fontWeight: 700 }}>formato</span> y la <span style={{ color: BLUE, fontWeight: 700 }}>cancha</span>; nosotros nos encargamos del resto: organizador, árbitros y mucho más.</div>
-              <div style={{ marginTop: 8 }}>En <span style={{ color: ORANGE, fontWeight: 700 }}>Ver mi campeonato</span> verás la etapa de <span style={{ textDecoration: 'underline' }}>Inscripciones</span> y <span style={{ textDecoration: 'underline' }}>Calendario y resultados</span>.</div>
-              <div style={{ marginTop: 8 }}>Despreocúpate y juega.</div>
+          {/* Contenido informativo (docs/championship-intro): vive DENTRO de este .no-sb; el header azul,
+              el scroll y el footer "Empezar" los aporta este mismo step. Estilos en ChampionshipIntroContent.css. */}
+          <div className="champ-intro">
+            <div className="ci-content">
+
+              <section className="intro">
+                <div className="intro__texto">
+                  <p className="antetitulo">Campeonatos de fútbol</p>
+                  <h1>Organiza tu campeonato con AlGrass. <span>Despreocúpate y juega.</span></h1>
+                </div>
+                <p className="bajada">
+                  <strong>Todo en un solo lugar.</strong> Olvídate de cotizar canchas, conseguir árbitros y buscar quién se haga cargo. Nosotros nos encargamos de todo.
+                </p>
+              </section>
+
+              <section className="tira" aria-label="Cómo se vive un campeonato AlGrass">
+                <img src={cimg01} width="1200" height="600" loading="lazy" alt="Dos personas siguen la tabla de posiciones del campeonato desde el celular." />
+                <img src={cimg02} width="1200" height="600" loading="lazy" alt="Un árbitro señala una falta durante un partido en cancha de grass." />
+                <img src={cimg03} width="1200" height="600" loading="lazy" alt="El organizador mira tranquilo el partido desde su escritorio." />
+                <img src={cimg04} width="1200" height="600" loading="lazy" alt="El equipo campeón levanta el trofeo con las medallas puestas." />
+              </section>
+
+              <section className="paneles">
+
+                <div className="panel-tu">
+                  <h2 className="rotulo">Lo que haces tú</h2>
+
+                  <div className="paso">
+                    <span className="paso__num">01</span>
+                    <div>
+                      <div className="paso__titulo">Elige el formato</div>
+                      <p>Torneo o liga, fútbol 7, 8, 11… y cantidad de equipos (personas).</p>
+                    </div>
+                  </div>
+
+                  <div className="separador"></div>
+
+                  <div className="paso">
+                    <span className="paso__num">02</span>
+                    <div>
+                      <div className="paso__titulo">Elige la cancha</div>
+                      <p>Disponibilidad real. Reservas todas las fechas de una vez.</p>
+                    </div>
+                  </div>
+
+                  <div className="aviso">
+                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#B34A0C" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4L3 21l1.1-3.4A8.4 8.4 0 1 1 21 11.5z"></path></svg>
+                    <p>¿No encuentras lo que buscas? No te preocupes, nos pondremos en contacto contigo.</p>
+                  </div>
+                </div>
+
+                <div className="panel-nosotros">
+                  <h2 className="rotulo">Lo que hacemos nosotros</h2>
+
+                  {/* HOLDER BLANCO 1 — Experiencia (Inscripciones / Calendario como mini-cards) */}
+                  <div className="tarjeta kit">
+                    <div className="tarjeta__titulo">Brindamos una experiencia de campeonato profesional</div>
+                    <div className="kit__items kit__items--stack">
+                      <div className="kit__card">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1B4FD1" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.4"></circle><path d="M2.5 20c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5"></path><path d="M17 5.2a3.4 3.4 0 0 1 0 5.6"></path><path d="M19 13.8c1.6 1.2 2.5 3.1 2.5 5.2"></path></svg>
+                        <div>
+                          <div className="kit__card-title">Inscripciones</div>
+                          <div className="kit__card-text">Tus jugadores se inscriben solos: crean sus equipos y se suman con un link. Tú no persigues a nadie ni armas listas.</div>
+                        </div>
+                      </div>
+                      <div className="kit__card">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1B4FD1" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3"></rect><path d="M3 10h18"></path><path d="M8 3v4"></path><path d="M16 3v4"></path><path d="M8 14.5h3"></path><path d="M14 14.5h2"></path></svg>
+                        <div>
+                          <div className="kit__card-title">Calendario y resultados</div>
+                          <div className="kit__card-text">Fixture con fechas y horas, resultados, tabla y goleadores. Lo siguen todos los jugadores y quien tú invites.</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* HOLDER BLANCO 2 — Logística */}
+                  <div className="tarjeta kit">
+                    <div className="tarjeta__titulo">Nos encargamos de toda la logística y más</div>
+                    <div className="kit__items">
+                      <div className="kit__item">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1B4FD1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4.5 20.5c0-4.1 3.4-7.5 7.5-7.5s7.5 3.4 7.5 7.5"></path></svg>
+                        <span>Organizador</span>
+                      </div>
+                      <div className="kit__item">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1B4FD1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 21V4"></path><path d="M5 5h12l-2.2 4L17 13H5"></path></svg>
+                        <span>Árbitros</span>
+                      </div>
+                      <div className="kit__item">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1B4FD1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 8l9-5 9 5v8l-9 5-9-5z"></path><path d="M3 8l9 5 9-5"></path></svg>
+                        <span>Chalecos y balón</span>
+                      </div>
+                      <div className="kit__item">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1B4FD1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 8.5h4l1.5-2.5h7L17 8.5h4v11H3z"></path><circle cx="12" cy="13.5" r="3.2"></circle></svg>
+                        <span>Fotos</span>
+                      </div>
+                    </div>
+                    <p className="kit__extra">Y lo que quieras sumar: trofeo, medallas, premiación.</p>
+                  </div>
+                </div>
+
+              </section>
+
             </div>
           </div>
         </div>
 
-        <div style={{ padding: '10px 16px calc(12px + env(safe-area-inset-bottom))', background: SOFT }}>
-          <button onClick={() => setStep('form')} className="pressable" style={{
+        <div className="championship-intro-footer" style={{ padding: '10px 16px calc(12px + env(safe-area-inset-bottom))', background: SOFT }}>
+          <button onClick={() => setStep('form')} className="pressable championship-intro-cta" style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: 54,
             background: ORANGE, color: '#1B1B1F', border: 'none', borderRadius: 18,
             boxShadow: '0 6px 18px rgba(245,165,36,0.40)', cursor: 'pointer',
             fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, WebkitTapHighlightColor: 'transparent', outline: 'none',
-          }}>Continuar</button>
+          }}>Empezar</button>
         </div>
       </div>
     );

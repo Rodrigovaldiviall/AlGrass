@@ -385,20 +385,22 @@ export default function ChampionshipView() {
           {/* ── ZONA ABIERTA (mismo patrón que GameDetail: sin card, padding '18px 16px', hairline
                 superior, título 16/700). Fecha/Venue/Cancha + amenities. ── */}
           <div style={{ padding: '18px 16px', borderTop: `1px solid ${HAIR}` }}>
-            {/* BLOQUE 1 — Fecha (completa) + horario (inicio → final) · derecha: Comunícate con el organizador (owner) */}
+            {/* BLOQUE 1 — Fecha (completa) + horario (inicio → final). "Comunícate con el organizador"
+                (OrganizerContactButton global) se OCULTA SOLO en esta vista; intacto en GameDetail/RentalDetail. */}
             <ResumenRow
               icon="cal"
               value={complies ? (dateFull || 'Pendiente por confirmar') : 'Pendiente por confirmar'}
               sub={complies ? (timeRange || null) : null}
-              action={isOwner ? <OrganizerContactButton phone={organizerContactPhone} /> : undefined}
             />
             <div style={{ height: 1, background: HAIR, margin: '10px 0' }} />
-            {/* BLOQUE 2 — Venue + dirección · derecha: icono de ubicación de Partidos (Google Maps) */}
+            {/* BLOQUE 2 — Venue + dirección · Google Maps. Gate = checkoutReady (complies && !courtCustom):
+                solo con CANCHA REAL confirmada. Si el usuario eligió "contactarme"/"no encuentro" (courtCustom)
+                → NO cancha real → "Pendiente por confirmar" + SIN botón Maps (no inventar dirección). */}
             <ResumenRow
               icon="pin"
-              value={complies ? (summary.venueName || 'Pendiente por confirmar') : 'Pendiente por confirmar'}
-              sub={complies ? `${summary.venueAddress ?? ''}${summary.venueDistrict ? ' · ' + summary.venueDistrict : ''}` : 'Te contactaremos para coordinar la sede y el horario.'}
-              action={complies && (summary.venueAddress || summary.venueName) ? <MapsLinkButton address={[summary.venueName, summary.venueAddress, summary.venueDistrict]} down /> : undefined}
+              value={checkoutReady ? (summary.venueName || 'Pendiente por confirmar') : 'Pendiente por confirmar'}
+              sub={checkoutReady ? `${summary.venueAddress ?? ''}${summary.venueDistrict ? ' · ' + summary.venueDistrict : ''}` : 'Te contactaremos para coordinar la sede y el horario.'}
+              action={checkoutReady && (summary.venueAddress || summary.venueName) ? <MapsLinkButton address={[summary.venueName, summary.venueAddress, summary.venueDistrict]} down /> : undefined}
             />
             <div style={{ height: 1, background: HAIR, margin: '10px 0' }} />
             {/* BLOQUE 3 — SOLO "X canchas · X horas" (sin segunda línea) */}

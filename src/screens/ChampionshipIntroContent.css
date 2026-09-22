@@ -1,10 +1,10 @@
 /* ============================================================
-   AlGrass — Pantalla de información "Crear campeonato" (DESKTOP)
-   Fuente de verdad: docs/championship-intro/index.html
-   Todo el CSS va SCOPED bajo .champ-intro para no contaminar
-   otras pantallas (nombres de clase e variables :root del HTML).
-   La media query mobile (<=900px) del HTML se OMITE a propósito
-   (tarea solo-desktop). Valores idénticos al original.
+   AlGrass — Contenido informativo de "Crear campeonato"
+   Vive DENTRO del step `intro` de ChampionshipOrganize (dentro de su
+   .screen-shell + header azul + contenedor .no-sb + footer existentes).
+   Fuente de verdad visual: docs/championship-intro/index.html + (mobil).html.
+   NO incluye shell/scroll/CTA propios: eso lo aporta ChampionshipOrganize.
+   Todo va SCOPED bajo .champ-intro para no contaminar otras pantallas.
    ============================================================ */
 
 .champ-intro {
@@ -32,7 +32,6 @@
 
   font-family: var(--texto);
   color: var(--tinta);
-  background: var(--blanco);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -40,40 +39,17 @@
 
 .champ-intro h1,
 .champ-intro h2,
-.champ-intro h3,
-.champ-intro .display { font-family: var(--display); margin: 0; letter-spacing: -0.025em; }
+.champ-intro h3 { font-family: var(--display); margin: 0; letter-spacing: -0.025em; }
 .champ-intro p { margin: 0; }
-.champ-intro a { color: var(--azul); }
-.champ-intro a:hover { color: var(--azul-hover); }
 .champ-intro img { display: block; max-width: 100%; }
 
-/* --- Estructura ------------------------------------------------ */
-
-.champ-intro .pantalla {
-  position: relative;
-  max-width: 1440px;
-  min-height: 100vh;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-}
-
-/* X = SALIR del flujo → listado de Campeonatos (esta pantalla no tiene flecha atrás). */
-.champ-intro .salir {
-  position: absolute; top: 14px; right: 24px; z-index: 2;
-  width: 40px; height: 40px; border-radius: 999px;
-  display: flex; align-items: center; justify-content: center;
-  background: transparent; border: none; cursor: pointer;
-  color: var(--gris-suave); transition: background .15s ease, color .15s ease;
-}
-.champ-intro .salir:hover { color: var(--tinta); background: var(--linea-suave); }
-
-.champ-intro .contenido {
-  flex-grow: 1;
-  padding: 14px 64px 30px;
+/* Contenedor del contenido dentro del .no-sb de Organize (el scroll y el gutter lateral
+   los aporta ChampionshipOrganize; aquí solo apilamos con separación). */
+.champ-intro .ci-content {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  padding-bottom: 20px;
 }
 
 /* --- Intro ------------------------------------------------------ */
@@ -90,7 +66,7 @@
 .champ-intro .bajada { width: 435px; flex-shrink: 0; font-size: 17px; line-height: 1.55; color: var(--gris); padding-bottom: 4px; }
 .champ-intro .bajada strong { color: var(--tinta); font-weight: 600; }
 
-/* --- Tira de fotos (solo desktop) ------------------------------- */
+/* --- Tira de fotos --------------------------------------------- */
 
 .champ-intro .tira { display: flex; gap: 12px; height: 140px; }
 .champ-intro .tira img {
@@ -149,45 +125,37 @@
 .champ-intro .kit__item svg { flex-shrink: 0; }
 .champ-intro .kit__extra { font-size: 15px; line-height: 1.45; color: var(--gris-suave); }
 
-.champ-intro .duo { flex-grow: 1; display: flex; gap: 12px; }
-.champ-intro .duo .tarjeta { flex: 1 1 0; display: flex; flex-direction: column; gap: 8px; }
-.champ-intro .duo p { font-size: 15px; line-height: 1.5; color: var(--gris-suave); }
-
-/* --- Botón ------------------------------------------------------ */
-
-.champ-intro .cta { display: flex; justify-content: center; }
-.champ-intro .boton {
-  text-decoration: none; background: var(--azul); color: var(--blanco);
-  font-size: 17px; font-weight: 600; padding: 17px 52px; border-radius: 999px;
-  border: none; cursor: pointer; font-family: var(--texto);
-  transition: background .15s ease;
+/* Mini-card de "experiencia" (Inscripciones / Calendario): mismo lenguaje visual que .kit__item
+   (fondo gris muy claro + radio), con icono + título destacado + texto descriptivo. */
+.champ-intro .kit__card {
+  flex: 1 1 0; min-width: 0; display: flex; align-items: flex-start; gap: 9px;
+  background: var(--azul-fondo-2); border-radius: var(--r-sm); padding: 12px;
 }
-.champ-intro .boton:hover { background: var(--azul-hover); color: var(--blanco); }
+.champ-intro .kit__card > svg { flex-shrink: 0; margin-top: 1px; }
+.champ-intro .kit__card-title { font-size: 15px; font-weight: 700; color: var(--tinta); letter-spacing: -0.01em; }
+.champ-intro .kit__card-text { font-size: 13px; line-height: 1.45; color: var(--gris-suave); margin-top: 3px; }
 
 /* ============================================================
    MOBILE (<=900px) — reproduce docs/championship-intro/index (mobil).html
-   Mismo componente y misma ruta; solo responsive. La .barra del HTML de
-   referencia NO aplica: esta pantalla usa la navegación global de la app
-   (misma decisión que en desktop, sin header propio).
+   Solo el CONTENIDO (el scroll vertical y el footer los aporta Organize).
    ============================================================ */
 @media (max-width: 900px) {
-  .champ-intro .pantalla { min-height: 100dvh; }
-
-  .champ-intro .contenido { padding: 16px 20px 24px; gap: 14px; }
+  .champ-intro .ci-content { gap: 14px; }
 
   .champ-intro .intro { flex-direction: column; align-items: stretch; gap: 12px; }
   .champ-intro .intro h1 { font-size: 30px; max-width: none; }
   .champ-intro .bajada { width: auto; font-size: 15px; line-height: 1.5; padding-bottom: 0; }
 
-  /* Tira deslizable: sangra hasta el borde DERECHO y se arrastra con el dedo (swipe
-     nativo — sin carousel/flechas/dots/JS). Se ven ~2 fotos y media; el corte invita a deslizar.
-     object-position (48% / 38% / 45% / 40%) se conserva desde las reglas base. */
+  /* Tira deslizable: sangra hasta el borde DERECHO y se arrastra con el dedo (swipe nativo —
+     sin carousel/flechas/dots/JS). Se ven ~2 fotos y media; el corte invita a deslizar.
+     El sangrado usa el gutter REAL de Organize (.no-sb = 16px), no los 20px del mockup.
+     object-position (48%/38%/45%/40%) se conserva de las reglas base. */
   .champ-intro .tira {
     height: 96px;
     gap: 8px;
     overflow-x: auto;
-    margin-right: -20px;
-    padding-right: 20px;
+    margin-right: -16px;
+    padding-right: 16px;
     scroll-snap-type: x mandatory;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
@@ -208,25 +176,39 @@
   .champ-intro .panel-nosotros { padding: 14px; gap: 10px; }
   .champ-intro .tarjeta { padding: 14px; }
   .champ-intro .tarjeta__titulo { font-size: 16px; }
-  .champ-intro .duo p,
   .champ-intro .kit__extra { font-size: 13px; line-height: 1.45; }
 
   .champ-intro .kit__items { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  /* Experiencia (Inscripciones / Calendario): apiladas una encima de la otra en mobile
+     (la logística de 4 mantiene su grid 2×2). */
+  .champ-intro .kit__items--stack { grid-template-columns: 1fr; }
   .champ-intro .kit__item { background: transparent; padding: 0; }
+}
 
-  .champ-intro .duo { flex-direction: column; gap: 10px; }
-
-  /* CTA siempre visible pegado abajo mientras se hace scroll (sticky, NO fixed);
-     full-bleed y con safe-area de iOS. */
-  .champ-intro .cta {
-    position: sticky;
-    bottom: 0;
-    margin: 0 -20px;
-    padding: 14px 20px max(20px, env(safe-area-inset-bottom));
-    background: var(--blanco);
-    border-top: 1px solid var(--linea-suave);
+/* ============================================================
+   DESKTOP (>=1024px): SOLO el shell del step `intro` de ChampionshipOrganize
+   ocupa todo el ancho del .app-main (tras el sidebar), sin el max-width:1026
+   ni el zoom:0.88 que usa el .screen-shell normal (que conserva el FORM).
+   Se gana por ESPECIFICIDAD (.screen-shell.championship-intro-shell) sin tocar
+   la regla global .screen-shell ni afectar otras pantallas. El form (sin esta
+   clase) queda intacto; mobile no se ve afectado (este bloque es >=1024).
+   ============================================================ */
+@media (min-width: 1024px) {
+  .screen-shell.championship-intro-shell {
+    max-width: none;
+    width: 100%;
+    zoom: 1;          /* sin el 0.88 que encogía la intro */
+    height: 100dvh;   /* al quitar el zoom, la altura vuelve a 100dvh (no 114dvh) */
   }
-  .champ-intro .boton { flex-grow: 1; text-align: center; padding: 16px; border-radius: var(--r-md); }
+
+  /* Header azul del intro: SOLO desktop se oculta (la nav global es el sidebar) → el contenido
+     empieza directamente arriba. En mobile el header se conserva. */
+  .championship-intro-header { display: none; }
+
+  /* CTA "Empezar" en desktop: angosto y centrado (no full-width), un poco separado de la base
+     (padding-bottom !important sobrescribe SOLO el bottom del padding inline del footer). Mobile intacto. */
+  .championship-intro-footer { display: flex; justify-content: center; padding-bottom: 40px !important; }
+  .championship-intro-cta { width: auto !important; min-width: 260px; padding: 0 48px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -129,7 +129,6 @@ const RentalDetail  = lazy(() => import('./screens/RentalDetail'));
 const VenueDetail   = lazy(() => import('./screens/VenueDetail'));
 const Notifications = lazy(() => import('./screens/Notifications'));
 const Championships = lazy(() => import('./screens/Championships'));
-const ChampionshipIntro = lazy(() => import('./screens/ChampionshipIntro'));
 const ChampionshipOrganize = lazy(() => import('./screens/ChampionshipOrganize'));
 const ChampionshipView = lazy(() => import('./screens/ChampionshipView'));
 const ChampionshipTeam = lazy(() => import('./screens/ChampionshipTeam'));
@@ -267,7 +266,6 @@ function AppBody() {
             <Route path="/venue" element={<VenueDetail />} />
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/championships" element={<Championships />} />
-            <Route path="/championships/intro" element={<ChampionshipIntro />} />
             <Route path="/championships/organize" element={<ChampionshipOrganize />} />
             <Route path="/championships/view" element={<ChampionshipView />} />
             <Route path="/championships/team" element={<ChampionshipTeam />} />
