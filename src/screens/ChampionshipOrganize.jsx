@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN } from '../constants';
-import TabBar from '../components/TabBar';
 import { useSheetPull } from '../hooks/useSheetPull';
 import { DATE_WINDOW, TODAY, TODAY_KEY, ymd } from '../data/games';
 import { getChampionshipConfig } from '../services/championshipService';
@@ -13,6 +12,7 @@ import {
   championshipVenueGrid, championshipSlots, hourLabel, clockFromMin, gameBlockedByChampionship,
   buildInsufficientPreview, championshipSlotForAnchor, championshipCombinationValid,
 } from '../services/championshipAvailabilityService';
+import ConfirmExitDialog from '../components/ConfirmExitDialog';
 
 // Mismo patrón de fechas que Partidos (DateCell): día abreviado + número, 30 días de horizonte.
 const DOW_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
@@ -150,7 +150,10 @@ export default function ChampionshipOrganize() {
   // Paso del flujo de creación: 'intro' (pantalla informativa) → 'form' (configuración actual).
   // Al VOLVER a editar (restore presente) se entra directo al formulario (la intro solo aparece al
   // crear desde cero). Es un step interno: NO añade ruta ni cambia el back de la edición.
-  const [step, setStep] = useState(restore ? 'form' : 'intro');
+  // Desde la pantalla informativa DESKTOP nueva (ChampionshipIntro → "Empezar") se entra directo al
+  // FORMATO, saltando el intro interno (evita doble intro). Restore/back también entra en 'form'.
+  const [step, setStep] = useState((restore || location.state?.fromIntro) ? 'form' : 'intro');
+  const [confirmExit, setConfirmExit] = useState(false);   // X = salir del flujo → confirmación
 
   const [mode, setMode] = useState(restore?.mode ?? 'oneday');            // 'oneday' | 'liga'
   const [format, setFormat] = useState(restore?.format ?? DEFAULT_FORMAT);  // nuevo → 7v7 por defecto; restore → restaura
@@ -743,6 +746,10 @@ export default function ChampionshipOrganize() {
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
           <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>Crear nuevo campeonato</div>
+          {/* X = SALIR del flujo → confirmación → listado (NO navigate(-1); la flecha izquierda vuelve un nivel). */}
+          <button onClick={() => setConfirmExit(true)} aria-label="Salir" style={{ position: 'absolute', right: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="#fff" strokeWidth="2" strokeLinecap="round" /></svg>
+          </button>
         </div>
       </div>
 
@@ -1082,7 +1089,6 @@ export default function ChampionshipOrganize() {
       </div>
       </div>
 
-      <TabBar />
 
       {districtSheet && (
         <PickSheet title="Elige distritos" onClose={() => setDistrictSheet(false)}
@@ -1093,6 +1099,9 @@ export default function ChampionshipOrganize() {
         <PickSheet title="Elige canchas" onClose={() => setVenueSheet(false)}
           items={championshipVenues(games, format, districts, amenities).map(v => ({ value: v.id, label: v.name, sub: `${v.district} · ${v.courts} canchas` }))}
           selected={venueFilter} onToggle={(v) => toggleSet(setVenueFilter, v)} />
+      )}
+      {confirmExit && (
+        <ConfirmExitDialog onCancel={() => setConfirmExit(false)} onConfirm={() => navigate('/championships')} />
       )}
     </div>
   );

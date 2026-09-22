@@ -1,0 +1,234 @@
+/* ============================================================
+   AlGrass — Pantalla de información "Crear campeonato" (DESKTOP)
+   Fuente de verdad: docs/championship-intro/index.html
+   Todo el CSS va SCOPED bajo .champ-intro para no contaminar
+   otras pantallas (nombres de clase e variables :root del HTML).
+   La media query mobile (<=900px) del HTML se OMITE a propósito
+   (tarea solo-desktop). Valores idénticos al original.
+   ============================================================ */
+
+.champ-intro {
+  --azul:            #1B4FD1;
+  --azul-hover:      #143CA3;
+  --azul-fondo:      #F2F6FD;
+  --azul-fondo-2:    #F7F9FD;
+  --naranja:         #F26B21;
+  --naranja-texto:   #8A4A1A;
+  --naranja-icono:   #B34A0C;
+  --naranja-fondo:   #FFF4EC;
+  --tinta:           #0B1B3A;
+  --gris:            #45536F;
+  --gris-suave:      #5A6785;
+  --linea:           #E3E8F2;
+  --linea-suave:     #EDF1F9;
+  --blanco:          #FFFFFF;
+
+  --display: 'Familjen Grotesk', system-ui, sans-serif;
+  --texto:   'Public Sans', system-ui, sans-serif;
+
+  --r-sm: 11px;
+  --r-md: 16px;
+  --r-lg: 22px;
+
+  font-family: var(--texto);
+  color: var(--tinta);
+  background: var(--blanco);
+  -webkit-font-smoothing: antialiased;
+}
+
+.champ-intro * { box-sizing: border-box; }
+
+.champ-intro h1,
+.champ-intro h2,
+.champ-intro h3,
+.champ-intro .display { font-family: var(--display); margin: 0; letter-spacing: -0.025em; }
+.champ-intro p { margin: 0; }
+.champ-intro a { color: var(--azul); }
+.champ-intro a:hover { color: var(--azul-hover); }
+.champ-intro img { display: block; max-width: 100%; }
+
+/* --- Estructura ------------------------------------------------ */
+
+.champ-intro .pantalla {
+  position: relative;
+  max-width: 1440px;
+  min-height: 100vh;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* X = SALIR del flujo → listado de Campeonatos (esta pantalla no tiene flecha atrás). */
+.champ-intro .salir {
+  position: absolute; top: 14px; right: 24px; z-index: 2;
+  width: 40px; height: 40px; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; cursor: pointer;
+  color: var(--gris-suave); transition: background .15s ease, color .15s ease;
+}
+.champ-intro .salir:hover { color: var(--tinta); background: var(--linea-suave); }
+
+.champ-intro .contenido {
+  flex-grow: 1;
+  padding: 14px 64px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* --- Intro ------------------------------------------------------ */
+
+.champ-intro .intro { display: flex; align-items: flex-end; gap: 40px; }
+.champ-intro .intro__texto { flex-grow: 1; display: flex; flex-direction: column; gap: 12px; }
+
+.champ-intro .antetitulo { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 600; color: var(--gris-suave); }
+.champ-intro .antetitulo::before { content: ""; width: 7px; height: 7px; border-radius: 999px; background: var(--naranja); }
+
+.champ-intro .intro h1 { font-size: 44px; line-height: 1.04; font-weight: 700; max-width: 720px; }
+.champ-intro .intro h1 span { color: var(--azul); }
+
+.champ-intro .bajada { width: 435px; flex-shrink: 0; font-size: 17px; line-height: 1.55; color: var(--gris); padding-bottom: 4px; }
+.champ-intro .bajada strong { color: var(--tinta); font-weight: 600; }
+
+/* --- Tira de fotos (solo desktop) ------------------------------- */
+
+.champ-intro .tira { display: flex; gap: 12px; height: 140px; }
+.champ-intro .tira img {
+  flex: 1 1 0; min-width: 0; height: 140px;
+  border-radius: var(--r-md); object-fit: cover;
+  background: var(--linea-suave);
+}
+.champ-intro .tira img:nth-child(1) { object-position: 48% center; }
+.champ-intro .tira img:nth-child(2) { object-position: center 38%; }
+.champ-intro .tira img:nth-child(3) { object-position: center 45%; }
+.champ-intro .tira img:nth-child(4) { object-position: center 40%; }
+
+/* --- Paneles ---------------------------------------------------- */
+
+.champ-intro .paneles { flex-grow: 1; display: flex; gap: 16px; align-items: stretch; }
+
+.champ-intro .rotulo { font-size: 15px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+
+.champ-intro .panel-tu {
+  width: 330px; flex-shrink: 0;
+  border: 1.5px solid var(--linea); border-radius: var(--r-lg); padding: 22px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+.champ-intro .panel-tu .rotulo { color: var(--naranja); }
+
+.champ-intro .paso { display: flex; gap: 13px; align-items: flex-start; }
+.champ-intro .paso__num { font-family: var(--display); font-size: 14px; font-weight: 700; color: var(--naranja); padding-top: 3px; }
+.champ-intro .paso__titulo { font-family: var(--display); font-size: 21px; font-weight: 700; }
+.champ-intro .paso p { font-size: 15px; line-height: 1.5; color: var(--gris-suave); margin-top: 3px; }
+
+.champ-intro .separador { height: 1px; background: var(--linea-suave); }
+
+.champ-intro .aviso {
+  margin-top: auto; background: var(--naranja-fondo); border-radius: 14px; padding: 14px;
+  display: flex; gap: 10px; align-items: flex-start;
+}
+.champ-intro .aviso svg { flex-shrink: 0; margin-top: 1px; }
+.champ-intro .aviso p { font-size: 15px; line-height: 1.45; color: var(--naranja-texto); }
+
+.champ-intro .panel-nosotros {
+  flex-grow: 1; background: var(--azul-fondo); border-radius: var(--r-lg); padding: 22px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.champ-intro .panel-nosotros .rotulo { color: var(--azul); }
+
+.champ-intro .tarjeta { background: var(--blanco); border-radius: var(--r-md); padding: 16px; }
+.champ-intro .tarjeta__titulo { font-family: var(--display); font-size: 18px; font-weight: 700; }
+
+.champ-intro .kit { display: flex; flex-direction: column; gap: 11px; }
+.champ-intro .kit__items { display: flex; gap: 9px; }
+.champ-intro .kit__item {
+  flex: 1 1 0; display: flex; align-items: center; gap: 8px;
+  background: var(--azul-fondo-2); border-radius: var(--r-sm); padding: 10px;
+  font-size: 15px; font-weight: 600;
+}
+.champ-intro .kit__item svg { flex-shrink: 0; }
+.champ-intro .kit__extra { font-size: 15px; line-height: 1.45; color: var(--gris-suave); }
+
+.champ-intro .duo { flex-grow: 1; display: flex; gap: 12px; }
+.champ-intro .duo .tarjeta { flex: 1 1 0; display: flex; flex-direction: column; gap: 8px; }
+.champ-intro .duo p { font-size: 15px; line-height: 1.5; color: var(--gris-suave); }
+
+/* --- Botón ------------------------------------------------------ */
+
+.champ-intro .cta { display: flex; justify-content: center; }
+.champ-intro .boton {
+  text-decoration: none; background: var(--azul); color: var(--blanco);
+  font-size: 17px; font-weight: 600; padding: 17px 52px; border-radius: 999px;
+  border: none; cursor: pointer; font-family: var(--texto);
+  transition: background .15s ease;
+}
+.champ-intro .boton:hover { background: var(--azul-hover); color: var(--blanco); }
+
+/* ============================================================
+   MOBILE (<=900px) — reproduce docs/championship-intro/index (mobil).html
+   Mismo componente y misma ruta; solo responsive. La .barra del HTML de
+   referencia NO aplica: esta pantalla usa la navegación global de la app
+   (misma decisión que en desktop, sin header propio).
+   ============================================================ */
+@media (max-width: 900px) {
+  .champ-intro .pantalla { min-height: 100dvh; }
+
+  .champ-intro .contenido { padding: 16px 20px 24px; gap: 14px; }
+
+  .champ-intro .intro { flex-direction: column; align-items: stretch; gap: 12px; }
+  .champ-intro .intro h1 { font-size: 30px; max-width: none; }
+  .champ-intro .bajada { width: auto; font-size: 15px; line-height: 1.5; padding-bottom: 0; }
+
+  /* Tira deslizable: sangra hasta el borde DERECHO y se arrastra con el dedo (swipe
+     nativo — sin carousel/flechas/dots/JS). Se ven ~2 fotos y media; el corte invita a deslizar.
+     object-position (48% / 38% / 45% / 40%) se conserva desde las reglas base. */
+  .champ-intro .tira {
+    height: 96px;
+    gap: 8px;
+    overflow-x: auto;
+    margin-right: -20px;
+    padding-right: 20px;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .champ-intro .tira::-webkit-scrollbar { display: none; }
+  .champ-intro .tira img {
+    flex: 0 0 146px;
+    width: 146px;
+    height: 96px;
+    border-radius: 12px;
+    scroll-snap-align: start;
+  }
+
+  .champ-intro .paneles { flex-direction: column; gap: 12px; }
+  .champ-intro .panel-tu { width: auto; padding: 16px; gap: 12px; }
+  .champ-intro .paso__titulo { font-size: 18px; }
+  .champ-intro .paso p { font-size: 13px; }
+  .champ-intro .panel-nosotros { padding: 14px; gap: 10px; }
+  .champ-intro .tarjeta { padding: 14px; }
+  .champ-intro .tarjeta__titulo { font-size: 16px; }
+  .champ-intro .duo p,
+  .champ-intro .kit__extra { font-size: 13px; line-height: 1.45; }
+
+  .champ-intro .kit__items { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .champ-intro .kit__item { background: transparent; padding: 0; }
+
+  .champ-intro .duo { flex-direction: column; gap: 10px; }
+
+  /* CTA siempre visible pegado abajo mientras se hace scroll (sticky, NO fixed);
+     full-bleed y con safe-area de iOS. */
+  .champ-intro .cta {
+    position: sticky;
+    bottom: 0;
+    margin: 0 -20px;
+    padding: 14px 20px max(20px, env(safe-area-inset-bottom));
+    background: var(--blanco);
+    border-top: 1px solid var(--linea-suave);
+  }
+  .champ-intro .boton { flex-grow: 1; text-align: center; padding: 16px; border-radius: var(--r-md); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .champ-intro * { transition: none !important; }
+}

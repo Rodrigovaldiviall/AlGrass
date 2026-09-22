@@ -7,6 +7,7 @@ import PlayerAvatar from '../components/championship/PlayerAvatar';
 import MapsLinkButton from '../components/MapsLinkButton';
 import OrganizerContactButton from '../components/OrganizerContactButton';
 import TabBar from '../components/TabBar';
+import ConfirmExitDialog from '../components/ConfirmExitDialog';
 import I from '../icons';
 import { buildTeams, combinedRoster, mockStandings, mockScorers, mockMatches, formatForTeamCount, chunkByCounts, playerLabel, CURRENT_USER_NAME } from '../data/championshipTeamsMock';
 import { CHAMPIONSHIP_BASE_PRICE, CHAMPIONSHIP_REGISTRATION_CLOSE_DAYS, mockPublishDelay, soles } from '../data/championshipCheckoutMock';
@@ -77,6 +78,7 @@ export default function ChampionshipView() {
   const [name, setName] = useState(restore?.name ?? summary.name ?? 'Copa AlGrass');
   const [coverTheme, setCoverTheme] = useState(restore?.coverTheme ?? COVER_THEMES[0]); // default rojo
   const [coverEditMode, setCoverEditMode] = useState(false);      // portada en edición (paleta + nombre editable)
+  const [confirmExit, setConfirmExit] = useState(false);          // X (solo demo) = salir del flujo → confirmación
   const [coverSnap, setCoverSnap] = useState(null);               // snapshot para Cancelar (name+coverTheme)
   // Clave de acceso = ÚNICA fuente de la clave. En campeonato real se pre-carga con la generada en checkout.
   const [accessCode, setAccessCode] = useState(restore?.accessCode ?? rawChamp?.registrationKey ?? '');
@@ -326,6 +328,13 @@ export default function ChampionshipView() {
               {I.share('#fff')}
             </button>
           )}
+          {/* Demo (previa de Crear campeonato, root del flujo): X = SALIR → listado. La flecha izquierda
+              vuelve un nivel (a Crear un campeonato). El campeonato REAL no lleva X (es pantalla principal). */}
+          {!isCreated && (
+            <button onClick={() => setConfirmExit(true)} aria-label="Salir" style={{ position: 'absolute', right: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="#fff" strokeWidth="2" strokeLinecap="round" /></svg>
+            </button>
+          )}
         </div>
       </div>
 
@@ -560,6 +569,9 @@ export default function ChampionshipView() {
       {/* Campeonato REAL = parte de la navegación principal → BottomNav (mismo TabBar de la app).
           Demo (Crear campeonato) NO es pantalla principal → sin TabBar. */}
       {isCreated && <TabBar />}
+      {confirmExit && (
+        <ConfirmExitDialog onCancel={() => setConfirmExit(false)} onConfirm={() => navigate('/championships')} />
+      )}
     </div>
   );
 }
