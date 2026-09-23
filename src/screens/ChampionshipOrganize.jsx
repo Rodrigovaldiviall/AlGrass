@@ -526,6 +526,9 @@ export default function ChampionshipOrganize() {
   const canchaRef = useRef(null);
   const canchaScrolledRef = useRef(false);
   const canchaReady = showCanchaCard && !!group;   // Formato completo → revelar Cancha
+  // Fecha elegida MANUALMENTE que no tiene disponibilidad (hay disponibilidad global en otras fechas, así
+  // que no es EMPTY_FORMAT). Se usa para mostrar el aviso "No hay disponibilidad en esta fecha…".
+  const dateNoAvail = canchaReady && !!group && !!format && globalHasAnyAvailability && !invLoading && !dateChecks.has(dateKey);
   useEffect(() => {
     if (!canchaReady) { canchaScrolledRef.current = false; return; } // se resetea si vuelve a incompleto
     if (restoringRef.current) { canchaScrolledRef.current = true; return; } // restaurando scroll → no auto-scrollear a Cancha
@@ -562,20 +565,10 @@ export default function ChampionshipOrganize() {
   // deselección/selección MANUAL del usuario NO lo rearma (el key del ciclo no cambia). Solo auto-selecciona
   // cuando la fecha ya es la MÁS PRÓXIMA del ciclo (el date-effect ya la fijó) → evita consumir el ciclo en la
   // fecha anterior antes de que salte. Restore: se inicializa con el key restaurado → NO auto-selecciona.
-  useEffect(() => {
-    if (!groupId || !format) return;
-    if (invLoading || !canchaReady || courtCustom) return;                  // esperar disponibilidad real / no imponer si personaliza
-    if (!autoSlotArmedRef.current) return;                                  // consumido / restore / deselección manual → NO imponer
-    if (slots.length === 0) return;                                         // aún sin horarios → esperar
-    // Esperar a que la fecha se asiente en la más próxima del ciclo (misma autoridad dateChecks) → así el
-    // auto-select ocurre en la fecha correcta y no se consume en la fecha anterior antes de que salte.
-    let nearest = null;
-    for (const d of DATE_WINDOW) { const k = ymd(d); if (dateChecks.has(k) && (!minAllowedKey || k >= minAllowedKey)) { nearest = k; break; } }
-    if (nearest && dateKey !== nearest) return;
-    setSlotIdx(0);                                                          // primer horario del día más próximo
-    commitSel(slots[0].gameIds, resolvedVenue?.id, slots[0].startHour);     // identidad estable para preservar ante filtros
-    autoSlotArmedRef.current = false;
-  }, [format, groupId, invLoading, canchaReady, courtCustom, slots, dateKey, dateChecks, minAllowedKey]); // eslint-disable-line
+  // NOTA: se ELIMINÓ la preselección automática del primer horario. El salto de FECHA (día disponible más
+  // próximo) y el scroll SIGUEN igual (effects de dateKey/centerActiveDate); solo ya no se auto-selecciona
+  // ningún horario: la selección ocurre únicamente por click explícito del usuario. autoSlotArmedRef queda
+  // sin uso a propósito (no rearmamos ninguna auto-selección de horario).
 
   // Scroll horizontal automático: centra en la tira el día seleccionado (auto-seleccionado o manual),
   // para que el día disponible más próximo quede a la vista sin que el usuario tenga que desplazar.
@@ -876,16 +869,16 @@ export default function ChampionshipOrganize() {
             <div className="no-sb" style={{ display: 'flex', gap: 8, overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 8, marginBottom: 6 }}>
               {DATE_WINDOW.map(d => {
                 const k = ymd(d); const lab = dateChip(d);
-                const blocked = !!minAllowedKey && k < minAllowedKey;   // anticipación mínima no cumplida
-                const noAvail = !dateChecks.has(k);                     // día sin disponibilidad → gris deshabilitado (como rentals)
-                return <DateCell key={k} refEl={dateKey === k ? activeDateRef : null} top={lab.top} bottom={lab.bottom} isToday={k === TODAY_KEY} active={dateKey === k} check={dateChecks.has(k) && !blocked} disabled={blocked || noAvail} onClick={() => setDateKey(k)} />;
+                const blocked = !!minAllowedKey && k < minAllowedKey;   // anticipación mínima no cumplida (sigue deshabilitado)
+                // Día sin disponibilidad: YA NO se deshabilita → clickable para mostrar el aviso de fecha vacía.
+                return <DateCell key={k} refEl={dateKey === k ? activeDateRef : null} top={lab.top} bottom={lab.bottom} isToday={k === TODAY_KEY} active={dateKey === k} check={dateChecks.has(k) && !blocked} disabled={blocked} onClick={() => setDateKey(k)} />;
               })}
             </div>
 
             {invLoading ? (
               // minHeight reserva el alto del bloque de horarios+grilla → la pantalla no salta al cargar.
               <div style={{ fontSize: 13, color: SUB, padding: '8px 0', minHeight: 300 }}>Cargando disponibilidad…</div>
-            ) : (isEmptyFormat || !resolvedVenue) ? (
+            ) : (isEmptyFormat || dateNoAvail || !resolvedVenue) ? (
               // EMPTY_FORMAT y EMPTY_FILTERS sustituyen EXACTAMENTE la MISMA zona (selector de venue + tabla +
               // "Elige un horario") por un holder vacío del MISMO minHeight. Filtros y fechas (arriba) siguen
               // visibles en ambos. Única diferencia:
@@ -895,6 +888,10 @@ export default function ChampionshipOrganize() {
                 {isEmptyFormat ? (
                   <div style={{ maxWidth: 320, padding: '12px 14px', borderRadius: 12, background: '#FFF8EC', border: '1px solid #F0D8A0', textAlign: 'center', fontSize: 13, fontWeight: 600, color: TEXT, lineHeight: 1.5 }}>
                     No hay disponibilidad para {format}{group ? ` de ${group.min === group.max ? group.min : `${group.min}–${group.max}`} equipos` : ''}. Prueba otra opción o continúa con «Ver mi campeonato».
+                  </div>
+                ) : dateNoAvail ? (
+                  <div style={{ textAlign: 'center', fontSize: 13.5, fontWeight: 600, color: SUB, lineHeight: 1.5 }}>
+                    No hay disponibilidad en esta fecha, intenta otras opciones
                   </div>
                 ) : (
                   <div style={{ textAlign: 'center', fontSize: 13.5, fontWeight: 600, color: SUB, lineHeight: 1.5 }}>
@@ -1016,7 +1013,7 @@ export default function ChampionshipOrganize() {
 
             {/* ── ZONA DE DECISIÓN (BLANCA, protagonista) — elegir un horario disponible. Se muestra en cuanto
                  hay una cancha resuelta con disponibilidad cargada. Mismo lenguaje visual y misma lógica. ── */}
-            {!invLoading && resolvedVenue && !isEmptyFormat && (
+            {!invLoading && resolvedVenue && !isEmptyFormat && !dateNoAvail && (
               <div style={{ marginTop: 14 }}>
                 <div style={{ fontSize: 13.5, fontWeight: 800, color: TEXT, letterSpacing: -0.1, marginBottom: 8 }}>
                   Elige un horario disponible
