@@ -126,22 +126,71 @@ export async function fetchFreeRentalBlock({ count = 4 } = {}) {
 // Listado REAL de los campeonatos del usuario (fuente de verdad del listado en Profile; 0..N).
 // RLS championships_select acota al owner. Trae solo lo necesario para pintar la tarjeta + abrir el
 // campeonato (format_config lleva summary/organizeState del snapshot). Ordena por fecha de evento.
-export function listMyChampionships({ userId }) {
-  return supabase
-    .from('championships')
-    .select('id, status, name, cover_theme, event_date, start_time, format_config, registration_closes_at, order_id, created_at')
-    .eq('owner_user_id', userId)
-    .in('status', ['payment_validation', 'pending_publish', 'registration_open', 'registration_closed'])
-    .order('event_date', { ascending: true });
+// Superficie del OWNER (RPC SECURITY DEFINER owner-scoped por auth.uid()). Ya NO es .from().select():
+// se retiró el SELECT directo sobre championships para que ninguna columna sensible (registration_key,
+// pagos) sea alcanzable por un cliente. El parámetro userId se ignora (el server usa auth.uid()).
+export function listMyChampionships() {
+  return supabase.rpc('list_my_championships');
+}
+
+// Listado PÚBLICO de campeonatos publicados (fuente de verdad del listado en /championships, 0..N).
+// RLS championships_select ya permite a cualquier authenticated leer los estados publicados; NO hace
+// falta policy/RPC nueva. NO filtra por owner (distinto de listMyChampionships). venue/formato se
+// derivan de format_config (venue_id NO tiene FK → sin join). Ordena por fecha de evento.
+export function listPublicChampionships() {
+  // Superficie PÚBLICA (RPC SECURITY DEFINER): columnas seguras, SIN registration_key, apta para anon.
+  return supabase.rpc('list_public_championships');
+}
+
+// get_championship_public(RPC): detalle público seguro (anon+authenticated). Devuelve owner_user_id y
+// has_registration_key, NUNCA la clave. Se usa como fuente del detalle en ChampionshipView (real).
+export function getChampionshipPublic({ championshipId }) {
+  return supabase.rpc('get_championship_public', { p_championship_id: championshipId });
+}
+
+// verify_championship_access(RPC): valida la clave EN SERVIDOR → true/false. Owner bypass. Anon permitido.
+export function verifyChampionshipAccess({ championshipId, registrationKey }) {
+  return supabase.rpc('verify_championship_access', { p_championship_id: championshipId, p_registration_key: registrationKey });
+}
+
+// get_championship_registration_key(RPC): la clave real SOLO para el owner (mostrar/editar). No-owner → error.
+export function getChampionshipRegistrationKey({ championshipId }) {
+  return supabase.rpc('get_championship_registration_key', { p_championship_id: championshipId });
 }
 
 // Lectura mínima del campeonato propio (RLS championships_select acota al owner). Se usa para
 // representar en Profile el campeonato real recién creado ("Validando pago") y su persistencia tras
 // refresh. SIN escritura, SIN lógica: devuelve el { data, error } CRUDO de Supabase.
-export function getChampionshipById({ championshipId }) {
-  return supabase
-    .from('championships')
-    .select('id, status, hold_expires_at, name, event_date, start_time, end_time, venue_id, format_config, registration_closes_at, order_id, created_at')
-    .eq('id', championshipId)
-    .maybeSingle();
+// update_championship_privacy(RPC): el OWNER persiste clave + resultados públicos (Fase 5).
+// registration_key vacío/espacios → NULL en DB (nunca clave de ejemplo). Solo estados gestionables por
+// el owner (pending_publish / registration_open / registration_closed). Errores: 'AUTH_REQUIRED',
+// 'NOT_OWNER', 'INVALID_STATE', 'CHAMPIONSHIP_NOT_FOUND'. Devuelve la fila championships actualizada.
+export function updateChampionshipPrivacy({ championshipId, registrationKey, resultsPublic }) {
+  return supabase.rpc('update_championship_privacy', {
+    p_championship_id:  championshipId,
+    p_registration_key: registrationKey,
+    p_results_public:   resultsPublic,
+  });
 }
+
+// update_championship_cover(RPC): el OWNER persiste nombre + cover_theme + (opcional) cover_image_path.
+// cover_theme = HEX crudo. setCoverImage=false → NO toca la foto (guardar nombre/color). setCoverImage=true
+// → aplica coverImagePath (path nuevo, o null para volver a solo color). El path se valida owner-scoped en
+// backend. Editable salvo terminales. Errores: AUTH_REQUIRED/NOT_OWNER/INVALID_STATE/INVALID_INPUT/NOT_FOUND.
+export function updateChampionshipCover({ championshipId, name, coverTheme, coverImagePath = null, setCoverImage = false }) {
+  return supabase.rpc('update_championship_cover', {
+    p_championship_id:  championshipId,
+    p_name:             name,
+    p_cover_theme:      coverTheme,
+    p_cover_image_path: coverImagePath,
+    p_set_cover_image:  setCoverImage,
+  });
+}
+
+// publish_championship(RPC): el OWNER publica (pending_publish → registration_open + published_at).
+// Exige registration_key real. NO toca payment/order. Idempotente (ya publicado → no-op).
+// Errores: 'AUTH_REQUIRED', 'NOT_OWNER', 'INVALID_STATE', 'NO_REGISTRATION_KEY', 'CHAMPIONSHIP_NOT_FOUND'.
+export function publishChampionshipRpc({ championshipId }) {
+  return supabase.rpc('publish_championship', { p_championship_id: championshipId });
+}
+

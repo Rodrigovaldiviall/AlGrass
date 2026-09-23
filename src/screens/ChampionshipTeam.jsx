@@ -19,6 +19,9 @@ export default function ChampionshipTeam() {
   const team = nav.team || null;
   const summary = nav.summary || {};
   const organizeState = nav.organizeState || null;
+  // Campeonato REAL: id para volver a su ruta (/championships/view/:id) y no caer a la vista sin id.
+  const champId = nav.champId || null;
+  const viewPath = champId ? '/championships/view/' + champId : '/championships/view';
   // Tope de equipos para crear (NEW): override opcional del nav (Liga usa uno alto, sin límite real).
   const maxTeams = nav.maxTeams ?? (summary.group ? summary.group.max : 8);
 
@@ -108,7 +111,7 @@ export default function ChampionshipTeam() {
     commitJoinTeam();
   };
 
-  const back = () => navigate('/championships/view', { state: { summary, organizeState, cvReturn: true } });
+  const back = () => navigate(viewPath, { state: { summary, organizeState, cvReturn: true } });
 
   const save = () => {
     if (!canSave) return;
@@ -116,7 +119,7 @@ export default function ChampionshipTeam() {
     if (mode === 'new') {
       if (arr.length < maxTeams) arr.push({ id: 'tnew' + arr.length, name: trimmed, design, color: design.colors[0], players, configured: true });
       putTeams(cv, arr); writeCV(cv);
-      navigate('/championships/view', { state: { summary, organizeState, cvReturn: true } });
+      navigate(viewPath, { state: { summary, organizeState, cvReturn: true } });
     } else {
       const idx = arr.findIndex(t => t.id === team?.id);
       if (idx >= 0) arr[idx] = { ...arr[idx], name: trimmed, design, color: design.colors[0], players, configured: true };
@@ -127,7 +130,7 @@ export default function ChampionshipTeam() {
 
   const deleteTeam = () => {
     const cv = readCV() || {}; putTeams(cv, getTeams(cv).filter(t => t.id !== team?.id)); writeCV(cv);
-    navigate('/championships/view', { state: { summary, organizeState, cvReturn: true } });
+    navigate(viewPath, { state: { summary, organizeState, cvReturn: true } });
   };
 
   // Cancelar EDIT (EXISTING vía lápiz): descarta el draft, restaura originales y vuelve a VIEW (sin mover scroll).

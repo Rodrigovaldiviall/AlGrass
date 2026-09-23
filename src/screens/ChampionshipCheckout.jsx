@@ -3,8 +3,11 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { TEXT, SUB, HAIR, ORANGE, BLUE, GREEN } from '../constants';
 import { CtaButton, TopBar } from '../components/checkout/CheckoutUI';
 import PaymentSheet from '../components/checkout/PaymentSheet';
-import { CHAMPIONSHIP_BANK, soles, makeRegistrationKey, computeRegistrationClose } from '../data/championshipCheckoutMock';
+import { CHAMPIONSHIP_BANK, soles, computeRegistrationClose } from '../data/championshipCheckoutMock';
 import { uuidv4 } from '../lib/uuid';
+import { useAuth } from '../context/AuthContext';
+import { uploadChampionshipProof } from '../utils/championshipProof';
+import { supabase } from '../lib/supabase';
 import { createTransferHold, confirmTransfer as confirmTransferRpc, releaseTransferHold, quoteChampionship, getChampionshipConfig, createGatewayOrder, confirmGatewayPayment, failGateway } from '../services/championshipService';
 
 // Emoji del círculo por code de extra (la config no envía emoji). Fallback genérico.
@@ -77,6 +80,7 @@ function PodiumIcons({ kind, qty }) {
 export default function ChampionshipCheckout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
   const nav = location.state || {};
   const summary = nav.summary || {};
   const organizeState = nav.organizeState || null;
@@ -93,7 +97,7 @@ export default function ChampionshipCheckout() {
       status,
       privacy: 'private',
       createdByUserId: 'you', // owner = quien pagó (mock 'you'); futuro: currentUser.id de Supabase
-      registrationKey: makeRegistrationKey(championshipName),
+      registrationKey: null,  // NUNCA clave ficticia: la crea el owner en "Tu campeonato" (update_championship_privacy)
       registrationClosesAt: computeRegistrationClose(organizeState?.dateKey),
       publishedAt: null,
       realId: extra.realId ?? null,   // id REAL en Supabase (transfer). null = flujo mock (electrónico).
@@ -179,8 +183,8 @@ export default function ChampionshipCheckout() {
   const facturaOk = receipt === 'boleta' || (rucValid && razon.trim().length > 0 && direccion.trim().length > 0);
 
   // ── Hold de Transferencia REAL (Supabase) ────────────────────────────────────────────────────
-  const champHoldRef = useRef({ id: null, key: null, gameIds: [] });
-  const resetAttempt = () => { champHoldRef.current = { id: null, key: null, gameIds: [] }; };
+  const champHoldRef = useRef({ id: null, key: null, gameIds: [], voucherPath: null, voucherFile: null });
+  const resetAttempt = () => { champHoldRef.current = { id: null, key: null, gameIds: [], voucherPath: null, voucherFile: null }; };
 
   const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
   const eventDate = DATE_RE.test(organizeState?.dateKey || '') ? organizeState.dateKey : null;
@@ -190,7 +194,7 @@ export default function ChampionshipCheckout() {
   const buildHoldConfig = () => ({
     name: championshipName,
     privacy: 'private',
-    registration_key: makeRegistrationKey(championshipName),
+    registration_key: null,   // materialización SIN clave: NULL en DB. El owner la define después (Fase 5).
     results_public: true,
     group_id: groupId,                 // AUTORIDAD del formato (backend resuelve service_court_hours/lead)
     extras: extrasPayload,             // [{code, quantity}] — sin precio
@@ -236,17 +240,32 @@ export default function ChampionshipCheckout() {
     return {};
   };
 
-  // onConfirm(proof): confirma la transferencia. Éxito → order=validation, championship=payment_validation;
-  // persistimos mínimo (realId) y navegamos a Profile ("Validando pago"). Los games siguen reserved.
-  const confirmChampionshipTransfer = async (/* proof (mock) */) => {
-    const id = champHoldRef.current.id;
-    if (!id) return { error: 'NO_HOLD' };
-    // TODO STORAGE: comprobante MOCK → voucherRef=null (Fase 2 lo dejó nullable). Al conectar Storage,
-    // subir el archivo del owner y enviar su ref real aquí (y el backend deberá exigirlo).
-    const { data, error } = await confirmTransferRpc({ championshipId: id, voucherRef: null });
+  // onConfirm(proofFile): sube el comprobante REAL al bucket privado y confirma la transferencia.
+  //   Orden: hold ya existe (id real) → upload {user}/{champId}/{uuid}.ext → confirm con p_voucher_ref=path.
+  //   Éxito → order=validation, championship=payment_validation + payment_voucher_ref=path. Games reserved.
+  // Idempotencia/retry: NO se crea segundo championship/order (se reusa champHoldRef.id). Si el upload ya
+  //   subió este mismo File, se reutiliza su path (no re-sube). Comprobante OBLIGATORIO: sin archivo o
+  //   con upload fallido NO se confirma (el usuario reintenta con el hold vigente).
+  const confirmChampionshipTransfer = async (proofFile) => {
+    const h = champHoldRef.current;
+    if (!h.id) return { error: 'NO_HOLD' };
+    if (!proofFile) return { error: 'NO_PROOF' };
+    if (!user?.id) return { error: 'AUTH_REQUIRED' };
+
+    // 1) Upload (reutiliza path si es el MISMO File ya subido en un intento previo → evita huérfanos en retry).
+    let path = (h.voucherPath && h.voucherFile === proofFile) ? h.voucherPath : null;
+    if (!path) {
+      const up = await uploadChampionshipProof(supabase, { userId: user.id, championshipId: h.id, file: proofFile });
+      if (up.error) return { error: up.error };   // no confirmar sin comprobante subido
+      path = up.path;
+      h.voucherPath = path; h.voucherFile = proofFile;
+    }
+
+    // 2) Confirmar con el storage path real (se guarda en championships.payment_voucher_ref).
+    const { data, error } = await confirmTransferRpc({ championshipId: h.id, voucherRef: path });
     if (error) {
       if (/HOLD_EXPIRED/.test(error.message || '')) { resetAttempt(); return { error: 'HOLD_EXPIRED' }; }
-      return { error: error.message || 'NETWORK' };
+      return { error: error.message || 'NETWORK' };   // reintentable: upload ya hecho, se reusa el path
     }
     resetAttempt();
     createChampionship('payment_validation', 'created_validation', { realId: data.id });

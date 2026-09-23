@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useLayoutEffect, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, RED } from '../constants';
 import Shield from '../components/championship/Shield';
@@ -13,10 +13,13 @@ import { buildTeams, combinedRoster, mockStandings, mockScorers, mockMatches, fo
 import { CHAMPIONSHIP_BASE_PRICE, CHAMPIONSHIP_REGISTRATION_CLOSE_DAYS, mockPublishDelay, soles } from '../data/championshipCheckoutMock';
 import { buildFixture, visualCapacity } from '../data/championshipFixtures';
 import { formatDateLabel } from '../utils/format';
+import { supabase } from '../lib/supabase';
+import { validateCoverImage, uploadChampionshipCover, getChampionshipCoverUrl, deleteChampionshipCover } from '../utils/championshipCoverImage';
+import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, publishChampionshipRpc, updateChampionshipCover } from '../services/championshipService';
 
 // Temas de PORTADA (independientes de la paleta de equipos). Default rojo; el azul es un tono
 // claramente distinto al azul de marca (#3F5FE0) para que portada y header no se confundan.
-const COVER_THEMES = ['#E24A4A', '#0EA5E9', '#2E9E5B', '#F5A524', '#8E44AD'];
+import { COVER_THEMES, coverColor } from '../data/championshipCover';
 
 // Estado de ChampionshipView persistido en sessionStorage para conservarlo en el viaje a/desde
 // ChampionshipTeam (sin Context/Redux/Supabase; session state compatible con la arquitectura actual).
@@ -48,6 +51,9 @@ export default function ChampionshipView() {
   const location = useLocation();
   const { user } = useAuth();
   const nav = location.state || null;
+  const { id: routeId } = useParams();
+  const realId = routeId || null;              // /championships/view/:id → campeonato REAL (DB = fuente de verdad)
+  const isRealMode = !!realId;
   const persisted = readCV();
   const cvReturn = !!nav?.cvReturn;          // true = volvimos desde ChampionshipTeam
   // Regreso desde /auth (login/registro): esta pantalla se remonta sin location.state, así que
@@ -56,14 +62,60 @@ export default function ChampionshipView() {
   const [authResuming] = useState(() => { try { return !!sessionStorage.getItem(AUTH_RESUME_KEY); } catch { return false; } });
   const restore = (cvReturn || authResuming) ? persisted : null;
 
-  const summary = nav?.summary ?? persisted?.summary ?? {};
-  const organizeState = nav?.organizeState ?? persisted?.organizeState ?? null;
+  // ── Campeonato REAL: se carga desde DB por ID. DB es la ÚNICA fuente de identidad/status/privacidad/owner.
+  //    El CV NO decide qué campeonato real se muestra (solo cachea contenido mock entre navegaciones). ──
+  const [realRow, setRealRow] = useState(null);
+  const [realLoading, setRealLoading] = useState(isRealMode);
+  const [realError, setRealError] = useState(false);
+  const [ownerKey, setOwnerKey] = useState(null);   // clave real (SOLO owner); null = aún no cargada / no-owner
+  useEffect(() => {
+    if (!isRealMode) return;
+    let alive = true;
+    setRealLoading(true); setRealError(false); setOwnerKey(null);
+    // Detalle por SUPERFICIE PÚBLICA (sin registration_key). La clave real solo se pide si soy el owner.
+    getChampionshipPublic({ championshipId: realId }).then(({ data, error }) => {
+      if (!alive) return;
+      if (error || !data) { setRealError(true); setRealLoading(false); return; }
+      setRealRow(data); setRealLoading(false);
+      if (user?.id && data.owner_user_id === user.id) {
+        getChampionshipRegistrationKey({ championshipId: realId }).then(({ data: k }) => { if (alive) setOwnerKey(k || ''); });
+      }
+    });
+    return () => { alive = false; };
+  }, [realId]); // eslint-disable-line
+
+  // Owner: cuando llega la clave real (RPC owner-only), hidrata clave/saved para mostrar/editar/publicar.
+  useEffect(() => {
+    if (!isRealMode || ownerKey == null) return;
+    setAccessCode(ownerKey);
+    setSavedPrivacy(prev => ({ ...prev, key: ownerKey }));
+    setChamp(prev => prev ? { ...prev, registrationKey: ownerKey } : prev);
+  }, [ownerKey]); // eslint-disable-line
+
+  // Origen de navegación (Profile / Championships) para que "Atrás" vuelva al lugar correcto. Se pasa por
+  // location.state y se persiste MÍNIMO en sessionStorage (clave propia, NO championship_view_state) para
+  // sobrevivir a un refresh del detalle. Sin origen conocido → fallback a /championships.
+  const BACK_ORIGIN_KEY = 'championship_back_origin';
+  useEffect(() => {
+    if (!isRealMode) return;
+    const o = nav?.championshipOrigin;
+    if (o) { try { sessionStorage.setItem(BACK_ORIGIN_KEY, o); } catch {} }
+  }, [isRealMode]); // eslint-disable-line
+  const readBackOrigin = () => nav?.championshipOrigin || (() => { try { return sessionStorage.getItem(BACK_ORIGIN_KEY); } catch { return null; } })();
+  const goToOrigin = () => {
+    if (readBackOrigin() === 'profile') { try { sessionStorage.setItem('pf_back', '1'); } catch {} navigate('/profile'); return; }
+    navigate('/championships'); // 'championships' o fallback
+  };
+
+  // Preview/demo: summary/organizeState del nav/CV. REAL: del snapshot format_config de la fila de DB.
+  const summary = isRealMode ? (realRow?.format_config?.summary ?? {}) : (nav?.summary ?? persisted?.summary ?? {});
+  const organizeState = isRealMode ? (realRow?.format_config?.organizeState ?? null) : (nav?.organizeState ?? persisted?.organizeState ?? null);
 
   const complies = !!summary.complies;
   const isLiga = summary.mode === 'liga';       // Liga = un solo grupo, todos contra todos
-  // Campeonato REAL creado/pagado (se entra desde Perfil) vs demostración previa. Distinción por cv.championship.
-  const rawChamp = cvReturn ? (persisted?.championship ?? null) : null;
-  const isCreated = !!rawChamp;                 // true = campeonato real del owner (no demo)
+  // Campeonato "creado": REAL → existe fila de DB; preview/demo (legacy checkout) → cv.championship.
+  const rawChamp = isRealMode ? null : (cvReturn ? (persisted?.championship ?? null) : null);
+  const isCreated = isRealMode ? !!realRow : !!rawChamp;   // true = campeonato del owner (no demo)
   const group = summary.group || null; // { min, max }
   const maxTeams = isLiga ? 999 : (group ? group.max : 8);     // Liga: sin límite (crear equipo permanente)
   // Demo (Torneo): 2 equipos de prueba hechos; los slots restantes hasta la capacidad (maxTeams) se
@@ -80,9 +132,17 @@ export default function ChampionshipView() {
   const [coverEditMode, setCoverEditMode] = useState(false);      // portada en edición (paleta + nombre editable)
   const [confirmExit, setConfirmExit] = useState(false);          // X (solo demo) = salir del flujo → confirmación
   const [coverSnap, setCoverSnap] = useState(null);               // snapshot para Cancelar (name+coverTheme)
+  const [savingCover, setSavingCover] = useState(false);          // guardado REAL de portada (RPC) en curso
+  const [coverImagePath, setCoverImagePath] = useState(null);     // foto opcional (path Storage) del campeonato real
+  const [coverBusy, setCoverBusy] = useState(false);              // subida/eliminación de foto en curso
+  const coverFileRef = useRef(null);
   // Clave de acceso = ÚNICA fuente de la clave. En campeonato real se pre-carga con la generada en checkout.
   const [accessCode, setAccessCode] = useState(restore?.accessCode ?? rawChamp?.registrationKey ?? '');
   const [resultsPublic, setResultsPublic] = useState(restore?.resultsPublic ?? true);
+  // REAL: valores YA guardados en DB (fuente para dirty/publicar). Se sincronizan al cargar y al guardar.
+  const [savedPrivacy, setSavedPrivacy] = useState({ key: '', resultsPublic: true });
+  const [savingPrivacy, setSavingPrivacy] = useState(false);
+  const [privacyError, setPrivacyError] = useState('');
   const [keyEditing, setKeyEditing] = useState(false);            // tras publicar: la clave abre solo al pulsar "Editar"
   const [toast, setToast] = useState('');                         // toast breve ("Copiado" / avisos de inscripción)
   const [demo, setDemo] = useState(restore?.demo ?? 'inscripciones');    // 'inscripciones' | 'resultados'
@@ -102,23 +162,107 @@ export default function ChampionshipView() {
   //  - nav.viewerRole === 'player' fuerza la vista de jugador (para la futura entrada como participante).
   const isOwner = nav?.viewerRole === 'player'
     ? false
-    : (!isCreated || rawChamp?.createdByUserId == null || rawChamp.createdByUserId === CURRENT_USER_ID);
+    : isRealMode
+      ? (!realRow || realRow.owner_user_id == null || realRow.owner_user_id === user?.id)
+      : (!isCreated || rawChamp?.createdByUserId == null || rawChamp.createdByUserId === CURRENT_USER_ID);
+
+  // ── ACCESO (Fase 7). Campeonato publicado → cualquiera ve la card; ENTRAR exige autorización.
+  //   Owner (owner_user_id === auth.uid()) → bypass sin clave. Visitante/no-owner → validar la clave EN
+  //   SERVIDOR (verify_championship_access) y guardar un GRANT LOCAL (localStorage, sin la clave real).
+  //   OJO: results_public/privacy NO son gate aquí (semántica futura de Calendario/Resultados).
+  const amOwner = isRealMode && !!user?.id && !!realRow && realRow.owner_user_id === user.id;
+  const ACCESS_GRANT_KEY = realId ? ('champ_access_' + realId) : null;
+  const hasLocalGrant = () => { try { return !!ACCESS_GRANT_KEY && localStorage.getItem(ACCESS_GRANT_KEY) === '1'; } catch { return false; } };
+  const [verifiedGrant, setVerifiedGrant] = useState(false);
+  const [gateKey, setGateKey] = useState('');
+  const [gateError, setGateError] = useState('');
+  const [gateChecking, setGateChecking] = useState(false);
+  // Gate visible = real + fila cargada + NO owner + sin grant (local ni recién verificado).
+  const gateOpen = isRealMode && !!realRow && !amOwner && !verifiedGrant && !hasLocalGrant();
+  async function submitGate() {
+    if (gateChecking) return;
+    const typed = gateKey.trim();
+    if (!typed) { setGateError('Ingresa la clave de acceso.'); return; }
+    setGateChecking(true); setGateError('');
+    const { data, error } = await verifyChampionshipAccess({ championshipId: realId, registrationKey: typed });
+    setGateChecking(false);
+    if (error) { setGateError('No pudimos validar la clave. Intenta de nuevo.'); return; }
+    if (data === true) { try { localStorage.setItem(ACCESS_GRANT_KEY, '1'); } catch {} setVerifiedGrant(true); setGateKey(''); return; }
+    setGateError('Clave incorrecta.');
+  }
   const [champ, setChamp] = useState(rawChamp);
-  function writeChamp(next) { setChamp(next); const cv = readCV() || {}; cv.championship = next; writeCV(cv); }
+  // REAL: writeChamp SOLO actualiza estado local (override de sesión). NO reescribe el campeonato real en
+  // el CV (DB es la fuente de verdad; las mutaciones reales llegarán con RPC en FASE 3). Demo/preview: CV.
+  function writeChamp(next) { setChamp(next); if (isRealMode) return; const cv = readCV() || {}; cv.championship = next; writeCV(cv); }
+  // REAL: al llegar la fila de DB hidratamos el estado local desde columnas reales (status/clave/resultados/
+  // nombre/portada/owner). El contenido interno (equipos/fixture) sigue MOCK montado en el shell real
+  // (FASE 1/2); al volver de Team se conserva desde la caché de CV (cv.championship.teams), no la identidad.
+  useEffect(() => {
+    if (!isRealMode || !realRow) return;
+    const base = {
+      status: realRow.status,
+      createdByUserId: realRow.owner_user_id,
+      registrationKey: '',   // la clave real NO viaja en la superficie pública; el owner la hidrata aparte
+      publishedAt: realRow.published_at || null,
+      privacy: realRow.privacy || 'private',
+      realId: realRow.id,
+    };
+    // REAL/materializado: CERO datos competitivos mock. Equipos/fixture reales aún no tienen backend
+    // → teams vacío y sin fixture (nada de buildTeams/buildFixture/cv.teams). El shell/status son reales.
+    setChamp(base);
+    setTeams([]);
+    // Resultados desde DB. La CLAVE no está en la superficie pública: el owner la hidrata en su effect
+    // (ownerKey); el visitante no-owner nunca la recibe (Privacidad es owner-only).
+    setAccessCode('');
+    setResultsPublic(realRow.results_public !== false);
+    setSavedPrivacy({ key: '', resultsPublic: realRow.results_public !== false });
+    setPrivacyError('');
+    setName(realRow.name || 'Copa AlGrass');
+    setCoverTheme(realRow.cover_theme || COVER_THEMES[0]);
+    setCoverImagePath(realRow.cover_image_path || null);   // foto opcional (path); null = solo color
+  }, [isRealMode, realRow]); // eslint-disable-line
   // Publicar: loading (bloquea doble click) → publica → navega al LISTADO; confirmación + highlight allí.
   // Estructurado como operación real: loading → [request (mock: espera) ] → success → navegación.
   const [publishing, setPublishing] = useState(false);
+  // Privacidad REAL: dirty = lo escrito difiere de lo guardado en DB. Publicar exige clave GUARDADA
+  // (no solo tecleada) + sin cambios pendientes. En demo/preview basta la clave local (mock legacy).
+  const privacyDirty = isRealMode && (accessCode.trim() !== (savedPrivacy.key || '') || resultsPublic !== savedPrivacy.resultsPublic);
+  const publishEnabled = isRealMode
+    ? (!!savedPrivacy.key && !privacyDirty && !savingPrivacy && !publishing)
+    : (!!accessCode.trim() && !publishing);
+  // Guardar privacidad REAL en DB (update_championship_privacy). Success → saved* sincronizado con DB.
+  async function saveChampionshipPrivacy() {
+    if (!isRealMode || savingPrivacy || !privacyDirty) return;
+    setSavingPrivacy(true); setPrivacyError('');
+    const { data, error } = await updateChampionshipPrivacy({ championshipId: realId, registrationKey: accessCode.trim(), resultsPublic });
+    setSavingPrivacy(false);
+    if (error || !data) { setPrivacyError('No se pudo guardar. Intenta de nuevo.'); return; }
+    const key = data.registration_key || '';
+    setSavedPrivacy({ key, resultsPublic: data.results_public !== false });
+    setAccessCode(key); setResultsPublic(data.results_public !== false);
+    setChamp(prev => prev ? { ...prev, registrationKey: key } : prev);
+    flashToast('Guardado');
+  }
   async function publishChampionship() {
     if (publishing) return;                          // evita doble publicación
     if (!champ || champ.status !== 'pending_publish') return;
-    if (!accessCode.trim()) return;                  // sin clave no se publica
+    if (isRealMode) {
+      // REAL: publica en DB (pending_publish → registration_open + published_at). NO escribe status en CV.
+      if (!publishEnabled) return;
+      setPublishing(true); setPrivacyError('');
+      const { data, error } = await publishChampionshipRpc({ championshipId: realId });
+      if (error || !data) { setPublishing(false); setPrivacyError('No se pudo publicar. Intenta de nuevo.'); return; }
+      navigate('/championships', { state: { publishedChampionship: data.id } }); // DB ya dice registration_open
+      return;
+    }
+    // Demo/preview legacy (cv.championship): mock local aislado.
+    if (!accessCode.trim()) return;
     const key = accessCode.trim();
     setPublishing(true);
-    await mockPublishDelay();                         // mock aislado (retirar al conectar Supabase)
-    // MOCK: al publicar el campeonato arranca SIEMPRE con 4 equipos ya creados (para probar el flujo).
+    await mockPublishDelay();                         // mock aislado
     const seededTeams = buildTeams(4);
     writeChamp({ ...champ, registrationKey: key, status: 'registration_open', publishedAt: new Date().toISOString(), teams: seededTeams });
-    navigate('/championships', { state: { publishedChampionship: key } }); // key = id estable (mock)
+    navigate('/championships', { state: { publishedChampionship: key } });
   }
   // Herramientas TEMPORALES del mock (futuro: cierre automático por fecha). Conservan teams/players/config.
   // Cerrar: SORTEA equipos (una sola vez) y GENERA el fixture default (championshipFixtures) → persiste
@@ -140,6 +284,7 @@ export default function ChampionshipView() {
   // Futuro: lo hará Admin al validar el comprobante (payment_validation → pending_publish + materialización).
   function approvePaymentMock() { if (champ?.status === 'payment_validation') writeChamp({ ...champ, status: 'pending_publish' }); }
   const paymentValidating = isCreated && champ?.status === 'payment_validation'; // "Validando pago"
+  const isPendingPublish = isCreated && champ?.status === 'pending_publish';      // → CTA inferior "Publicar"
 
   const flashToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 1800); };
   const flashCopied = () => flashToast('Copiado');
@@ -150,6 +295,9 @@ export default function ChampionshipView() {
   const [confirmMove, setConfirmMove] = useState(null); // { fromName } | null (pasar a "sin equipo")
   function toggleNoTeam() {
     if (joinedNoTeam) { setJoinedNoTeam(false); return; } // salir de "sin equipo" (sin inscripción)
+    // REAL: Inscribirme exige login (anon → /auth → vuelve). Autenticado → SIN inscripción mock: aviso
+    // neutro (membership real llegará con backend). No se finge éxito ni se escribe CV.
+    if (isRealMode) { if (!requireAuth('join')) return; flashToast('Las inscripciones estarán disponibles muy pronto.'); return; }
     if (isCreated) {
       const t = youTeam();
       if (t) { setConfirmMove({ fromName: t.name }); return; } // ya en un equipo → confirmar el cambio
@@ -167,7 +315,51 @@ export default function ChampionshipView() {
   // ── Portada: ÚNICA entrada de edición ("Editar portada") → paleta + nombre editable EN la portada ──
   function startEditCover() { setCoverSnap({ name, coverTheme }); setCoverEditMode(true); }
   function cancelCover() { if (coverSnap) { setName(coverSnap.name); setCoverTheme(coverSnap.coverTheme); } setCoverEditMode(false); }
-  function saveCover() { const cv = readCV() || {}; cv.name = name; cv.coverTheme = coverTheme; writeCV(cv); setCoverEditMode(false); }
+  // REAL: persiste nombre + cover_theme (HEX crudo) en DB vía RPC (Fase 6); el color ya cambió visualmente
+  // al pulsar el swatch. Demo/preview: guarda en CV como antes. Error → mantiene edición para reintentar.
+  async function saveCover() {
+    if (!isRealMode) { const cv = readCV() || {}; cv.name = name; cv.coverTheme = coverTheme; writeCV(cv); setCoverEditMode(false); return; }
+    if (savingCover) return;
+    setSavingCover(true);
+    const { data, error } = await updateChampionshipCover({ championshipId: realId, name: (name.trim() || 'Copa AlGrass'), coverTheme });
+    setSavingCover(false);
+    if (error || !data) { flashToast('No se pudo guardar la portada.'); return; }
+    setName(data.name || name);
+    setCoverTheme(data.cover_theme || coverTheme);   // valor confirmado por DB (HEX crudo)
+    setCoverEditMode(false);
+    flashToast('Portada actualizada');
+  }
+  // URL pública de la foto (derivada del path; nunca se guarda la URL en DB). null = sin foto → color.
+  const coverImageUrl = useMemo(() => (isRealMode ? getChampionshipCoverUrl(supabase, coverImagePath) : null), [isRealMode, coverImagePath]);
+  // Subir/cambiar foto (REAL, owner): valida → sube (uuid nuevo) → persiste path vía RPC → borra la anterior.
+  // Si falla el upload, no toca DB. Si el upload va pero la persistencia falla, borra el objeto huérfano.
+  async function onPickCoverFile(file) {
+    if (!file || coverBusy || !isRealMode) return;
+    const invalid = validateCoverImage(file);
+    if (invalid) { flashToast(invalid); return; }
+    setCoverBusy(true);
+    const up = await uploadChampionshipCover(supabase, { userId: user?.id, championshipId: realId, file });
+    if (up.error) { setCoverBusy(false); flashToast('No se pudo subir la foto.'); return; }
+    const prevPath = coverImagePath;
+    const { data, error } = await updateChampionshipCover({ championshipId: realId, name: (name.trim() || 'Copa AlGrass'), coverTheme, coverImagePath: up.path, setCoverImage: true });
+    if (error || !data) { await deleteChampionshipCover(supabase, up.path); setCoverBusy(false); flashToast('No se pudo guardar la foto.'); return; }
+    setCoverImagePath(data.cover_image_path || up.path);
+    if (prevPath && prevPath !== (data.cover_image_path || up.path)) await deleteChampionshipCover(supabase, prevPath); // borrar anterior TRAS confirmar
+    setCoverBusy(false);
+    flashToast('Foto actualizada');
+  }
+  // Eliminar foto (REAL, owner): persiste cover_image_path=null → borra el objeto anterior → vuelve a color.
+  async function removeCoverImage() {
+    if (coverBusy || !isRealMode || !coverImagePath) return;
+    setCoverBusy(true);
+    const prevPath = coverImagePath;
+    const { data, error } = await updateChampionshipCover({ championshipId: realId, name: (name.trim() || 'Copa AlGrass'), coverTheme, coverImagePath: null, setCoverImage: true });
+    if (error || !data) { setCoverBusy(false); flashToast('No se pudo quitar la foto.'); return; }
+    setCoverImagePath(null);
+    await deleteChampionshipCover(supabase, prevPath);
+    setCoverBusy(false);
+    flashToast('Foto eliminada');
+  }
 
   // ── Privacidad: tras publicar la CLAVE se muestra cerrada (copiable); "Editar" la abre. El resto
   //    (Resultados públicos) no cambia. pending_publish/demo siguen totalmente editables. ──
@@ -176,6 +368,10 @@ export default function ChampionshipView() {
   // Persiste privacidad en cv al vuelo (solo cuando está publicado; demo/pending persisten al navegar).
   function persistPrivacy(nextKey, nextPub) {
     const key = nextKey ?? accessCode, pub = nextPub ?? resultsPublic;
+    if (isRealMode) {   // REAL: solo estado local de sesión (FASE 1/2 — sin RPC de update aún); no convertir CV en fuente
+      setChamp(prev => prev ? { ...prev, registrationKey: key.trim() } : prev);
+      return;
+    }
     const cv = readCV() || {};
     cv.accessCode = key; cv.resultsPublic = pub;
     cv.championship = { ...(champ || {}), registrationKey: key.trim() }; // clave = única fuente
@@ -261,20 +457,38 @@ export default function ChampionshipView() {
   // Guarda TODO el estado antes de ir a ChampionshipTeam (session state, sin persistencia real).
   // Guarda scrollTop del contenedor para restaurar la posición al volver del equipo (Team-return).
   function persistCV() {
-    // Campeonato REAL: los equipos viven en championship.teams (no en cv.teams demo).
+    // REAL: el CV es SOLO caché de contenido mock (teams) e UI para el viaje a Team; identidad/status
+    // viven en DB (no se persiste el campeonato real como fuente de verdad). Demo/preview: CV completo.
+    if (isRealMode) {
+      // REAL: el CV NO guarda clave/resultsPublic/status/privacy (todo eso vive en DB). Solo cachea el
+      // contenido mock (teams) e UI para el viaje a Team; identidad/status se re-leen por refetch.
+      const cv = readCV() || {};
+      writeCV({ ...cv, summary, organizeState, name, coverTheme, demo, resultsView, matchFilterId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, championship: { ...(cv.championship || {}), realId, teams } });
+      return;
+    }
     writeCV({ summary, organizeState, name, coverTheme, accessCode, resultsPublic, demo, resultsView, matchFilterId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, contactRequest, championship: isCreated ? { ...champ, teams } : champ });
   }
-  function goToNewTeam() { if (!canCreateTeam) return; persistCV(); navigate('/championships/team', { state: { teamMode: 'new', summary, organizeState, maxTeams, champTeams: isCreated } }); }
-  function goToExistingTeam(team) { persistCV(); navigate('/championships/team', { state: { teamMode: 'existing', team, summary, organizeState, champTeams: isCreated } }); }
+  function goToNewTeam() {
+    // REAL: Crear equipo exige login (anon → /auth → vuelve). Autenticado → SIN equipo mock: aviso neutro
+    // (el flujo real de equipos llegará con backend). No navega al builder mock ni escribe CV.
+    if (isRealMode) { if (!requireAuth('newTeam')) return; flashToast('Las inscripciones estarán disponibles muy pronto.'); return; }
+    if (!canCreateTeam) return;
+    persistCV();
+    navigate('/championships/team', { state: { teamMode: 'new', summary, organizeState, maxTeams, champTeams: isCreated, champId: isRealMode ? realId : undefined } });
+  }
+  function goToExistingTeam(team) { persistCV(); navigate('/championships/team', { state: { teamMode: 'existing', team, summary, organizeState, champTeams: isCreated, champId: isRealMode ? realId : undefined } }); }
   const createNewTeam = goToNewTeam;         // "+" y "Crear equipo" (Inscripciones) → modo NEW
   const openExistingTeam = goToExistingTeam; // escudo real en Inscripciones → modo EXISTING
   const openTeam = goToExistingTeam;         // equipo en Tabla/Llave → modo EXISTING (Partidos NO usa esto)
 
-  // "Atrás" del campeonato REAL → siempre al listado /championships (es pantalla principal; Atrás no
-  // cambia entre fases). Demo (Crear campeonato) → vuelve a Crear campeonato.
-  const goBack = () => isCreated
-    ? navigate('/championships')
-    : navigate('/championships/organize', organizeState ? { state: { organizeState } } : undefined);
+  // "Atrás": REAL → vuelve al ORIGEN (Profile/Championships) conservando su scroll; legacy CV → listado;
+  // demo (Crear campeonato) → vuelve a Crear campeonato.
+  const goBack = () => {
+    if (isRealMode) return goToOrigin();
+    return isCreated
+      ? navigate('/championships')
+      : navigate('/championships/organize', organizeState ? { state: { organizeState } } : undefined);
+  };
 
   // Checkout habilitado solo con formato+cancha+horario resueltos y SIN personalización de cancha.
   // (El caso pendiente/personalizado tendrá "Contáctame para organizarlo", aún no construido.)
@@ -285,7 +499,8 @@ export default function ChampionshipView() {
     if (user) { try { sessionStorage.removeItem(AUTH_RESUME_KEY); } catch {} return true; }
     persistCV();
     try { sessionStorage.setItem(AUTH_RESUME_KEY, action); } catch {}
-    navigate('/auth', { state: { backPath: '/championships/view' } });
+    // Real: volver al MISMO campeonato tras login (conserva el grant de acceso local). Creación: vista sin id.
+    navigate('/auth', { state: { backPath: isRealMode ? ('/championships/view/' + realId) : '/championships/view' } });
     return false;
   }
   function goToCheckout() {
@@ -313,6 +528,65 @@ export default function ChampionshipView() {
     else if (pending === 'contact') goToContact();
   }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // REAL: mientras carga (o hidrata) mostramos loading; NUNCA caemos a demo ni a "Crear campeonato".
+  // Si falla el fetch → error explícito, sin usar el CV como fallback (no mostrar otro campeonato).
+  if (isRealMode && (realLoading || realError || !champ)) {
+    return (
+      <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: SOFT, overflow: 'hidden' }}>
+        <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 8, paddingRight: 12, flexShrink: 0 }}>
+          <div style={{ height: 26, display: 'flex', alignItems: 'center', position: 'relative' }}>
+            <button onClick={goToOrigin} aria-label="Atrás" style={{ position: 'absolute', left: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0 }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            </button>
+            <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>Tu campeonato</div>
+          </div>
+        </div>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, textAlign: 'center' }}>
+          {realError ? (
+            <div style={{ color: SUB, fontSize: 14, lineHeight: 1.5 }}>
+              No pudimos cargar el campeonato.
+              <div><button onClick={() => navigate('/championships')} className="pressable" style={{ marginTop: 14, height: 44, padding: '0 20px', borderRadius: 12, border: 'none', background: ORANGE, color: '#1B1B1F', fontFamily: 'inherit', fontWeight: 800, fontSize: 14, cursor: 'pointer' }}>Volver a campeonatos</button></div>
+            </div>
+          ) : (
+            <span style={{ width: 26, height: 26, borderRadius: '50%', border: '3px solid #E4E4EA', borderTop: `3px solid ${BLUE}`, display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
+          )}
+        </div>
+        <TabBar />
+      </div>
+    );
+  }
+
+  // Gate de acceso: visitante no-owner sin grant → pantalla de clave (NO se muestran datos internos ni
+  // controles). Owner nunca la ve. La card/listado siguen siendo públicos (la clave se pide al ENTRAR).
+  if (gateOpen) {
+    return (
+      <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: SOFT, overflow: 'hidden' }}>
+        <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 8, paddingRight: 12, flexShrink: 0 }}>
+          <div style={{ height: 26, display: 'flex', alignItems: 'center', position: 'relative' }}>
+            <button onClick={goToOrigin} aria-label="Atrás" style={{ position: 'absolute', left: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0 }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            </button>
+            <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>Acceso al campeonato</div>
+          </div>
+        </div>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px 20px', maxWidth: 420, width: '100%', margin: '0 auto' }}>
+          <div style={{ width: 52, height: 52, borderRadius: '50%', background: '#EEF2FF', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="4" y="10.5" width="16" height="10.5" rx="2.4" stroke={BLUE} strokeWidth="1.8" /><path d="M7.5 10.5V7.5a4.5 4.5 0 0 1 9 0v3" stroke={BLUE} strokeWidth="1.8" strokeLinecap="round" /></svg>
+          </div>
+          <div style={{ fontSize: 19, fontWeight: 800, color: TEXT, textAlign: 'center', letterSpacing: -0.3 }}>{name}</div>
+          <div style={{ fontSize: 13.5, color: SUB, lineHeight: 1.5, textAlign: 'center', marginTop: 8 }}>Este campeonato es privado. Ingresa la clave de acceso que te compartió el organizador para entrar.</div>
+          <input value={gateKey} onChange={e => { setGateKey(e.target.value); if (gateError) setGateError(''); }} onKeyDown={e => { if (e.key === 'Enter') submitGate(); }} placeholder="Clave de acceso" maxLength={24} autoFocus style={{ width: '100%', height: 48, borderRadius: 12, border: `1px solid ${gateError ? RED : HAIR}`, padding: '0 14px', fontSize: 16, color: TEXT, fontFamily: 'inherit', background: '#fff', outline: 'none', boxSizing: 'border-box', letterSpacing: 1, marginTop: 20, textAlign: 'center' }} />
+          {gateError && <div style={{ fontSize: 12.5, color: RED, textAlign: 'center', marginTop: 8 }}>{gateError}</div>}
+          <button onClick={submitGate} disabled={gateChecking} className={gateChecking ? undefined : 'pressable'} style={{ marginTop: 16, width: '100%', height: 52, borderRadius: 14, border: 'none', background: ORANGE, color: '#1B1B1F', cursor: gateChecking ? 'default' : 'pointer', opacity: gateChecking ? 0.7 : 1, fontFamily: 'inherit', fontSize: 16, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+            {gateChecking && <span style={{ width: 16, height: 16, borderRadius: '50%', border: '2.5px solid rgba(27,27,31,0.25)', borderTop: '2.5px solid #1B1B1F', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />}
+            {gateChecking ? 'Validando…' : 'Entrar'}
+          </button>
+        </div>
+        <TabBar />
+      </div>
+    );
+  }
+
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: SOFT, overflow: 'hidden' }}>
       {/* Header (sin TabBar en esta pantalla) */}
@@ -321,7 +595,7 @@ export default function ChampionshipView() {
           <button onClick={goBack} style={{ position: 'absolute', left: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
-          <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>{isCreated && champ?.status === 'registration_open' ? 'Inscripciones abiertas' : isCreated && champ?.status === 'registration_closed' ? 'Calendario y resultados' : 'Ver mi campeonato'}</div>
+          <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>{isRealMode ? 'Tu campeonato' : isCreated && champ?.status === 'registration_open' ? 'Inscripciones abiertas' : isCreated && champ?.status === 'registration_closed' ? 'Calendario y resultados' : 'Ver mi campeonato'}</div>
           {/* Compartir en el header — mismo icono/tamaño/posición que Partidos. Solo owner + publicado. */}
           {isOwner && isCreated && champ?.status === 'registration_open' && (
             <button className="pressable" onClick={shareChampionship} aria-label="Compartir" style={{ position: 'absolute', right: 0, width: 30, height: 26, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', WebkitTapHighlightColor: 'transparent' }}>
@@ -341,15 +615,17 @@ export default function ChampionshipView() {
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         <div ref={scrollRef} className="no-sb" style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
           {/* ── Portada — nombre editable SOLO en coverEditMode; una única entrada ("Editar portada") ── */}
-          <div style={{ position: 'relative', height: 180, background: coverTheme, overflow: 'hidden' }}>
+          <div style={{ position: 'relative', height: 180, background: coverColor(coverTheme), overflow: 'hidden' }}>
+            {/* REAL con foto → imagen del bucket público; si no, queda el cover_theme de fondo. */}
+            {coverImageUrl && <div style={{ position: 'absolute', inset: 0, backgroundImage: `url(${coverImageUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' }} />}
             <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, rgba(0,0,0,0) 45%, rgba(0,0,0,0.55) 100%)' }} />
             {/* Acciones (top-right) — SOLO owner. Jugador: portada en lectura, sin acciones. */}
             {isOwner && (
               <div style={{ position: 'absolute', top: 10, right: 12, display: 'flex', gap: 8 }}>
                 {coverEditMode ? (
                   <>
-                    <button onClick={cancelCover} className="pressable" style={coverPill}>Cancelar</button>
-                    <button onClick={saveCover} className="pressable" style={{ ...coverPill, background: ORANGE, color: '#1B1B1F' }}>Guardar</button>
+                    <button onClick={cancelCover} disabled={savingCover} className="pressable" style={coverPill}>Cancelar</button>
+                    <button onClick={saveCover} disabled={savingCover} className="pressable" style={{ ...coverPill, background: ORANGE, color: '#1B1B1F', opacity: savingCover ? 0.7 : 1 }}>{savingCover ? 'Guardando…' : 'Guardar'}</button>
                   </>
                 ) : (
                   <button onClick={startEditCover} className="pressable" style={coverPill}>Editar portada</button>
@@ -374,10 +650,17 @@ export default function ChampionshipView() {
                 {COVER_THEMES.map(c => (
                   <button key={c} onClick={() => setCoverTheme(c)} style={{ width: 30, height: 30, borderRadius: '50%', background: c, border: 'none', cursor: 'pointer', boxShadow: coverTheme === c ? `0 0 0 2px #fff, 0 0 0 4px ${c}` : 'none', outline: 'none', WebkitTapHighlightColor: 'transparent', padding: 0 }} />
                 ))}
-                <button onClick={() => { /* mock: carga de imagen real pendiente (sin Storage) */ }} className="pressable" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, height: 32, padding: '0 12px', borderRadius: 999, border: `1px solid ${HAIR}`, background: '#fff', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: TEXT, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="14" rx="2" stroke={TEXT} strokeWidth="1.6" /><circle cx="12" cy="13" r="3.2" stroke={TEXT} strokeWidth="1.6" /><path d="M8 6l1.5-2h5L16 6" stroke={TEXT} strokeWidth="1.6" strokeLinejoin="round" /></svg>
-                  Foto
-                </button>
+                {/* Foto opcional (SOLO real). Preview/demo: sin Storage → botón oculto. */}
+                {isRealMode && (
+                  <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {coverImagePath && <button onClick={removeCoverImage} disabled={coverBusy} className="pressable" style={{ display: 'flex', alignItems: 'center', height: 32, padding: '0 12px', borderRadius: 999, border: `1px solid ${HAIR}`, background: '#fff', cursor: coverBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: RED, opacity: coverBusy ? 0.6 : 1, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Quitar foto</button>}
+                    <input ref={coverFileRef} type="file" accept="image/jpeg,image/png,image/webp" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0] || null; if (coverFileRef.current) coverFileRef.current.value = ''; onPickCoverFile(f); }} />
+                    <button onClick={() => coverFileRef.current?.click()} disabled={coverBusy} className="pressable" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 32, padding: '0 12px', borderRadius: 999, border: `1px solid ${HAIR}`, background: '#fff', cursor: coverBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, color: TEXT, opacity: coverBusy ? 0.6 : 1, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="14" rx="2" stroke={TEXT} strokeWidth="1.6" /><circle cx="12" cy="13" r="3.2" stroke={TEXT} strokeWidth="1.6" /><path d="M8 6l1.5-2h5L16 6" stroke={TEXT} strokeWidth="1.6" strokeLinejoin="round" /></svg>
+                      {coverBusy ? 'Subiendo…' : (coverImagePath ? 'Cambiar foto' : 'Foto')}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -432,7 +715,9 @@ export default function ChampionshipView() {
                   <div style={{ fontSize: 14, fontWeight: 800, color: TEXT, letterSpacing: -0.1 }}>Validando pago</div>
                 </div>
                 <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginTop: 6 }}>Estamos validando tu transferencia. Podrás publicar el campeonato cuando el pago esté confirmado.</div>
-                <OwnerPhaseTool label="Simular aprobación de pago (mock)" note="Herramienta temporal — futuro: lo hará Admin al validar el comprobante." onClick={approvePaymentMock} />
+                {/* REAL: el status lo cambia Admin en DB (approve_championship_transfer); al reentrar/refrescar
+                    se refetch por ID y se lee el nuevo status. La herramienta mock solo queda en demo/preview. */}
+                {!isRealMode && <OwnerPhaseTool label="Simular aprobación de pago (mock)" note="Herramienta temporal — futuro: lo hará Admin al validar el comprobante." onClick={approvePaymentMock} />}
               </div>
             )}
             {/* ── Privacidad — EXCLUSIVA del owner. Jugador: NO se renderiza (desaparece por completo). ──
@@ -445,7 +730,7 @@ export default function ChampionshipView() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
                 <div style={{ fontSize: 13.5, fontWeight: 700, color: TEXT }}>Configura clave de acceso</div>
                 {privacyLocked && (
-                  <button onClick={() => { if (keyEditing) persistPrivacy(); setKeyEditing(v => !v); }} className="pressable" style={{ background: 'none', border: 'none', cursor: 'pointer', color: BLUE, fontFamily: 'inherit', fontSize: 13, fontWeight: 700, padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{keyEditing ? 'Listo' : 'Editar'}</button>
+                  <button onClick={() => { if (!isRealMode && keyEditing) persistPrivacy(); setKeyEditing(v => !v); }} className="pressable" style={{ background: 'none', border: 'none', cursor: 'pointer', color: BLUE, fontFamily: 'inherit', fontSize: 13, fontWeight: 700, padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{keyEditing ? 'Listo' : 'Editar'}</button>
                 )}
               </div>
               <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginTop: 2, marginBottom: 8 }}>Con esta clave podrán acceder tus jugadores para organizarse.</div>
@@ -465,38 +750,65 @@ export default function ChampionshipView() {
                   <div style={{ fontSize: 13.5, fontWeight: 700, color: TEXT }}>Resultados públicos</div>
                   <div style={{ fontSize: 12, color: SUB, lineHeight: 1.5, marginTop: 2 }}>Cualquiera con el enlace puede ver la llave y los resultados — ideal para que más gente siga tu torneo. Desactívalo para que solo lo vean los inscritos.</div>
                 </div>
-                <button onClick={() => { const next = !resultsPublic; setResultsPublic(next); if (privacyLocked) persistPrivacy(undefined, next); }} style={{ width: 44, height: 26, borderRadius: 999, border: 'none', background: resultsPublic ? BLUE : '#E5E5EA', cursor: 'pointer', padding: 0, position: 'relative', flexShrink: 0, transition: 'background .2s ease', outline: 'none', WebkitTapHighlightColor: 'transparent' }}>
+                <button onClick={() => { const next = !resultsPublic; setResultsPublic(next); if (!isRealMode && privacyLocked) persistPrivacy(undefined, next); }} style={{ width: 44, height: 26, borderRadius: 999, border: 'none', background: resultsPublic ? BLUE : '#E5E5EA', cursor: 'pointer', padding: 0, position: 'relative', flexShrink: 0, transition: 'background .2s ease', outline: 'none', WebkitTapHighlightColor: 'transparent' }}>
                   <div style={{ position: 'absolute', top: 2, left: resultsPublic ? 20 : 2, width: 22, height: 22, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,0.25)', transition: 'left .2s ease' }} />
                 </button>
               </div>
-              {/* Publicar campeonato — SOLO campeonato real pending_publish, al final del mismo holder */}
-              {isCreated && champ?.status === 'pending_publish' && (() => {
-                const canPublish = !!accessCode.trim();
-                return (
-                  <>
-                    <div style={{ height: 1, background: HAIR, margin: '14px 0' }} />
-                    <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginBottom: 12 }}>Las inscripciones cierran {CHAMPIONSHIP_REGISTRATION_CLOSE_DAYS} días antes del campeonato.</div>
-                    <button onClick={publishChampionship} disabled={!canPublish || publishing} className={(canPublish && !publishing) ? 'pressable' : undefined} style={{ width: '100%', height: 50, borderRadius: 14, border: 'none', background: canPublish ? ORANGE : '#E4E4EA', color: canPublish ? '#1B1B1F' : '#9A9AA2', cursor: (canPublish && !publishing) ? 'pointer' : 'not-allowed', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, WebkitTapHighlightColor: 'transparent', outline: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-                      {publishing && <span style={{ width: 16, height: 16, borderRadius: '50%', border: '2.5px solid rgba(27,27,31,0.2)', borderTop: '2.5px solid #1B1B1F', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />}
-                      {publishing ? 'Publicando…' : 'Publicar campeonato'}
-                    </button>
-                    {!canPublish && <div style={{ fontSize: 12, color: SUB, textAlign: 'center', marginTop: 8 }}>Configura una clave de acceso para publicar.</div>}
-                  </>
-                );
-              })()}
+              {/* Guardar (REAL): persiste clave + resultados en DB (update_championship_privacy). disabled
+                  sin cambios o guardando; success sincroniza saved* → habilita Publicar. NO sale de la pantalla. */}
+              {isRealMode && isOwner && (
+                <>
+                  <div style={{ height: 1, background: HAIR, margin: '14px 0' }} />
+                  <button onClick={saveChampionshipPrivacy} disabled={!privacyDirty || savingPrivacy} className={(privacyDirty && !savingPrivacy) ? 'pressable' : undefined} style={{ width: '100%', height: 46, borderRadius: 12, border: 'none', background: (privacyDirty && !savingPrivacy) ? BLUE : '#E8E8EC', color: (privacyDirty && !savingPrivacy) ? '#fff' : '#9A9AA0', cursor: (privacyDirty && !savingPrivacy) ? 'pointer' : 'not-allowed', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                    {savingPrivacy && <span style={{ width: 16, height: 16, borderRadius: '50%', border: '2.5px solid rgba(255,255,255,0.4)', borderTop: '2.5px solid #fff', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />}
+                    {savingPrivacy ? 'Guardando…' : 'Guardar'}
+                  </button>
+                  {privacyError && <div style={{ fontSize: 12, color: RED, textAlign: 'center', marginTop: 8 }}>{privacyError}</div>}
+                </>
+              )}
+              {/* Publicar se movió al CTA inferior (no se duplica aquí). Solo la nota de cierre. */}
+              {isPendingPublish && (
+                <>
+                  <div style={{ height: 1, background: HAIR, margin: '14px 0' }} />
+                  <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5 }}>Las inscripciones cierran {CHAMPIONSHIP_REGISTRATION_CLOSE_DAYS} días antes del campeonato. Configura la clave y publica desde el botón inferior.</div>
+                </>
+              )}
             </div>
             )}
 
-            {isCreated ? (
-              /* ── Campeonato REAL creado — la vista depende del status ── */
+            {isRealMode ? (
+              /* ── Campeonato REAL/materializado — CERO datos competitivos mock. Solo shell real + estados
+                     vacíos limpios hasta conectar backend de inscripciones/fixture/resultados. ── */
+              (champ?.status === 'registration_closed' || champ?.status === 'in_progress' || champ?.status === 'completed') ? (
+                /* Calendario/Resultados aún sin backend → estado vacío (sin tabla/llave/partidos/goleadores mock) */
+                <div style={CARD}>
+                  <div style={H}>Calendario y resultados</div>
+                  <div style={{ fontSize: 13, color: SUB, lineHeight: 1.5, marginTop: 8 }}>El calendario, la tabla de posiciones y los resultados estarán disponibles cuando el torneo se ponga en marcha.</div>
+                </div>
+              ) : (
+                /* pending_publish / payment_validation / registration_open → Inscripciones limpia (sin equipos/jugadores mock) */
+                <div style={CARD}>
+                  <div style={H}>Inscripciones</div>
+                  <div style={{ fontSize: 13, color: SUB, lineHeight: 1.5, marginTop: 8 }}>Aún no hay equipos inscritos. Las inscripciones estarán disponibles muy pronto.</div>
+                  {champ?.status === 'registration_open' && (
+                    <div style={{ marginTop: 14 }}>
+                      <button onClick={createNewTeam} className="pressable" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 46, background: BLUE, color: '#fff', border: 'none', borderRadius: 14, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, WebkitTapHighlightColor: 'transparent', outline: 'none', marginBottom: 10 }}>
+                        <svg width="16" height="16" viewBox="0 0 18 18" fill="none"><path d="M9 3v12M3 9h12" stroke="#fff" strokeWidth="2" strokeLinecap="round" /></svg>
+                        Crear equipo
+                      </button>
+                      <button onClick={toggleNoTeam} className="pressable" style={{ width: '100%', height: 46, borderRadius: 14, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, background: '#fff', color: TEXT, boxShadow: `inset 0 0 0 1px ${HAIR}`, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Unirme sin equipo</button>
+                    </div>
+                  )}
+                </div>
+              )
+            ) : isCreated ? (
+              /* ── Campeonato "creado" LEGACY por CV (preview post-checkout, mock) — se conserva intacto ── */
               champ?.status === 'registration_closed' ? (
-                /* Inscripciones cerradas → Resultados con los EQUIPOS REALES (mock solo en marcadores/fixture) */
                 <>
                   <Resultados view={resultsView} setView={setResultsView} teams={teams} standings={standings} scorers={scorers} matches={realMatches} venueName={summary.venueName || 'AlGrass Arena'} openTeam={openTeam} filter={teams.find(t => t.id === matchFilterId) || null} onFilter={team => setMatchFilterId(team ? team.id : null)} isLiga={isLiga} real={isCreated} organizers={organizers} />
                   {isOwner && <OwnerPhaseTool label="Reabrir inscripciones" note="Herramienta temporal para probar el flujo." onClick={reopenRegistration} />}
                 </>
               ) : (
-                /* pending_publish / registration_open → Inscripciones (0 equipos/0 jugadores al inicio) */
                 <>
                   <Inscripciones teams={teams} emptySlots={emptySlots} canCreate={canCreateTeam} onCreate={createNewTeam} onOpenTeam={openExistingTeam} roster={roster} joined={joinedNoTeam} onToggleJoin={toggleNoTeam} count={roster.length} closeLine={closeLine} organizers={organizers} />
                   {isOwner && champ?.status === 'registration_open' && <OwnerPhaseTool label="Cerrar inscripciones" note="Herramienta temporal para probar el flujo." onClick={closeRegistration} />}
@@ -531,7 +843,27 @@ export default function ChampionshipView() {
         {/* CTA flotante (sin TabBar; respeta safe-area inferior). Tres estados:
             solicitud enviada (pending) · precio→checkout · contáctame→contacto. */}
         <div style={{ position: 'absolute', left: 16, right: 16, bottom: 'calc(env(safe-area-inset-bottom) + 12px)', pointerEvents: 'none' }}>
-          {champ ? null : contactRequest?.status === 'pending' ? (
+          {/* CTA inferior por estado. Creado: Validando pago (disabled) · Publicar (según clave) ·
+              publicado/cerrado → sin CTA (solo TabBar). Preview: solicitud enviada · Crear/Contactarme. */}
+          {paymentValidating ? (
+            <button disabled style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: 54, background: '#E4E4EA', color: '#9A9AA2', border: 'none', borderRadius: 18, cursor: 'not-allowed', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2 }}>Validando pago</button>
+          ) : isPendingPublish ? (() => {
+            const canPublish = publishEnabled;
+            // Ayuda contextual: falta clave guardada vs cambios sin guardar (REAL). Demo: solo clave local.
+            const hint = isRealMode
+              ? (!savedPrivacy.key ? 'Configura una clave de acceso y pulsa Guardar para publicar.'
+                : privacyDirty ? 'Guarda los cambios de privacidad para publicar.' : null)
+              : (!accessCode.trim() ? 'Configura una clave de acceso para publicar.' : null);
+            return (
+              <>
+                {hint && <div style={{ pointerEvents: 'none', textAlign: 'center', marginBottom: 8, fontSize: 12, fontWeight: 600, color: SUB, background: 'rgba(255,255,255,0.92)', borderRadius: 8, padding: '5px 8px' }}>{hint}</div>}
+                <button onClick={publishChampionship} disabled={!canPublish || publishing} className={(canPublish && !publishing) ? 'pressable' : undefined} style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 54, background: canPublish ? ORANGE : '#E4E4EA', color: canPublish ? '#1B1B1F' : '#9A9AA2', border: 'none', borderRadius: 18, boxShadow: canPublish ? '0 6px 18px rgba(245,165,36,0.40)' : 'none', cursor: (canPublish && !publishing) ? 'pointer' : 'not-allowed', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, WebkitTapHighlightColor: 'transparent' }}>
+                  {publishing && <span style={{ width: 16, height: 16, borderRadius: '50%', border: '2.5px solid rgba(27,27,31,0.2)', borderTop: '2.5px solid #1B1B1F', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />}
+                  {publishing ? 'Publicando…' : 'Publicar campeonato'}
+                </button>
+              </>
+            );
+          })() : champ ? null : contactRequest?.status === 'pending' ? (
             <div style={{ pointerEvents: 'auto', background: '#fff', border: `1px solid ${HAIR}`, borderRadius: 16, padding: '12px 14px', boxShadow: '0 6px 18px rgba(0,0,0,0.10)', display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ width: 26, height: 26, borderRadius: '50%', background: '#EAF8EF', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke={GREEN} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -570,7 +902,8 @@ export default function ChampionshipView() {
 
       {/* Campeonato REAL = parte de la navegación principal → BottomNav (mismo TabBar de la app).
           Demo (Crear campeonato) NO es pantalla principal → sin TabBar. */}
-      {isCreated && <TabBar />}
+      {/* TabBar en publicado/cerrado (browsable). Pre-publicación (validando/pendiente) usa el CTA inferior. */}
+      {isCreated && !paymentValidating && !isPendingPublish && <TabBar />}
       {confirmExit && (
         <ConfirmExitDialog onCancel={() => setConfirmExit(false)} onConfirm={() => navigate('/championships')} />
       )}

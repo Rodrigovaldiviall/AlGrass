@@ -3,11 +3,11 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, ORANGE } from '../constants';
 import TabBar from '../components/TabBar';
 import ChampConfirmOverlay from '../components/ChampConfirmOverlay';
+import { listPublicChampionships } from '../services/championshipService';
+import { formatDateLabel } from '../utils/format';
+import { coverColor } from '../data/championshipCover';
 
-const SCROLL_KEY = 'ch_list_scroll'; // mismo patrón que Partidos/Canchas (sessionStorage)
-const CV_KEY = 'championship_view_state'; // ÚNICA fuente del campeonato del owner (mock)
-// Estados que hacen visible el campeonato en el listado (pending_publish NO aparece aquí).
-const LISTED_STATUSES = new Set(['registration_open', 'registration_closed', 'in_progress']);
+const SCROLL_KEY = 'ch_list_scroll'; // mismo patrón que Partidos/Canchas (sessionStorage; solo UI)
 
 // ── Iconos locales (mínimos para B1) ───────────────────────────────────────
 const PlusIcon = (c = '#fff') => (
@@ -49,7 +49,7 @@ function ChampionshipCard({ c, onPress, highlighted = false, innerRef = null }) 
         opacity: blocked ? 0.7 : 1, WebkitTapHighlightColor: 'transparent',
       }}>
       {/* Portada */}
-      <div style={{ position: 'relative', height: 96, background: c.coverTheme }}>
+      <div style={{ position: 'relative', height: 96, background: coverColor(c.coverTheme) }}>
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, rgba(0,0,0,0) 40%, rgba(0,0,0,0.55) 100%)' }} />
         {/* Pill de estado + (activos) subtítulo inmediatamente debajo */}
         <div style={{ position: 'absolute', top: 10, left: 10, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
@@ -76,8 +76,7 @@ function ChampionshipCard({ c, onPress, highlighted = false, innerRef = null }) 
       <div style={{ padding: '10px 12px 12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: SUB }}>
           {PeopleIcon(SUB)}
-          <span style={{ color: TEXT, fontWeight: 600 }}>{c.teams} equipos</span>
-          <span style={{ color: '#D1D1D6' }}>·</span>
+          {c.teamsLabel && <><span style={{ color: TEXT, fontWeight: 600 }}>{c.teamsLabel}</span><span style={{ color: '#D1D1D6' }}>·</span></>}
           <span>{c.format}</span>
           <span style={{ flex: 1 }} />
           {(isOpen || c.daysAgo == null)
@@ -125,27 +124,46 @@ export default function Championships() {
     return () => window.removeEventListener('tab-scroll-top', onTabScrollTop);
   }, []);
 
-  // Única fuente: cv.championship. Sin campeonatos mock precargados. Solo aparece cuando su estado
-  // es "listable" (publicado en adelante). El mismo objeto que ve Profile/ChampionshipView.
-  const cv = (() => { try { return JSON.parse(sessionStorage.getItem(CV_KEY)); } catch { return null; } })();
-  const champ = cv?.championship || null;
-  const summary = cv?.summary || {};
-  const myChampCard = (champ && LISTED_STATUSES.has(champ.status)) ? {
-    id: champ.registrationKey || '__mine', // id estable (mock: la clave); futuro: championship_id
-    name: cv.name || 'Campeonato',
-    teams: champ.teams?.length ?? 0,
-    format: summary.formatLabel || (summary.mode === 'liga' ? 'Liga' : ''),
-    status: champ.status === 'registration_open' ? 'open' : 'results', // pill: abiertas vs Resultados
-    visibility: champ.privacy === 'private' ? 'private' : 'public',
-    resultsPublic: cv.resultsPublic ?? true,
-    daysAgo: null,
-    coverTheme: cv.coverTheme || '#3F5FE0',
-    dateLabel: summary.dateLabel || '',
-    venueName: summary.venueName || '',
-  } : null;
+  // ── Listado REAL desde DB (fuente de verdad). NO usa cv.championship para las cards. ──
+  //    champs: null = cargando · [] = vacío · array = datos. Refetch en refresh/reintento (no sessionStorage).
+  const [champs, setChamps] = useState(null);
+  const [loadError, setLoadError] = useState(false);
+  const loadChampionships = () => {
+    setLoadError(false);
+    listPublicChampionships().then(({ data, error }) => {
+      if (error) { setLoadError(true); setChamps([]); return; }
+      setChamps(data || []);
+    });
+  };
+  useEffect(() => { loadChampionships(); }, []);
 
-  // Abrir el MISMO campeonato (owner). Reutiliza cvReturn para leer cv.championship/teams/status.
-  const openChampionship = () => navigate('/championships/view', { state: { summary: cv?.summary, organizeState: cv?.organizeState, cvReturn: true, from: 'campeonatos' } });
+  // Card desde campos REALES. venue/formato/equipos se derivan de format_config (mismo mapeo que Profile;
+  // venue_id sin FK → sin join). teamsLabel = rango/estimación contratada (no inscripciones reales, aún mock).
+  const cards = (champs || []).map(row => {
+    const fc = row.format_config || {};
+    const sum = fc.summary || {};
+    const le = sum.leagueEstimate;
+    const teamsLabel = sum.mode === 'liga'
+      ? (le?.quantity ? `${le.quantity} ${le.type === 'people' ? 'personas' : 'equipos'}` : 'Liga')
+      : (sum.group ? (sum.group.min === sum.group.max ? `${sum.group.min} equipos` : `${sum.group.min}–${sum.group.max} equipos`) : '');
+    const dateKey = row.event_date || fc.organizeState?.dateKey || null;
+    return {
+      id: row.id,
+      name: row.name || 'Campeonato',
+      teamsLabel,
+      format: sum.formatLabel || (sum.mode === 'liga' ? 'Liga' : ''),
+      status: row.status === 'registration_open' ? 'open' : 'results', // pill: abiertas vs Resultados
+      visibility: row.privacy === 'private' ? 'private' : 'public',
+      resultsPublic: row.results_public !== false,
+      daysAgo: null,
+      coverTheme: row.cover_theme || '#3F5FE0',
+      dateLabel: dateKey ? formatDateLabel(dateKey) : '',
+      venueName: sum.venueName || '',
+    };
+  });
+
+  // Abrir campeonato real → /championships/view/:id (UUID real). Sin cvReturn, sin reconstruir CV.
+  const openChampionship = (card) => navigate('/championships/view/' + card.id, { state: { championshipOrigin: 'championships' } });
 
   // ── Confirmación post-publicación SOBRE el listado + highlight (patrón Profile/Games) ──
   // Estado TRANSITORIO por location.state (no se persiste en cv). Se consume y limpia → no reaparece.
@@ -187,10 +205,21 @@ export default function Championships() {
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         {/* La lista scrollea por detrás del CTA; paddingBottom deja aire para la última card */}
         <div ref={listRef} onScroll={e => { scrollPosRef.current = e.currentTarget.scrollTop; }} className="no-sb" style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '14px 16px 88px' }}>
-          {myChampCard ? (
+          {champs === null ? (
+            <div style={{ padding: '48px 24px', display: 'flex', justifyContent: 'center' }}>
+              <span style={{ width: 26, height: 26, borderRadius: '50%', border: '3px solid #E4E4EA', borderTop: `3px solid ${BLUE}`, display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
+            </div>
+          ) : loadError ? (
+            <div style={{ padding: '48px 24px', textAlign: 'center' }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4 }}>No pudimos cargar los campeonatos</div>
+              <button onClick={loadChampionships} className="pressable" style={{ marginTop: 12, height: 44, padding: '0 20px', borderRadius: 12, border: 'none', background: ORANGE, color: '#1B1B1F', fontFamily: 'inherit', fontWeight: 800, fontSize: 14, cursor: 'pointer' }}>Reintentar</button>
+            </div>
+          ) : cards.length ? (
             <>
               <SectionLabel>Activos</SectionLabel>
-              <ChampionshipCard c={myChampCard} onPress={openChampionship} highlighted={highlightedId === myChampCard.id} innerRef={highlightedId === myChampCard.id ? highlightRef : null} />
+              {cards.map(card => (
+                <ChampionshipCard key={card.id} c={card} onPress={() => openChampionship(card)} highlighted={highlightedId === card.id} innerRef={highlightedId === card.id ? highlightRef : null} />
+              ))}
             </>
           ) : (
             <div style={{ padding: '48px 24px', textAlign: 'center' }}>
@@ -228,9 +257,7 @@ export default function Championships() {
           title="¡Campeonato publicado!"
           lines={[
             'Tu campeonato ya está publicado.',
-            champ?.registrationClosesAt?.label
-              ? `Las inscripciones cierran el ${champ.registrationClosesAt.label}, así que comparte la clave con tus jugadores cuanto antes.`
-              : 'Comparte la clave con tus jugadores para que puedan empezar a inscribirse.',
+            'Comparte la clave con tus jugadores para que puedan empezar a inscribirse.',
           ]}
           onContinue={onPublishedContinue}
         />

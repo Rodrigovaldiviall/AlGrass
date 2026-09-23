@@ -272,6 +272,8 @@ function AppBody() {
             <Route path="/empresas" element={<ChampionshipIntro />} />
             <Route path="/championships/organize" element={<ChampionshipOrganize />} />
             <Route path="/championships/view" element={<ChampionshipView />} />
+            {/* Campeonato REAL/materializado: identidad por ID en la ruta → sobrevive refresh (DB fuente de verdad). */}
+            <Route path="/championships/view/:id" element={<ChampionshipView />} />
             <Route path="/championships/team" element={<ChampionshipTeam />} />
             <Route path="/championships/checkout" element={<ChampionshipCheckout />} />
             <Route path="/championships/contact" element={<ChampionshipContact />} />

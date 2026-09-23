@@ -27,6 +27,7 @@ import { fetchPendingSlotExpiry, markSlotReservationNotified, getPendingRewards,
 import { saveRating, fetchMyRatings, upsertRatingRows, markPopupShown, getLocalRatings, setLocalRatings } from '../services/ratingService';
 import { getMyWaitlistGamesFull } from '../services/waitlistService';
 import { listMyChampionships } from '../services/championshipService';
+import { coverColor } from '../data/championshipCover';
 import { useForegroundTick } from '../hooks/useForegroundTick';
 import { uploadAvatar, getAvatarUrl } from '../utils/avatar';
 import { useGlobalRoles } from '../hooks/useGlobalRoles';
@@ -2808,7 +2809,14 @@ export default function Profile() {
     ? (_champLe?.quantity ? `${_champLe.quantity} ${_champLe.type === 'people' ? 'personas' : 'equipos'}` : '')
     : (_champSum.group ? (_champSum.group.min === _champSum.group.max ? `${_champSum.group.min} equipos` : `${_champSum.group.min}–${_champSum.group.max} equipos`) : '');
   const champVenueLine = [_champSum.venueName, champTeamsLabel].filter(Boolean).join(' · ');
-  const openChampionship = (g) => navigate('/championships/view', { state: { summary: g?.summary ?? _champCv?.summary, organizeState: g?.organizeState ?? _champCv?.organizeState, cvReturn: false, from: 'profile' } });
+  // Campeonato REAL → abre por ID (ruta con :id, DB fuente de verdad, sobrevive refresh). El statusHint
+  // solo pinta el header/estado inicial mientras carga; ChampionshipView refetch por ID manda al final.
+  // Fallback sin id (legacy/preview) → ruta sin id con el snapshot del CV.
+  const openChampionship = (g) => {
+    try { sessionStorage.setItem('pf_back', '1'); } catch {} // restore de scroll al volver (patrón App)
+    if (g?.id) navigate('/championships/view/' + g.id, { state: { statusHint: g.status, from: 'profile', championshipOrigin: 'profile' } });
+    else navigate('/championships/view', { state: { summary: _champCv?.summary, organizeState: _champCv?.organizeState, cvReturn: false, from: 'profile' } });
+  };
   const openChampRequest = () => navigate('/championships/contact', { state: { summary: champReq?.originalSummary, organizeState: champReq?.originalOrganizeState, championshipName: champReq?.championshipName, existingRequest: true } });
 
   // ── Campeonatos REALES del usuario (FUENTE DE VERDAD del listado = DB, 0..N) ──────────────────
@@ -2818,7 +2826,7 @@ export default function Profile() {
   useEffect(() => {
     if (!user?.id) { setChampList([]); return; }
     let alive = true;
-    listMyChampionships({ userId: user.id }).then(({ data, error }) => {
+    listMyChampionships().then(({ data, error }) => {
       if (alive) setChampList(error ? [] : (data || []));
     });
     return () => { alive = false; };
@@ -2849,7 +2857,7 @@ export default function Profile() {
       : row.status === 'registration_open' ? 'Publicado'
       : 'Pendiente publicar';
     return {
-      __champ: true, id: row.id, dateKey, time24,
+      __champ: true, id: row.id, status: row.status, dateKey, time24,
       date: dateKey ? formatDateLabel(dateKey) : '', time, ampm,
       name: row.name || 'Campeonato', theme: row.cover_theme || '#E24A4A',
       venueName: sum.venueName || null, teamsLabel, statusLabel,
@@ -3396,7 +3404,7 @@ export default function Profile() {
                               <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, lineHeight: 1.1 }}>{g.time || '—'}</div>
                               {g.ampm && <div style={{ fontSize: 11, color: SUB, fontWeight: 500, lineHeight: 1.1 }}>{g.ampm}</div>}
                             </div>
-                            <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10, background: g.theme, borderRadius: 12, padding: '8px 12px' }}>
+                            <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10, background: coverColor(g.theme), borderRadius: 12, padding: '8px 12px' }}>
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ fontSize: 15, fontWeight: 800, color: '#fff', letterSpacing: -0.2, textShadow: '0 1px 2px rgba(0,0,0,0.25)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.name}</div>
                                 {(g.venueName || g.teamsLabel) && (

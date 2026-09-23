@@ -8,6 +8,7 @@ import { useSheetPull } from '../../hooks/useSheetPull';
 import { TEXT, SUB, HAIR, ORANGE, YAPE, DANGER, BLUE, GREEN } from '../../constants';
 import { activateIosScrim, deactivateIosScrim } from '../../lib/iosScrim';
 import { charge } from '../../services/paymentAdapter';
+import { validateProofFile, PROOF_TYPES } from '../../utils/championshipProof';
 import aprobarComprasYape from '../../assets/Aprobar compras yape.webp';
 import codigoYape from '../../assets/Código yape.webp';
 import { CtaButton, MethodRow } from './CheckoutUI';
@@ -58,7 +59,8 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
   const [yapePhone, setYapePhone] = useState('');
   const [yapeCode, setYapeCode] = useState('');
   const [paying, setPaying]     = useState('idle');
-  const [transferProof, setTransferProof] = useState(null); // solo Campeonato (transfer)
+  const [transferProof, setTransferProof] = useState(null); // File real seleccionado (solo Campeonato)
+  const [proofError, setProofError] = useState('');         // error de tipo/tamaño del comprobante
   const transferFileRef = useRef(null);
 
   // ── HOLD de Transferencia (SOLO Campeonato): hold REAL de 10 min creado por Supabase.
@@ -435,16 +437,24 @@ export default function PaymentSheet({ amount, currency = 'S/.', label, onClose,
                 {transferReserved ? (
                   /* Hold vigente → adjuntar comprobante (confirmar = footer). */
                   <>
-                    <input ref={transferFileRef} type="file" accept="image/*,application/pdf" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; setTransferProof(f ? f.name : null); }} />
+                    <input ref={transferFileRef} type="file" accept={PROOF_TYPES.join(',')} style={{ display: 'none' }} onChange={e => {
+                      const f = e.target.files?.[0] || null;
+                      const err = f ? validateProofFile(f) : '';
+                      if (err) { setProofError(err); setTransferProof(null); }   // rechazo frontend: no se sube
+                      else { setProofError(''); setTransferProof(f); }
+                      if (transferFileRef.current) transferFileRef.current.value = ''; // permite re-seleccionar el mismo archivo
+                    }} />
                     <button onClick={() => transferFileRef.current?.click()} className="pressable" style={{ marginTop: 8, width: '100%', height: 44, borderRadius: 12, border: `1.5px dashed ${BLUE}`, background: '#fff', color: BLUE, cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0l-4 4m4-4l4 4M5 20h14" stroke={BLUE} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
                       {transferProof ? 'Cambiar comprobante' : 'Adjuntar comprobante'}
                     </button>
                     {transferProof && (
                       <div style={{ marginTop: 6, fontSize: 12.5, color: SUB, display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ color: GREEN }}>✓</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{transferProof}</span>
+                        <span style={{ color: GREEN }}>✓</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{transferProof.name}</span>
                       </div>
                     )}
+                    {proofError && <div style={{ marginTop: 6, fontSize: 12.5, color: DANGER, lineHeight: 1.35 }}>{proofError}</div>}
+                    <div style={{ marginTop: 6, fontSize: 11.5, color: SUB }}>JPG, PNG, WEBP o PDF · hasta 10 MB.</div>
                   </>
                 ) : (
                   /* Estado PREVIO: la CTA usa el MISMO espacio que "Adjuntar comprobante" (misma altura/margen). */

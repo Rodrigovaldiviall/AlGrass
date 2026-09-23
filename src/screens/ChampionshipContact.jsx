@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { createChampionshipRequest } from '../services/championshipRequestService';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, DANGER } from '../constants';
 import { CURRENT_USER_NAME } from '../data/championshipTeamsMock';
 // Catálogo de formatos + tramos de equipos (los distritos ya NO salen de aquí: se derivan de venues reales).
@@ -225,6 +226,9 @@ export default function ChampionshipContact() {
   const [jobTitle, setJobTitle] = useState(existing?.jobTitle || '');
   const [message, setMessage] = useState(existing?.message || '');
   const [done, setDone] = useState(false);
+  // Envio en curso y su error. El boton no puede dispararse dos veces.
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const onPhone = (v) => { const digits = v.replace(/\D/g, ''); const p = detectPrefix(prefixInput); setPhone(digits.slice(0, p?.exact ?? 15)); };
@@ -254,11 +258,32 @@ export default function ChampionshipContact() {
     participantEstimate: { type: estimateType, quantity: estimateQty ? Number(estimateQty) : null },
   });
 
-  const submit = () => {
-    if (!canSubmit) return;
+  // La solicitud se GUARDA de verdad: `championship_requests` en Supabase, que
+  // es lo que ve AlGrass para gestionarla. Antes solo vivía en sessionStorage y
+  // no llegaba a ninguna parte.
+  //
+  // El session-state se mantiene: es lo que dibuja esta misma pantalla cuando se
+  // vuelve a ella ("editar información"), y quitarlo cambiaría la UX. Deja de ser
+  // la fuente de verdad, pero sigue siendo la copia local de lo enviado.
+  const submit = async () => {
+    if (!canSubmit || sending) return;
+    setSendError(null);
+    setSending(true);
+
+    const fields = buildFields();
+    const { data, error } = await createChampionshipRequest(user?.id, fields);
+
+    if (error) {
+      // Nada de navegar como si hubiera salido bien: si no se guardó, se dice.
+      setSending(false);
+      setSendError('No se pudo enviar tu solicitud. Revisa tu conexión e inténtalo de nuevo.');
+      return;
+    }
+
     const cv = readCV() || {};
     cv.contactRequest = {
-      ...buildFields(),
+      ...fields,
+      id: data?.id ?? null,
       originalSummary: summary,
       originalOrganizeState: organizeState,
       formatPending, venuePending,
@@ -266,6 +291,7 @@ export default function ChampionshipContact() {
       createdAt: new Date().toISOString(),
     };
     writeCV(cv);
+    setSending(false);
     // Navegar YA a Profile; la confirmación aparece SOBRE Profile (replace → Back no vuelve a Contact).
     navigate('/profile', { replace: true, state: { champConfirm: 'request' } });
   };
@@ -476,7 +502,12 @@ export default function ChampionshipContact() {
             {formCards}
           </div>
           <div style={{ position: 'absolute', left: 16, right: 16, bottom: 'calc(env(safe-area-inset-bottom) + 12px)', pointerEvents: 'none' }}>
-            <button onClick={submit} disabled={!canSubmit} className={canSubmit ? 'pressable' : undefined} style={ctaStyle(canSubmit)}>Enviar solicitud</button>
+            {sendError && (
+              <div style={{ background: '#FDECEC', border: '1px solid #F3C0C0', color: '#B03A3A', borderRadius: 12, padding: '10px 12px', fontSize: 13, fontWeight: 600, marginBottom: 8, pointerEvents: 'auto' }}>
+                {sendError}
+              </div>
+            )}
+            <button onClick={submit} disabled={!canSubmit || sending} className={canSubmit && !sending ? 'pressable' : undefined} style={ctaStyle(canSubmit && !sending)}>{sending ? 'Enviando…' : 'Enviar solicitud'}</button>
           </div>
         </div>
       )}
