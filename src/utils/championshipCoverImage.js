@@ -2,12 +2,12 @@
 // Guarda SOLO el path en championships.cover_image_path (vía RPC). La URL pública se deriva en runtime
 // con getPublicUrl (nunca se almacena en DB). cover_theme sigue siendo la identidad/fallback.
 import { uuidv4 } from '../lib/uuid';
+import { compressChampionshipCover } from './compress';
 
 export const COVER_TYPES = ['image/jpeg', 'image/png', 'image/webp']; // NO PDF
-export const COVER_MAX_BYTES = 8 * 1024 * 1024; // 8 MB
-const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+export const COVER_MAX_BYTES = 8 * 1024 * 1024; // 8 MB (barrera máxima, igual que el bucket)
 
-// Validación frontend de tipo + tamaño. Devuelve mensaje de error o null.
+// Validación frontend de tipo + tamaño (ANTES de optimizar). Devuelve mensaje de error o null.
 export function validateCoverImage(file) {
   if (!file) return 'Selecciona una imagen.';
   if (!COVER_TYPES.includes(file.type)) return 'Formato no permitido. Usa JPG, PNG o WEBP.';
@@ -15,17 +15,21 @@ export function validateCoverImage(file) {
   return null;
 }
 
-// Sube la portada. Path: {ownerUserId}/{championshipId}/{uuid}.{ext}. Devuelve { path } o { error }.
+// Optimiza (1600px/WebP/~0.82) y sube. La salida SIEMPRE es WebP → path/MIME = webp (coincide con el
+// archivo final real). Si la optimización falla NO se sube el original pesado: se devuelve error claro.
+// Path: {ownerUserId}/{championshipId}/{uuid}.webp. Devuelve { path } o { error }.
 export async function uploadChampionshipCover(supabase, { userId, championshipId, file }) {
-  const invalid = validateCoverImage(file);
+  const invalid = validateCoverImage(file);          // 8 MB + tipo, antes del procesamiento
   if (invalid) return { error: invalid };
   if (!userId || !championshipId) return { error: 'MISSING_IDS' };
-  const ext = EXT[file.type] || 'jpg';
-  const path = `${userId}/${championshipId}/${uuidv4()}.${ext}`;
+  let optimized;
+  try { optimized = await compressChampionshipCover(file); }
+  catch { return { error: 'No pudimos optimizar la imagen. Intenta con otra.' }; }
+  const path = `${userId}/${championshipId}/${uuidv4()}.webp`;
   const { error } = await supabase.storage
     .from('championship-covers')
-    .upload(path, file, { contentType: file.type, upsert: false });
-  if (error) return { error: error.message || 'UPLOAD_FAILED' };
+    .upload(path, optimized, { contentType: 'image/webp', upsert: false });
+  if (error) return { error: 'No se pudo subir la foto.' };
   return { path };
 }
 

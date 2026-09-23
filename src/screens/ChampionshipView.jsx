@@ -11,7 +11,7 @@ import ConfirmExitDialog from '../components/ConfirmExitDialog';
 import I from '../icons';
 import { buildTeams, combinedRoster, mockStandings, mockScorers, mockMatches, formatForTeamCount, chunkByCounts, playerLabel, CURRENT_USER_NAME } from '../data/championshipTeamsMock';
 import { CHAMPIONSHIP_BASE_PRICE, CHAMPIONSHIP_REGISTRATION_CLOSE_DAYS, mockPublishDelay, soles } from '../data/championshipCheckoutMock';
-import { buildFixture, visualCapacity } from '../data/championshipFixtures';
+import { buildFixture, visualCapacity, realTeamCapacity } from '../data/championshipFixtures';
 import { formatDateLabel } from '../utils/format';
 import { supabase } from '../lib/supabase';
 import { validateCoverImage, uploadChampionshipCover, getChampionshipCoverUrl, deleteChampionshipCover } from '../utils/championshipCoverImage';
@@ -339,7 +339,7 @@ export default function ChampionshipView() {
     if (invalid) { flashToast(invalid); return; }
     setCoverBusy(true);
     const up = await uploadChampionshipCover(supabase, { userId: user?.id, championshipId: realId, file });
-    if (up.error) { setCoverBusy(false); flashToast('No se pudo subir la foto.'); return; }
+    if (up.error) { setCoverBusy(false); flashToast(up.error); return; }
     const prevPath = coverImagePath;
     const { data, error } = await updateChampionshipCover({ championshipId: realId, name: (name.trim() || 'Copa AlGrass'), coverTheme, coverImagePath: up.path, setCoverImage: true });
     if (error || !data) { await deleteChampionshipCover(supabase, up.path); setCoverBusy(false); flashToast('No se pudo guardar la foto.'); return; }
@@ -403,6 +403,9 @@ export default function ChampionshipView() {
   const emptySlots = isLiga ? (canCreateTeam ? 1 : 0)
     : isCreated ? Math.max(0, visualCap - teams.length)
     : Math.max(0, maxTeams - teams.length);
+  // Capacidad de cupos para Inscripciones REAL: Torneo → tramos del tope contratado real (group.max de
+  // format_config); Liga → un único "+". Hoy todos los cupos están vacíos (no hay equipos reales aún).
+  const realSlotCount = isRealMode ? (isLiga ? 1 : realTeamCapacity(group?.max)) : 0;
 
   // Fecha completa "Mié 16 Sep 2026" (reutiliza formatDateLabel; sin el prefijo "Hoy,/Mañana,").
   const dateFull = organizeState?.dateKey ? formatDateLabel(organizeState.dateKey).replace(/^(Hoy|Mañana),\s*/, '') : (summary.dateLabel || null);
@@ -786,20 +789,49 @@ export default function ChampionshipView() {
                   <div style={{ fontSize: 13, color: SUB, lineHeight: 1.5, marginTop: 8 }}>El calendario, la tabla de posiciones y los resultados estarán disponibles cuando el torneo se ponga en marcha.</div>
                 </div>
               ) : (
-                /* pending_publish / payment_validation / registration_open → Inscripciones limpia (sin equipos/jugadores mock) */
-                <div style={CARD}>
-                  <div style={H}>Inscripciones</div>
-                  <div style={{ fontSize: 13, color: SUB, lineHeight: 1.5, marginTop: 8 }}>Aún no hay equipos inscritos. Las inscripciones estarán disponibles muy pronto.</div>
-                  {champ?.status === 'registration_open' && (
-                    <div style={{ marginTop: 14 }}>
-                      <button onClick={createNewTeam} className="pressable" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 46, background: BLUE, color: '#fff', border: 'none', borderRadius: 14, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, WebkitTapHighlightColor: 'transparent', outline: 'none', marginBottom: 10 }}>
-                        <svg width="16" height="16" viewBox="0 0 18 18" fill="none"><path d="M9 3v12M3 9h12" stroke="#fff" strokeWidth="2" strokeLinecap="round" /></svg>
-                        Crear equipo
-                      </button>
-                      <button onClick={toggleNoTeam} className="pressable" style={{ width: '100%', height: 46, borderRadius: 14, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, background: '#fff', color: TEXT, boxShadow: `inset 0 0 0 1px ${HAIR}`, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Unirme sin equipo</button>
+                /* pending_publish / payment_validation / registration_open → Inscripciones REAL.
+                   SIN equipos/jugadores mock: solo la GRILLA DE CAPACIDAD (slots vacíos = cupos), derivada
+                   del tope real contratado. Cada slot "+" es el acceso a Crear equipo (misma regla actual). */
+                /* Mismo patrón que el componente Inscripciones (demo/legacy): CARD 1 = grilla + Crear equipo
+                   + Unirme sin equipo (juntos). CARD 2 = SOLO el roster. */
+                <>
+                  {/* CARD 1 — grilla de cupos + "Crear un equipo" + "Unirme sin equipo". */}
+                  <div style={CARD}>
+                    <div style={H}>Inscripciones</div>
+                    <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginTop: 4, marginBottom: 12 }}>Selecciona un cupo para sumarte o crea tu propio equipo e invita a tus amigos.</div>
+
+                    {/* Grilla de CAPACIDAD (cupos): todos vacíos hoy (sin equipos reales). Cada "+" = Crear equipo. */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
+                      {Array.from({ length: realSlotCount }, (_, i) => (
+                        <button key={`cap${i}`} onClick={createNewTeam} className="pressable" aria-label="Crear equipo" style={{ width: 64, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                          <div style={{ position: 'relative', width: 60 }}>
+                            <Shield dashed size={60} />
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                              <span style={{ fontSize: 26, lineHeight: 1, color: '#C7C7CC', fontWeight: 300, marginTop: -6 }}>+</span>
+                            </div>
+                          </div>
+                          <span style={{ fontSize: 11, color: 'transparent' }}>.</span>
+                        </button>
+                      ))}
                     </div>
-                  )}
-                </div>
+
+                    {/* CTA azul "Crear un equipo" (acceso paralelo al "+" → misma acción). */}
+                    <button onClick={createNewTeam} className="pressable" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 46, background: BLUE, color: '#fff', border: 'none', borderRadius: 14, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, WebkitTapHighlightColor: 'transparent', outline: 'none', marginBottom: 12 }}>
+                      <svg width="16" height="16" viewBox="0 0 18 18" fill="none"><path d="M9 3v12M3 9h12" stroke="#fff" strokeWidth="2" strokeLinecap="round" /></svg>
+                      Crear un equipo
+                    </button>
+
+                    {/* "Unirme sin equipo" — MISMO holder que la grilla y "Crear un equipo" (patrón original). */}
+                    <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginBottom: 8 }}>¿No tienes equipo todavía? Únete a la lista general y luego te acomodamos.</div>
+                    <button onClick={toggleNoTeam} className="pressable" style={{ width: '100%', height: 46, borderRadius: 14, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, background: '#fff', color: TEXT, boxShadow: `inset 0 0 0 1px ${HAIR}`, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Unirme sin equipo</button>
+                  </div>
+
+                  {/* CARD 2 — SOLO el roster (siempre visible). Sin jugadores mock ni contador falso. */}
+                  <div style={CARD}>
+                    <div style={{ ...H, marginBottom: 8 }}>Jugadores sin equipo</div>
+                    <div style={{ fontSize: 13, color: SUB, lineHeight: 1.5 }}>Aún no hay jugadores sin equipo.</div>
+                  </div>
+                </>
               )
             ) : isCreated ? (
               /* ── Campeonato "creado" LEGACY por CV (preview post-checkout, mock) — se conserva intacto ── */

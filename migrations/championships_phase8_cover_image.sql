@@ -57,7 +57,10 @@ create policy "champ_covers_owner_delete"
 -- p_set_cover_image=false (default) → NO toca la foto (lo usa "Guardar" de nombre/color).
 -- p_set_cover_image=true → aplica p_cover_image_path (path nuevo, o NULL para volver a solo color).
 -- El path debe pertenecer al prefijo {owner}/{championship}/... (defensa; no acepta rutas ajenas/externas).
+-- Return de MÍNIMA superficie (Fase 7): jsonb SOLO con id/name/cover_theme/cover_image_path.
+-- NO se devuelve la fila completa (evita exponer registration_key/pagos, aunque sea al owner).
 drop function if exists public.update_championship_cover(uuid, text, text);
+drop function if exists public.update_championship_cover(uuid, text, text, text, boolean);
 create or replace function public.update_championship_cover(
   p_championship_id uuid,
   p_name            text,
@@ -65,7 +68,7 @@ create or replace function public.update_championship_cover(
   p_cover_image_path text default null,
   p_set_cover_image  boolean default false
 )
-returns public.championships
+returns jsonb
 language plpgsql
 security definer
 set search_path = public
@@ -100,7 +103,12 @@ begin
    where id = p_championship_id
   returning * into v_champ;
 
-  return v_champ;
+  return jsonb_build_object(
+    'id', v_champ.id,
+    'name', v_champ.name,
+    'cover_theme', v_champ.cover_theme,
+    'cover_image_path', v_champ.cover_image_path
+  );
 end;
 $$;
 revoke all on function public.update_championship_cover(uuid, text, text, text, boolean) from public, anon;

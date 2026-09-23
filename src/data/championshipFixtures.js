@@ -408,6 +408,21 @@ export function visualCapacity(maxTeams) {
   return 16;
 }
 
+// Capacidad VISUAL de slots para campeonato REAL (Inscripciones). Deriva del tope contratado
+// (summary.group.max, que vive en championships.format_config). Tramos de PRODUCTO:
+//   <=4 → 4 · 5–6 → 6 · 7–8 → 8 · 9–12 → 12 · 13–14 → 14 · 15–16 → 16.
+// Fallback seguro: sin config/0 → 4 (mínimo); fuera de rango (>16) → 16 (tope). NO son equipos reales,
+// solo cupos vacíos para comunicar el máximo de equipos.
+export function realTeamCapacity(maxTeams) {
+  const n = Number(maxTeams) || 0;
+  if (n <= 4) return 4;
+  if (n <= 6) return 6;
+  if (n <= 8) return 8;
+  if (n <= 12) return 12;
+  if (n <= 14) return 14;
+  return 16;
+}
+
 // ¿La celda es un enfrentamiento por letras ('A vs B')? → { a, b } (mayúsculas). Si no (descanso,
 // FINAL, 3°/4°, semis '1.º G1 vs 2.º G2', '—', 'margen…') → null (se resuelve en fase posterior).
 const _VS = /^([A-P])\s*vs\s*([A-P])$/i;
