@@ -826,10 +826,20 @@ export default function ChampionshipView() {
                     <button onClick={toggleNoTeam} className="pressable" style={{ width: '100%', height: 46, borderRadius: 14, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, background: '#fff', color: TEXT, boxShadow: `inset 0 0 0 1px ${HAIR}`, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Unirme sin equipo</button>
                   </div>
 
-                  {/* CARD 2 — SOLO el roster (siempre visible). Sin jugadores mock ni contador falso. */}
+                  {/* CARD 2 — ROSTER COMPLETO ("Jugadores"). Mismo layout que el roster de "Ver mi campeonato".
+                      Hoy sin membership real → contador 0 + UNA fila placeholder SOLO visual (no es jugador
+                      real, no cuenta, sin interacción, sin mock). Se ocultará cuando existan jugadores reales. */}
                   <div style={CARD}>
-                    <div style={{ ...H, marginBottom: 8 }}>Jugadores sin equipo</div>
-                    <div style={{ fontSize: 13, color: SUB, lineHeight: 1.5 }}>Aún no hay jugadores sin equipo.</div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <div style={H}>Jugadores</div>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: SUB }}>0 inscritos</div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0' }} aria-hidden="true">
+                      <div style={{ width: 18, fontSize: 12, color: SUB, flexShrink: 0, textAlign: 'right' }}>1</div>
+                      <div style={{ width: 34, height: 34, borderRadius: '50%', background: '#ECECEF', flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}><div style={{ height: 10, width: '55%', borderRadius: 5, background: '#ECECEF' }} /></div>
+                      <div style={{ height: 10, width: 52, borderRadius: 5, background: '#ECECEF', flexShrink: 0 }} />
+                    </div>
                   </div>
                 </>
               )
