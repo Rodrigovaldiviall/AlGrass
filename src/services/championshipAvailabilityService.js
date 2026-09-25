@@ -238,8 +238,11 @@ export function championshipSlots(grid, group) {
     const chosenByField = new Array(F).fill(null);      // game actualmente asignado a cada cancha (o null)
     const cells = new Set();
     const idSet = new Set();
+    const usedFields = new Set();                        // canchas ya usadas en ESTE slot (minimizar distintas)
     let prevFields = new Set();
     let feasible = true;
+    // Alcance continuo de una cancha desde s0 dentro del slot [start,end] (look-ahead de continuidad).
+    const reach = (f, s0) => { let seg = s0, last = s0; while (seg < end) { const r = gameRange(f, seg); if (r && r.startSeg === seg && r.endSeg <= end) { last = r.endSeg; seg = r.endSeg; } else break; } return last - s0; };
 
     for (let o = 0; o < total && feasible; o++) {
       const s = start + o;
@@ -258,10 +261,18 @@ export function championshipSlots(grid, group) {
           const r = gameRange(f, s);
           if (r && r.startSeg === s && r.startSeg >= start && r.endSeg <= end) cand.push({ f, r });
         }
-        cand.sort((x, y) => (prevFields.has(x.f) ? 0 : 1) - (prevFields.has(y.f) ? 0 : 1) || x.f - y.f);
+        // Prioridad: (1) reusar una cancha YA usada en este slot (menos canchas distintas); (2) mayor
+        // continuidad hacia adelante en la MISMA cancha (look-ahead); (3) continuidad inmediata (prevFields);
+        // (4) índice de field (estable). Solo compone los gameIds del slot; NO auto-selecciona nada.
+        cand.sort((x, y) =>
+          ((usedFields.has(y.f) ? 1 : 0) - (usedFields.has(x.f) ? 1 : 0))
+          || (reach(y.f, s) - reach(x.f, s))
+          || ((prevFields.has(y.f) ? 1 : 0) - (prevFields.has(x.f) ? 1 : 0))
+          || (x.f - y.f));
         for (const { f, r } of cand) {
           if (need <= 0) break;
           chosenByField[f] = r;
+          usedFields.add(f);
           for (let ss = r.startSeg; ss < r.endSeg; ss++) cells.add(`${f}-${ss}`);  // game COMPLETO
           idSet.add(r.id);
           need--;
@@ -307,8 +318,11 @@ export function championshipSlotForAnchor(grid, group, anchorId) {
     const chosenByField = new Array(F).fill(null);
     const cells = new Set();
     const idSet = new Set();
+    const usedFields = new Set();                        // canchas ya usadas en ESTE slot (minimizar distintas)
     let prevFields = new Set();
     let feasible = true;
+    // Alcance continuo de una cancha desde s0 dentro del slot [start,end] (look-ahead de continuidad).
+    const reach = (f, s0) => { let seg = s0, last = s0; while (seg < end) { const r = gameRange(f, seg); if (r && r.startSeg === seg && r.endSeg <= end) { last = r.endSeg; seg = r.endSeg; } else break; } return last - s0; };
     for (let o = 0; o < total && feasible; o++) {
       const s = start + o;
       const req = reqPerSeg[o];
@@ -323,12 +337,21 @@ export function championshipSlotForAnchor(grid, group, anchorId) {
           const r = gameRange(f, s);
           if (r && r.startSeg === s && r.startSeg >= start && r.endSeg <= end) cand.push({ f, r });
         }
-        // ÚNICA diferencia con championshipSlots: el ancla se elige primero cuando compite por un hueco.
-        cand.sort((x, y) => (x.r.id === anchorId ? -1 : 0) - (y.r.id === anchorId ? -1 : 0)
-          || (prevFields.has(x.f) ? 0 : 1) - (prevFields.has(y.f) ? 0 : 1) || x.f - y.f);
+        // Diferencia con championshipSlots: el ancla se elige PRIMERO cuando compite por un hueco. El resto
+        // del criterio es IDÉNTICO (misma continuidad de cancha) para que, al expulsar celdas antiguas por el
+        // ancla, se preserven grupos consecutivos en la misma cancha y se minimicen las canchas distintas:
+        // (1) ancla; (2) reusar cancha ya usada en el slot; (3) mayor continuidad hacia adelante (look-ahead);
+        // (4) continuidad inmediata (prevFields); (5) índice de field (estable, desempate final).
+        cand.sort((x, y) =>
+          ((y.r.id === anchorId ? 1 : 0) - (x.r.id === anchorId ? 1 : 0))
+          || ((usedFields.has(y.f) ? 1 : 0) - (usedFields.has(x.f) ? 1 : 0))
+          || (reach(y.f, s) - reach(x.f, s))
+          || ((prevFields.has(y.f) ? 1 : 0) - (prevFields.has(x.f) ? 1 : 0))
+          || (x.f - y.f));
         for (const { f, r } of cand) {
           if (need <= 0) break;
           chosenByField[f] = r;
+          usedFields.add(f);
           for (let ss = r.startSeg; ss < r.endSeg; ss++) cells.add(`${f}-${ss}`);
           idSet.add(r.id);
           need--;

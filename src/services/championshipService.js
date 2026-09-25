@@ -158,6 +158,46 @@ export function getChampionshipRegistrationKey({ championshipId }) {
   return supabase.rpc('get_championship_registration_key', { p_championship_id: championshipId });
 }
 
+// ── Inscripciones reales (Fase 9) — todo por RPC SECURITY DEFINER (checks + capacidad + concurrencia). ──
+// save_championship_team (Fase 11): persistencia unificada del equipo. teamId null → CREATE (crea el team,
+// NO inscribe al creador); teamId uuid → UPDATE (edita nombre/color/design del team propio, solo con 0
+// jugadores o único jugador = creador). Errores: NOT_OPEN/REGISTRATION_CLOSED/CAPACITY_FULL/TEAM_NOT_FOUND/
+// NOT_AUTHORIZED/TEAM_HAS_PLAYERS/INVALID_INPUT/AUTH_REQUIRED.
+export function saveChampionshipTeam({ championshipId, teamId = null, name, color, design }) {
+  return supabase.rpc('save_championship_team', {
+    p_championship_id: championshipId, p_team_id: teamId ?? null,
+    p_name: name, p_color: color ?? null, p_design: design ?? null,
+  });
+}
+
+// join_championship_without_team: inscribe sin equipo (team_id null). ALREADY_ENROLLED si ya está.
+export function joinChampionshipWithoutTeam({ championshipId }) {
+  return supabase.rpc('join_championship_without_team', { p_championship_id: championshipId });
+}
+
+// join_championship_team (Fase 10): inscribe en un equipo EXISTENTE (registration_open/closed).
+// Errores: NOT_OPEN/REGISTRATION_CLOSED/TEAM_NOT_FOUND/ALREADY_ENROLLED/AUTH_REQUIRED.
+export function joinChampionshipTeam({ championshipId, teamId }) {
+  return supabase.rpc('join_championship_team', { p_championship_id: championshipId, p_team_id: teamId });
+}
+
+// leave_championship (Fase 10): desinscribe al actor (DELETE de su membership). registration_open/closed.
+export function leaveChampionship({ championshipId }) {
+  return supabase.rpc('leave_championship', { p_championship_id: championshipId });
+}
+
+// delete_championship_team (Fase 10): borra un equipo propio (solo registration_open + reglas de vacíos).
+// Errores: NOT_AUTHORIZED/TEAM_NOT_FOUND/NOT_OPEN/TEAM_HAS_PLAYERS/CHAMPIONSHIP_NOT_FOUND/AUTH_REQUIRED.
+export function deleteChampionshipTeam({ championshipId, teamId }) {
+  return supabase.rpc('delete_championship_team', { p_championship_id: championshipId, p_team_id: teamId });
+}
+
+// get_championship_registration_state: teams[] + players[] + current_user_membership + contadores.
+// Datos públicos (full_name/avatar), authenticated. Sin datos privados/clave.
+export function getChampionshipRegistrationState({ championshipId }) {
+  return supabase.rpc('get_championship_registration_state', { p_championship_id: championshipId });
+}
+
 // Lectura mínima del campeonato propio (RLS championships_select acota al owner). Se usa para
 // representar en Profile el campeonato real recién creado ("Validando pago") y su persistencia tras
 // refresh. SIN escritura, SIN lógica: devuelve el { data, error } CRUDO de Supabase.

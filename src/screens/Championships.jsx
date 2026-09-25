@@ -156,7 +156,7 @@ export default function Championships() {
       visibility: row.privacy === 'private' ? 'private' : 'public',
       resultsPublic: row.results_public !== false,
       daysAgo: null,
-      coverTheme: row.cover_theme || '#3F5FE0',
+      coverTheme: row.cover_theme || '#E24A4A',   // mismo default que la vista/Profile (COVER_THEMES[0]) — evita azul incoherente
       dateLabel: dateKey ? formatDateLabel(dateKey) : '',
       venueName: sum.venueName || '',
     };

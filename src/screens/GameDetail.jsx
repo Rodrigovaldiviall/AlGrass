@@ -499,7 +499,7 @@ function deterministicCode(fullName) {
   return '@' + first.slice(0, 6) + last.slice(0, 4);
 }
 
-function PlayerModal({ player, onClose, isHost = false }) {
+export function PlayerModal({ player, onClose, isHost = false }) {
   const [open, setOpen]           = useState(false);
   const [profile, setProfile]     = useState(null);
   const [isVerified, setVerified] = useState(false);
@@ -727,7 +727,7 @@ function ModifySheet({ canAddGuests, openSpots, onAddGuests, onCancel, onPayment
           onClick={enabled ? onAddGuests : undefined}
           style={{ ...rowStyle, cursor: enabled ? 'pointer' : 'default', opacity: enabled ? 1 : 0.45 }}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>{showReserveSlots ? 'Gestionar mi lista' : 'Agregar jugadores'}</span>
+            <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Agregar jugadores</span>
             <span style={{ fontSize: 13, color: enabled ? SUB : '#BEBEC8' }}>
               {isHost && !canAddPlayers
                 ? leadCopy(freeInvitesLeadMin)

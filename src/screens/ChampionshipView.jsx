@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useLayoutEffect, useEffect } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useGlobalRoles } from '../hooks/useGlobalRoles';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, RED } from '../constants';
 import Shield from '../components/championship/Shield';
 import PlayerAvatar from '../components/championship/PlayerAvatar';
@@ -9,13 +10,15 @@ import OrganizerContactButton from '../components/OrganizerContactButton';
 import TabBar from '../components/TabBar';
 import ConfirmExitDialog from '../components/ConfirmExitDialog';
 import I from '../icons';
-import { buildTeams, combinedRoster, mockStandings, mockScorers, mockMatches, formatForTeamCount, chunkByCounts, playerLabel, CURRENT_USER_NAME } from '../data/championshipTeamsMock';
+import { buildTeams, combinedRoster, mockStandings, mockScorers, mockMatches, formatForTeamCount, chunkByCounts, playerLabel, CURRENT_USER_NAME, TEAM_DESIGNS, DEFAULT_DESIGN } from '../data/championshipTeamsMock';
 import { CHAMPIONSHIP_BASE_PRICE, CHAMPIONSHIP_REGISTRATION_CLOSE_DAYS, mockPublishDelay, soles } from '../data/championshipCheckoutMock';
 import { buildFixture, visualCapacity, realTeamCapacity } from '../data/championshipFixtures';
 import { formatDateLabel } from '../utils/format';
 import { supabase } from '../lib/supabase';
+import { getAvatarUrl } from '../utils/avatar';
+import { PlayerModal } from './GameDetail';   // MISMO perfil público que el roster de Match (sin duplicar)
 import { validateCoverImage, uploadChampionshipCover, getChampionshipCoverUrl, deleteChampionshipCover } from '../utils/championshipCoverImage';
-import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, publishChampionshipRpc, updateChampionshipCover } from '../services/championshipService';
+import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, publishChampionshipRpc, updateChampionshipCover, joinChampionshipWithoutTeam, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, getChampionshipRegistrationState } from '../services/championshipService';
 
 // Temas de PORTADA (independientes de la paleta de equipos). Default rojo; el azul es un tono
 // claramente distinto al azul de marca (#3F5FE0) para que portada y header no se confundan.
@@ -50,6 +53,11 @@ export default function ChampionshipView() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
+  // Rol AlGrass GLOBAL (misma fuente que el backend _is_algrass_staff: tabla user_roles), cacheado en
+  // localStorage y disponible sin llamar a get_championship_registration_state. Se usa solo para gatear la
+  // carga del estado en pending_publish y evitar el 400 esperado de la RPC para usuarios no autorizados.
+  const { isAlGrassStaff, isAlGrassAdmin } = useGlobalRoles();
+  const amAlgrassRole = isAlGrassStaff || isAlGrassAdmin;
   const nav = location.state || null;
   const { id: routeId } = useParams();
   const realId = routeId || null;              // /championships/view/:id → campeonato REAL (DB = fuente de verdad)
@@ -61,17 +69,23 @@ export default function ChampionshipView() {
   // Se captura una sola vez al montar (la bandera se consume después) para no perder el restore.
   const [authResuming] = useState(() => { try { return !!sessionStorage.getItem(AUTH_RESUME_KEY); } catch { return false; } });
   const restore = (cvReturn || authResuming) ? persisted : null;
+  // Caché de vuelta desde ChampionshipTeam: si el CV guardó la fila real (realRow) y el estado de
+  // inscripciones (regState) de ESTE mismo campeonato, se usan como estado INICIAL para pintar la pantalla
+  // ya renderizada (sin skeleton fullscreen ni flash del top) y luego refrescar en segundo plano.
+  const cachedReal = (restore && isRealMode && restore.championship?.realId === realId) ? restore.championship : null;
+  const realRowToChamp = (row) => ({ status: row.status, createdByUserId: row.owner_user_id, registrationKey: '', publishedAt: row.published_at || null, privacy: row.privacy || 'private', realId: row.id });
 
   // ── Campeonato REAL: se carga desde DB por ID. DB es la ÚNICA fuente de identidad/status/privacidad/owner.
   //    El CV NO decide qué campeonato real se muestra (solo cachea contenido mock entre navegaciones). ──
-  const [realRow, setRealRow] = useState(null);
-  const [realLoading, setRealLoading] = useState(isRealMode);
+  const [realRow, setRealRow] = useState(cachedReal?.realRow ?? null);
+  const [realLoading, setRealLoading] = useState(isRealMode && !cachedReal?.realRow);
   const [realError, setRealError] = useState(false);
   const [ownerKey, setOwnerKey] = useState(null);   // clave real (SOLO owner); null = aún no cargada / no-owner
   useEffect(() => {
     if (!isRealMode) return;
     let alive = true;
-    setRealLoading(true); setRealError(false); setOwnerKey(null);
+    if (!cachedReal?.realRow) setRealLoading(true);   // con caché de vuelta: refetch en background, sin skeleton
+    setRealError(false); setOwnerKey(null);
     // Detalle por SUPERFICIE PÚBLICA (sin registration_key). La clave real solo se pide si soy el owner.
     getChampionshipPublic({ championshipId: realId }).then(({ data, error }) => {
       if (!alive) return;
@@ -133,7 +147,7 @@ export default function ChampionshipView() {
   const [confirmExit, setConfirmExit] = useState(false);          // X (solo demo) = salir del flujo → confirmación
   const [coverSnap, setCoverSnap] = useState(null);               // snapshot para Cancelar (name+coverTheme)
   const [savingCover, setSavingCover] = useState(false);          // guardado REAL de portada (RPC) en curso
-  const [coverImagePath, setCoverImagePath] = useState(null);     // foto opcional (path Storage) del campeonato real
+  const [coverImagePath, setCoverImagePath] = useState(cachedReal?.realRow?.cover_image_path ?? null);     // foto opcional (path Storage) del campeonato real
   const [coverBusy, setCoverBusy] = useState(false);              // subida/eliminación de foto en curso
   const coverFileRef = useRef(null);
   // Clave de acceso = ÚNICA fuente de la clave. En campeonato real se pre-carga con la generada en checkout.
@@ -150,7 +164,9 @@ export default function ChampionshipView() {
   const [matchFilterId, setMatchFilterId] = useState(restore?.matchFilterId ?? null); // filtro de Partidos (id o null)
   const [joinedNoTeam, setJoinedNoTeam] = useState(restore?.joinedNoTeam ?? false);
   // Campeonato REAL → equipos reales (empiezan []). Demo → equipos mock (buildTeams).
-  const [teams, setTeams] = useState(() => (isCreated ? (rawChamp.teams ?? []) : (restore?.teams ?? buildTeams(initialTeams))));
+  // rawChamp es null en modo REAL; al volver con caché, realRow (y por tanto isCreated) ya es true en el
+  // primer render, así que se accede con ?. (real → teams []; la hidratación real hace setTeams([])).
+  const [teams, setTeams] = useState(() => (isCreated ? (rawChamp?.teams ?? []) : (restore?.teams ?? buildTeams(initialTeams))));
   // Solicitud mock "Contáctame para organizarlo" (persistida en cv). Solo se conserva al volver (cvReturn).
   const contactRequest = cvReturn ? (persisted?.contactRequest ?? null) : null;
 
@@ -171,14 +187,39 @@ export default function ChampionshipView() {
   //   SERVIDOR (verify_championship_access) y guardar un GRANT LOCAL (localStorage, sin la clave real).
   //   OJO: results_public/privacy NO son gate aquí (semántica futura de Calendario/Resultados).
   const amOwner = isRealMode && !!user?.id && !!realRow && realRow.owner_user_id === user.id;
+  const amMember = isRealMode && !!realRow?.is_member;   // inscrito → bypass de clave (validado en backend)
   const ACCESS_GRANT_KEY = realId ? ('champ_access_' + realId) : null;
   const hasLocalGrant = () => { try { return !!ACCESS_GRANT_KEY && localStorage.getItem(ACCESS_GRANT_KEY) === '1'; } catch { return false; } };
   const [verifiedGrant, setVerifiedGrant] = useState(false);
   const [gateKey, setGateKey] = useState('');
   const [gateError, setGateError] = useState('');
   const [gateChecking, setGateChecking] = useState(false);
-  // Gate visible = real + fila cargada + NO owner + sin grant (local ni recién verificado).
-  const gateOpen = isRealMode && !!realRow && !amOwner && !verifiedGrant && !hasLocalGrant();
+  // ── Inscripciones reales (Fase 9): estado (teams/players/membership). Se carga en registration_open. ──
+  const [regState, setRegState] = useState(cachedReal?.regState ?? null);
+  // regFresh = el estado ya fue confirmado por el backend en ESTE mount. En el retorno, regState arranca del
+  // snapshot cacheado (roster visible sin flash), pero "Tu equipo"/check NO se muestran hasta confirmar la
+  // membership real → evita el indicador provisional que aparece y desaparece si el snapshot está stale.
+  const [regFresh, setRegFresh] = useState(false);
+  const [regBusy, setRegBusy] = useState(false);   // "Unirme sin equipo" en curso
+  const [selectedPlayer, setSelectedPlayer] = useState(null);   // fila del roster → PlayerModal (perfil público de Match)
+  function loadRegState() {
+    // Estado de inscripciones visible en registration_open/closed; y en pending_publish para owner/AlGrass
+    // (crean/gestionan equipos antes de publicar, sin membership). El backend autoriza (owner/AlGrass); un
+    // jugador normal en pending recibe error y regState queda null. Fase 10/11.
+    const st = realRow?.status;
+    // pending_publish: la RPC solo autoriza owner/AlGrass; llamarla como usuario normal genera un 400
+    // esperado. Se gatea con señales ya disponibles en frontend (amOwner + rol AlGrass global).
+    const canLoad = st === 'registration_open' || st === 'registration_closed'
+      || (st === 'pending_publish' && (amOwner || amAlgrassRole));
+    if (!isRealMode || !user?.id || !canLoad) return;
+    // NO se resetea regState a null: se mantiene el último estado conocido visible mientras llega el fresco
+    // (evita flash/salto del roster). Solo se reemplaza con los datos nuevos cuando responde el backend.
+    getChampionshipRegistrationState({ championshipId: realId })
+      .then(({ data, error }) => { if (!error && data) { setRegState(data); setRegFresh(true); } });
+  }
+  useEffect(() => { loadRegState(); }, [isRealMode, realId, user?.id, realRow?.status, amOwner, amAlgrassRole]); // eslint-disable-line
+  // Gate visible = real + fila cargada + NO owner + NO miembro + sin grant (local ni recién verificado).
+  const gateOpen = isRealMode && !!realRow && !amOwner && !amMember && !verifiedGrant && !hasLocalGrant();
   async function submitGate() {
     if (gateChecking) return;
     const typed = gateKey.trim();
@@ -190,7 +231,7 @@ export default function ChampionshipView() {
     if (data === true) { try { localStorage.setItem(ACCESS_GRANT_KEY, '1'); } catch {} setVerifiedGrant(true); setGateKey(''); return; }
     setGateError('Clave incorrecta.');
   }
-  const [champ, setChamp] = useState(rawChamp);
+  const [champ, setChamp] = useState(cachedReal?.realRow ? realRowToChamp(cachedReal.realRow) : rawChamp);
   // REAL: writeChamp SOLO actualiza estado local (override de sesión). NO reescribe el campeonato real en
   // el CV (DB es la fuente de verdad; las mutaciones reales llegarán con RPC en FASE 3). Demo/preview: CV.
   function writeChamp(next) { setChamp(next); if (isRealMode) return; const cv = readCV() || {}; cv.championship = next; writeCV(cv); }
@@ -295,9 +336,7 @@ export default function ChampionshipView() {
   const [confirmMove, setConfirmMove] = useState(null); // { fromName } | null (pasar a "sin equipo")
   function toggleNoTeam() {
     if (joinedNoTeam) { setJoinedNoTeam(false); return; } // salir de "sin equipo" (sin inscripción)
-    // REAL: Inscribirme exige login (anon → /auth → vuelve). Autenticado → SIN inscripción mock: aviso
-    // neutro (membership real llegará con backend). No se finge éxito ni se escribe CV.
-    if (isRealMode) { if (!requireAuth('join')) return; flashToast('Las inscripciones estarán disponibles muy pronto.'); return; }
+    if (isRealMode) { joinNoTeamReal(); return; }         // REAL: inscripción por RPC (Fase 9)
     if (isCreated) {
       const t = youTeam();
       if (t) { setConfirmMove({ fromName: t.name }); return; } // ya en un equipo → confirmar el cambio
@@ -406,6 +445,35 @@ export default function ChampionshipView() {
   // Capacidad de cupos para Inscripciones REAL: Torneo → tramos del tope contratado real (group.max de
   // format_config); Liga → un único "+". Hoy todos los cupos están vacíos (no hay equipos reales aún).
   const realSlotCount = isRealMode ? (isLiga ? 1 : realTeamCapacity(group?.max)) : 0;
+  // Inscripciones reales (Fase 9): equipos/roster/membership desde regState. Slots libres = capacidad − equipos.
+  const regTeams = regState?.teams || [];
+  const regPlayers = regState?.players || [];
+  const regTeamCount = regState?.team_count ?? regTeams.length;
+  const regPlayerCount = regState?.player_count ?? 0;
+  const myMembership = regState?.current_user_membership || null;
+  const emptyRealSlots = Math.max(0, realSlotCount - regTeamCount);
+  const designOf = (id) => TEAM_DESIGNS.find(d => d.id === id) || DEFAULT_DESIGN;
+
+  // ── Header del campeonato REAL (regla única). Estados especiales primero; publicado → owner "Tu
+  //    campeonato", no-owner según privacy. "Publicado" = ciclo posterior a pending_publish. ──
+  const PUBLISHED_STATES = ['registration_open', 'registration_closed', 'in_progress', 'completed'];
+  const realHeaderTitle =
+    champ?.status === 'payment_validation' ? 'Validando pago'
+    : champ?.status === 'pending_publish' ? 'Pendiente a publicar'
+    : PUBLISHED_STATES.includes(champ?.status)
+      ? (amOwner ? 'Tu campeonato' : (champ?.privacy === 'public' ? 'Campeonato público' : 'Campeonato privado'))
+      : 'Tu campeonato';   // fallback (p.ej. canceled: solo visible al owner; sin etiqueta especial previa)
+  // Inscripciones deshabilitadas mientras el campeonato aún no está publicado (pending_publish).
+  const inscriptionsDisabled = isRealMode && champ?.status === 'pending_publish';
+  // Permisos por estado (Fase 10): crear/sin-equipo solo en open; unirse a equipo y salir en open/closed.
+  const canCreate = isRealMode && champ?.status === 'registration_open';
+  const canJoinTeam = isRealMode && (champ?.status === 'registration_open' || champ?.status === 'registration_closed');
+  const canLeave = canJoinTeam;
+  // Área de crear/sin-equipo: visible+activa en registration_open; visible+deshabilitada en pending_publish.
+  const showCreateArea = canCreate || inscriptionsDisabled;
+  // PAGADOR y AlGrass pueden crear equipos ya en pending_publish (sin membership). Bloqueado para el resto.
+  const amAlgrass = !!regState?.is_algrass;
+  const createLocked = inscriptionsDisabled && !(amOwner || amAlgrass);
 
   // Fecha completa "Mié 16 Sep 2026" (reutiliza formatDateLabel; sin el prefijo "Hoy,/Mañana,").
   const dateFull = organizeState?.dateKey ? formatDateLabel(organizeState.dateKey).replace(/^(Hoy|Mañana),\s*/, '') : (summary.dateLabel || null);
@@ -466,18 +534,105 @@ export default function ChampionshipView() {
       // REAL: el CV NO guarda clave/resultsPublic/status/privacy (todo eso vive en DB). Solo cachea el
       // contenido mock (teams) e UI para el viaje a Team; identidad/status se re-leen por refetch.
       const cv = readCV() || {};
-      writeCV({ ...cv, summary, organizeState, name, coverTheme, demo, resultsView, matchFilterId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, championship: { ...(cv.championship || {}), realId, teams } });
+      // REAL: además del scrollTop, se cachea realRow + regState para pintar la vuelta ya renderizada
+      // (sin skeleton) y refrescar en background. Se re-leen igual por refetch (fuente de verdad = DB).
+      writeCV({ ...cv, summary, organizeState, name, coverTheme, demo, resultsView, matchFilterId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, championship: { ...(cv.championship || {}), realId, teams, realRow, regState } });
       return;
     }
     writeCV({ summary, organizeState, name, coverTheme, accessCode, resultsPublic, demo, resultsView, matchFilterId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, contactRequest, championship: isCreated ? { ...champ, teams } : champ });
   }
   function goToNewTeam() {
-    // REAL: Crear equipo exige login (anon → /auth → vuelve). Autenticado → SIN equipo mock: aviso neutro
-    // (el flujo real de equipos llegará con backend). No navega al builder mock ni escribe CV.
-    if (isRealMode) { if (!requireAuth('newTeam')) return; flashToast('Las inscripciones estarán disponibles muy pronto.'); return; }
+    // REAL: Crear equipo exige login (anon → /auth → vuelve). Autenticado → builder REAL (nombre+diseño)
+    // que persiste con save_championship_team (teamId null → CREATE). No inscribe al creador. No usa CV.
+    if (isRealMode) {
+      if (champ?.status === 'pending_publish' && !amOwner && !amAlgrass) return;   // pre-publicación: crear solo owner/AlGrass
+      if (!requireAuth('newTeam')) return;
+      // Estar inscrito NO bloquea crear equipos (crear ≠ membership). Solo limita la capacidad global.
+      if ((regState?.team_count ?? 0) >= realSlotCount) { flashToast('Los cupos están completos.'); return; }
+      persistCV();   // guarda scroll + caché (realRow/regState) para volver ya renderizado
+      // champStatus + regSnapshot → tras crear, ChampionshipTeam evalúa canJoin/canDeleteTeam con el estado y
+      // owner/is_algrass reales (sin quedar en null), y muestra CTA/Eliminar de forma estable.
+      navigate('/championships/team', { state: { teamMode: 'new', realChampionship: true, champId: realId, summary, organizeState, champStatus: champ?.status, regSnapshot: regState } });
+      return;
+    }
     if (!canCreateTeam) return;
     persistCV();
     navigate('/championships/team', { state: { teamMode: 'new', summary, organizeState, maxTeams, champTeams: isCreated, champId: isRealMode ? realId : undefined } });
+  }
+  // REAL: inscribirse sin equipo → RPC (join_championship_without_team) → refetch del estado.
+  // SET membership a "sin equipo" (insert o cambio desde un team → NULL). Confirmación en la UI antes.
+  async function joinNoTeamReal() {
+    if (regBusy) return;
+    if (champ?.status === 'pending_publish' && !amOwner) return;        // pending: solo el owner puede inscribirse
+    if (!requireAuth('join')) return;                                   // anon → login → vuelve
+    setRegBusy(true);
+    const { error } = await joinChampionshipWithoutTeam({ championshipId: realId });
+    setRegBusy(false);
+    if (error) { flashToast(/REGISTRATION_CLOSED|NOT_OPEN/.test(error.message || '') ? 'Las inscripciones no están disponibles.' : 'No se pudo inscribir. Intenta de nuevo.'); loadRegState(); return; }
+    flashToast('Te inscribiste sin equipo');
+    loadRegState();
+  }
+  // ── Flujo de INSCRIPCIÓN/CAMBIO con confirmación (Fase 10). Sin inscribir → acción directa; ya inscrito
+  //    en otra opción → confirmación antes de cambiar (membership única, cambiable). ──
+  const [confirmChange, setConfirmChange] = useState(null);   // { kind:'team'|'noteam', teamId?, teamName? }
+  // Abrir la pantalla de detalle del equipo real (membership se gestiona DENTRO). Siempre clicable.
+  function openTeamReal(t) {
+    persistCV();   // guarda scroll + caché (realRow/regState) para volver ya renderizado, sin flash del top
+    // regSnapshot: estado ya conocido (teams/roster/membership/owner/is_algrass) → ChampionshipTeam pinta la
+    // estructura real en el primer render (sin flash) y luego refresca por RPC (backend = fuente de verdad).
+    navigate('/championships/team', { state: { realChampionship: true, teamMode: 'existing', champId: realId, teamId: t.id, champStatus: champ?.status, regSnapshot: regState } });
+  }
+  function requestJoinTeam(t) {
+    if (regBusy) return;
+    if (myMembership?.team_id === t.id) return;                          // ya es tu equipo → no-op
+    if (myMembership) { setConfirmChange({ kind: 'team', teamId: t.id, teamName: t.name }); return; } // cambio → confirmar
+    if (!requireAuth('join')) return;
+    joinTeamReal(t.id);                                                  // no inscrito → directo
+  }
+  function requestNoTeam() {
+    if (regBusy) return;
+    if (myMembership && !myMembership.team_id) { flashToast('Ya estás inscrito sin equipo.'); return; } // no-op
+    if (myMembership) { setConfirmChange({ kind: 'noteam' }); return; }  // desde un team → confirmar
+    if (!requireAuth('join')) return;
+    joinNoTeamReal();                                                    // no inscrito → directo
+  }
+  function confirmChangeGo() {
+    const c = confirmChange; setConfirmChange(null);
+    if (!c) return;
+    if (c.kind === 'team') joinTeamReal(c.teamId);
+    else joinNoTeamReal();
+  }
+  // REAL: unirse a un equipo EXISTENTE (registration_open/closed). Requiere no estar ya inscrito.
+  // SET membership al equipo (insert o cambio directo). La confirmación de cambio se maneja en la UI antes.
+  async function joinTeamReal(teamId) {
+    if (regBusy) return;
+    if (!requireAuth('join')) return;
+    setRegBusy(true);
+    const { error } = await joinChampionshipTeam({ championshipId: realId, teamId });
+    setRegBusy(false);
+    if (error) { const m = String(error.message || ''); flashToast(/REGISTRATION_CLOSED|NOT_OPEN/.test(m) ? 'Las inscripciones no están disponibles.' : /TEAM_NOT_FOUND/.test(m) ? 'Ese equipo ya no existe.' : 'No se pudo unir. Intenta de nuevo.'); loadRegState(); return; }
+    flashToast('Listo');
+    loadRegState();
+  }
+  // REAL: salir/desinscribirse (DELETE de la membership). registration_open/closed.
+  async function leaveReal() {
+    if (regBusy) return;
+    setRegBusy(true);
+    const { error } = await leaveChampionship({ championshipId: realId });
+    setRegBusy(false);
+    if (error) { flashToast(/NOT_OPEN/.test(error.message || '') ? 'No puedes salir en este estado.' : 'No se pudo salir. Intenta de nuevo.'); loadRegState(); return; }
+    flashToast('Saliste del campeonato');
+    loadRegState();
+  }
+  // REAL: borrar un equipo propio (solo registration_open; reglas de vacíos las valida el backend).
+  async function deleteTeamReal(teamId) {
+    if (regBusy) return;
+    setRegBusy(true);
+    const { error } = await deleteChampionshipTeam({ championshipId: realId, teamId });
+    setRegBusy(false);
+    if (error) { const m = String(error.message || ''); flashToast(/TEAM_HAS_PLAYERS/.test(m) ? 'No puedes borrar un equipo con jugadores.' : /NOT_AUTHORIZED/.test(m) ? 'Solo el creador puede borrar el equipo.' : /NOT_OPEN/.test(m) ? 'Solo puedes borrar en inscripciones abiertas.' : 'No se pudo borrar el equipo.'); loadRegState(); return; }
+    flashToast('Equipo eliminado');
+    loadRegState();
   }
   function goToExistingTeam(team) { persistCV(); navigate('/championships/team', { state: { teamMode: 'existing', team, summary, organizeState, champTeams: isCreated, champId: isRealMode ? realId : undefined } }); }
   const createNewTeam = goToNewTeam;         // "+" y "Crear equipo" (Inscripciones) → modo NEW
@@ -598,7 +753,7 @@ export default function ChampionshipView() {
           <button onClick={goBack} style={{ position: 'absolute', left: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
-          <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>{isRealMode ? 'Tu campeonato' : isCreated && champ?.status === 'registration_open' ? 'Inscripciones abiertas' : isCreated && champ?.status === 'registration_closed' ? 'Calendario y resultados' : 'Ver mi campeonato'}</div>
+          <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>{isRealMode ? realHeaderTitle : isCreated && champ?.status === 'registration_open' ? 'Inscripciones abiertas' : isCreated && champ?.status === 'registration_closed' ? 'Calendario y resultados' : 'Ver mi campeonato'}</div>
           {/* Compartir en el header — mismo icono/tamaño/posición que Partidos. Solo owner + publicado. */}
           {isOwner && isCreated && champ?.status === 'registration_open' && (
             <button className="pressable" onClick={shareChampionship} aria-label="Compartir" style={{ position: 'absolute', right: 0, width: 30, height: 26, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', WebkitTapHighlightColor: 'transparent' }}>
@@ -690,7 +845,7 @@ export default function ChampionshipView() {
             />
             <div style={{ height: 1, background: HAIR, margin: '10px 0' }} />
             {/* BLOQUE 3 — SOLO "X canchas · X horas" (sin segunda línea) */}
-            <ResumenRow icon="grid" value={complies ? (summary.configLabel || 'Cancha por confirmar') : 'Cancha por confirmar'} />
+            <ResumenRow icon="grid" value={complies ? (summary.courtNames?.length ? `Canchas: ${summary.courtNames.join(', ')}` : (summary.configLabel || 'Cancha por confirmar')) : 'Cancha por confirmar'} />
             {/* Amenities — 7v7 (píldora con icono de dos personas de Partidos) + Aire libre + amenities del venue */}
             {complies && !summary.courtCustom && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
@@ -708,8 +863,9 @@ export default function ChampionshipView() {
             </div>
           </div>
 
-          {/* ── ZONA DE CARDS ── */}
-          <div style={{ padding: '10px 16px calc(84px + env(safe-area-inset-bottom))' }}>
+          {/* ── ZONA DE CARDS ── (más espacio inferior en pending sin clave: el aviso amarillo + CTA no debe
+              cubrir el holder de jugadores) */}
+          <div style={{ padding: `10px 16px calc(${isPendingPublish && (isRealMode ? !savedPrivacy.key : !accessCode.trim()) ? 118 : 84}px + env(safe-area-inset-bottom))` }}>
             {/* "Validando pago" — transferencia enviada, esperando validación de AlGrass. Publicar bloqueado. */}
             {isOwner && paymentValidating && (
               <div style={{ ...CARD, background: '#FFF7EA', border: `1px solid ${ORANGE}55` }}>
@@ -782,8 +938,8 @@ export default function ChampionshipView() {
             {isRealMode ? (
               /* ── Campeonato REAL/materializado — CERO datos competitivos mock. Solo shell real + estados
                      vacíos limpios hasta conectar backend de inscripciones/fixture/resultados. ── */
-              (champ?.status === 'registration_closed' || champ?.status === 'in_progress' || champ?.status === 'completed') ? (
-                /* Calendario/Resultados aún sin backend → estado vacío (sin tabla/llave/partidos/goleadores mock) */
+              (champ?.status === 'in_progress' || champ?.status === 'completed') ? (
+                /* in_progress/completed → membership CONGELADA. Calendario/Resultados aún sin backend → vacío. */
                 <div style={CARD}>
                   <div style={H}>Calendario y resultados</div>
                   <div style={{ fontSize: 13, color: SUB, lineHeight: 1.5, marginTop: 8 }}>El calendario, la tabla de posiciones y los resultados estarán disponibles cuando el torneo se ponga en marcha.</div>
@@ -795,15 +951,50 @@ export default function ChampionshipView() {
                 /* Mismo patrón que el componente Inscripciones (demo/legacy): CARD 1 = grilla + Crear equipo
                    + Unirme sin equipo (juntos). CARD 2 = SOLO el roster. */
                 <>
-                  {/* CARD 1 — grilla de cupos + "Crear un equipo" + "Unirme sin equipo". */}
+                  {/* Aviso RESALTADO SOLO en pending_publish: las inscripciones aún no están habilitadas. */}
+                  {inscriptionsDisabled && (
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, margin: '0 0 12px', padding: '12px 14px', background: '#FFF7EA', border: `1px solid ${ORANGE}66`, borderRadius: 12 }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="12" cy="12" r="9" stroke={ORANGE} strokeWidth="1.8" /><path d="M12 11v5" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" /><circle cx="12" cy="7.5" r="1.1" fill={ORANGE} /></svg>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, lineHeight: 1.45 }}>Crea equipos que solo tú podrás editar.</div>
+                    </div>
+                  )}
+                  {/* Indicador "Inscripciones cerradas" (registration_closed): solo unirse a equipo existente / salir. */}
+                  {champ?.status === 'registration_closed' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 12px', padding: '10px 14px', background: SOFT, border: `1px solid ${HAIR}`, borderRadius: 12 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: SUB, flexShrink: 0 }} />
+                      <div style={{ fontSize: 13, fontWeight: 700, color: TEXT }}>Inscripciones cerradas</div>
+                      <div style={{ fontSize: 12, color: SUB }}>· solo puedes unirte a un equipo existente</div>
+                    </div>
+                  )}
+                  {/* CARD 1 — equipos reales (unirse / tu equipo / borrar propio) + CTAs según estado. */}
                   <div style={CARD}>
                     <div style={H}>Inscripciones</div>
-                    <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginTop: 4, marginBottom: 12 }}>Selecciona un cupo para sumarte o crea tu propio equipo e invita a tus amigos.</div>
+                    <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginTop: 4, marginBottom: 12 }}>
+                      {myMembership ? 'Estás inscrito. Puedes cambiar de equipo o salir mientras las inscripciones sigan abiertas.'
+                        : canJoinTeam ? (regTeams.length ? 'Toca un equipo para unirte.' : 'Aún no hay equipos.') + (canCreate ? ' También puedes crear el tuyo o unirte sin equipo.' : '')
+                        : 'Selecciona un cupo para sumarte o crea tu propio equipo.'}
+                    </div>
 
-                    {/* Grilla de CAPACIDAD (cupos): todos vacíos hoy (sin equipos reales). Cada "+" = Crear equipo. */}
+                    {/* Equipos reales: unirse (no inscrito), "Tu equipo" (inscrito), borrar (creador). + slots solo si se puede crear. */}
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 14 }}>
-                      {Array.from({ length: realSlotCount }, (_, i) => (
-                        <button key={`cap${i}`} onClick={createNewTeam} className="pressable" aria-label="Crear equipo" style={{ width: 64, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                      {regTeams.map(t => {
+                        // "Tu equipo"/check solo con membership CONFIRMADA por el backend (no desde el snapshot):
+                        // así no aparece un indicador provisional que luego desaparece si el snapshot está stale.
+                        const mine = regFresh && myMembership?.team_id === t.id;
+                        return (
+                          /* Escudo + nombre + check si es mi equipo. Toca → pantalla del equipo (join/leave/editar/borrar allí). */
+                          <button key={t.id} onClick={() => openTeamReal(t)} className="pressable" aria-label={t.name} style={{ width: 66, border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                            <div style={{ position: 'relative' }}>
+                              <Shield color={t.color || '#5B6470'} design={designOf(t.design)} name={t.name} size={60} />
+                              {mine && <div style={{ position: 'absolute', bottom: -2, right: -2, width: 20, height: 20, borderRadius: '50%', background: GREEN, border: '2px solid #fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><svg width="10" height="10" viewBox="0 0 14 14" fill="none"><path d="M3 7l3 3 5-5" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg></div>}
+                            </div>
+                            <span style={{ maxWidth: 66, fontSize: 11, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.name}</span>
+                            {mine && <span style={{ fontSize: 10.5, fontWeight: 700, color: '#1F6B36' }}>Tu equipo</span>}
+                          </button>
+                        );
+                      })}
+                      {showCreateArea && Array.from({ length: emptyRealSlots }, (_, i) => (
+                        <button key={`cap${i}`} onClick={createLocked ? undefined : createNewTeam} disabled={createLocked} className={createLocked ? undefined : 'pressable'} aria-label="Crear equipo" style={{ width: 66, border: 'none', background: 'transparent', cursor: createLocked ? 'not-allowed' : 'pointer', opacity: createLocked ? 0.5 : 1, padding: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
                           <div style={{ position: 'relative', width: 60 }}>
                             <Shield dashed size={60} />
                             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
@@ -815,31 +1006,52 @@ export default function ChampionshipView() {
                       ))}
                     </div>
 
-                    {/* CTA azul "Crear un equipo" (acceso paralelo al "+" → misma acción). */}
-                    <button onClick={createNewTeam} className="pressable" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 46, background: BLUE, color: '#fff', border: 'none', borderRadius: 14, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, WebkitTapHighlightColor: 'transparent', outline: 'none', marginBottom: 12 }}>
-                      <svg width="16" height="16" viewBox="0 0 18 18" fill="none"><path d="M9 3v12M3 9h12" stroke="#fff" strokeWidth="2" strokeLinecap="round" /></svg>
-                      Crear un equipo
-                    </button>
-
-                    {/* "Unirme sin equipo" — MISMO holder que la grilla y "Crear un equipo" (patrón original). */}
-                    <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginBottom: 8 }}>¿No tienes equipo todavía? Únete a la lista general y luego te acomodamos.</div>
-                    <button onClick={toggleNoTeam} className="pressable" style={{ width: '100%', height: 46, borderRadius: 14, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, background: '#fff', color: TEXT, boxShadow: `inset 0 0 0 1px ${HAIR}`, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Unirme sin equipo</button>
+                    {/* Crear un equipo (open enabled / pending disabled) — visible con o sin membership. */}
+                    {showCreateArea && (() => { const createDisabled = emptyRealSlots === 0 || createLocked; return (
+                      <button onClick={createDisabled ? undefined : createNewTeam} disabled={createDisabled} className={createDisabled ? undefined : 'pressable'} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 46, background: createDisabled ? '#E8E8EC' : BLUE, color: createDisabled ? '#9A9AA0' : '#fff', border: 'none', borderRadius: 14, cursor: createDisabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, WebkitTapHighlightColor: 'transparent', outline: 'none', marginBottom: 12 }}>
+                        <svg width="16" height="16" viewBox="0 0 18 18" fill="none"><path d="M9 3v12M3 9h12" stroke={createDisabled ? '#9A9AA0' : '#fff'} strokeWidth="2" strokeLinecap="round" /></svg>
+                        {emptyRealSlots === 0 && !createLocked ? 'Cupos completos' : 'Crear un equipo'}
+                      </button>
+                    ); })()}
+                    {/* Unirme sin equipo — TOGGLE (solo registration_open). En lista → "Estás en la lista" (check)
+                        → tocar de nuevo sale directo (sin confirmación). En un equipo → tocar pide confirmación
+                        de cambio (requestNoTeam). Salir del equipo se hace desde la pantalla del equipo. */}
+                    {(canCreate || inscriptionsDisabled) && (() => { const inList = !!myMembership && !myMembership.team_id; const joinDisabled = regBusy || (inscriptionsDisabled && !amOwner); return (
+                      <>
+                        <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginBottom: 8 }}>¿No tienes equipo todavía? Únete a la lista general y luego te acomodamos.</div>
+                        <button onClick={joinDisabled ? undefined : (inList ? leaveReal : requestNoTeam)} disabled={joinDisabled} className={joinDisabled ? undefined : 'pressable'} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, width: '100%', height: 46, borderRadius: 14, border: 'none', cursor: joinDisabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, background: inList ? '#D7F0DD' : '#fff', color: inList ? '#1F6B36' : (joinDisabled ? '#9A9AA0' : TEXT), opacity: regBusy ? 0.7 : 1, boxShadow: inList ? 'none' : `inset 0 0 0 1px ${HAIR}`, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                          {inList && <span style={{ width: 20, height: 20, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1F6B36' }}><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2.5 6.5l2.5 2.5 4.5-5" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></span>}
+                          {regBusy ? '…' : (inList ? 'Estás en la lista sin equipo' : 'Unirme sin equipo')}
+                        </button>
+                      </>
+                    ); })()}
                   </div>
 
-                  {/* CARD 2 — ROSTER COMPLETO ("Jugadores"). Mismo layout que el roster de "Ver mi campeonato".
-                      Hoy sin membership real → contador 0 + UNA fila placeholder SOLO visual (no es jugador
-                      real, no cuenta, sin interacción, sin mock). Se ocultará cuando existan jugadores reales. */}
+                  {/* CARD 2 — ROSTER real ("Jugadores"). Con datos → filas reales (usuario actual primero).
+                      Sin jugadores → contador 0 + mensaje de empty state. */}
                   <div style={CARD}>
                     <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
                       <div style={H}>Jugadores</div>
-                      <div style={{ fontSize: 12.5, fontWeight: 700, color: SUB }}>0 inscritos</div>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: SUB }}>{regPlayerCount} {regPlayerCount === 1 ? 'inscrito' : 'inscritos'}</div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0' }} aria-hidden="true">
-                      <div style={{ width: 18, fontSize: 12, color: SUB, flexShrink: 0, textAlign: 'right' }}>1</div>
-                      <div style={{ width: 34, height: 34, borderRadius: '50%', background: '#ECECEF', flexShrink: 0 }} />
-                      <div style={{ flex: 1, minWidth: 0 }}><div style={{ height: 10, width: '55%', borderRadius: 5, background: '#ECECEF' }} /></div>
-                      <div style={{ height: 10, width: 52, borderRadius: 5, background: '#ECECEF', flexShrink: 0 }} />
-                    </div>
+                    {regPlayers.length > 0 ? regPlayers.map((p, i) => (
+                      <button key={p.user_id} onClick={() => setSelectedPlayer({ user_id: p.user_id, name: p.full_name })} className="pressable" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderTop: i === 0 ? 'none' : `1px solid ${HAIR}`, width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                        <div style={{ width: 18, fontSize: 12, color: SUB, flexShrink: 0, textAlign: 'right' }}>{i + 1}</div>
+                        <RosterAvatar path={p.avatar_path} hue={p.avatar_hue} name={p.full_name || 'Jugador'} />
+                        <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.full_name || 'Jugador'}</div>
+                        {p.team_id
+                          ? (() => { const t = regTeams.find(x => x.id === p.team_id); return (
+                              // Escudo pequeño del equipo (mismo Shield/patrón que la grilla; name="" → sin inicial) + nombre.
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0, minWidth: 0, maxWidth: '45%' }}>
+                                <Shield color={t?.color || '#5B6470'} design={designOf(t?.design)} name="" size={14} />
+                                <span style={{ fontSize: 12, color: SUB, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.team_name}</span>
+                              </span>
+                            ); })()
+                          : <span style={{ fontSize: 12, color: '#C7C7CC', flexShrink: 0 }}>Sin equipo</span>}
+                      </button>
+                    )) : (
+                      <div style={{ fontSize: 13, color: SUB, lineHeight: 1.4 }}>Todavía no hay jugadores inscritos.</div>
+                    )}
                   </div>
                 </>
               )
@@ -893,12 +1105,12 @@ export default function ChampionshipView() {
             const canPublish = publishEnabled;
             // Ayuda contextual: falta clave guardada vs cambios sin guardar (REAL). Demo: solo clave local.
             const hint = isRealMode
-              ? (!savedPrivacy.key ? 'Configura una clave de acceso y pulsa Guardar para publicar.'
+              ? (!savedPrivacy.key ? 'Configura una clave de acceso y pulsa Guardar'
                 : privacyDirty ? 'Guarda los cambios de privacidad para publicar.' : null)
-              : (!accessCode.trim() ? 'Configura una clave de acceso para publicar.' : null);
+              : (!accessCode.trim() ? 'Configura una clave de acceso y pulsa Guardar' : null);
             return (
               <>
-                {hint && <div style={{ pointerEvents: 'none', textAlign: 'center', marginBottom: 8, fontSize: 12, fontWeight: 600, color: SUB, background: 'rgba(255,255,255,0.92)', borderRadius: 8, padding: '5px 8px' }}>{hint}</div>}
+                {hint && <div style={{ pointerEvents: 'none', textAlign: 'center', marginBottom: 8, fontSize: 12, fontWeight: 700, color: TEXT, background: '#FFF7EA', border: `1px solid ${ORANGE}66`, borderRadius: 8, padding: '7px 10px' }}>{hint}</div>}
                 <button onClick={publishChampionship} disabled={!canPublish || publishing} className={(canPublish && !publishing) ? 'pressable' : undefined} style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 54, background: canPublish ? ORANGE : '#E4E4EA', color: canPublish ? '#1B1B1F' : '#9A9AA2', border: 'none', borderRadius: 18, boxShadow: canPublish ? '0 6px 18px rgba(245,165,36,0.40)' : 'none', cursor: (canPublish && !publishing) ? 'pointer' : 'not-allowed', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, WebkitTapHighlightColor: 'transparent' }}>
                   {publishing && <span style={{ width: 16, height: 16, borderRadius: '50%', border: '2.5px solid rgba(27,27,31,0.2)', borderTop: '2.5px solid #1B1B1F', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />}
                   {publishing ? 'Publicando…' : 'Publicar campeonato'}
@@ -936,6 +1148,28 @@ export default function ChampionshipView() {
           </div>
         )}
 
+        {/* Confirmación REAL (Fase 10): cambiar de equipo o pasar a sin equipo estando ya inscrito. */}
+        {confirmChange && (() => {
+          const currentTeamName = myMembership?.team_id ? (regTeams.find(t => t.id === myMembership.team_id)?.name || 'tu equipo') : null;
+          const isToTeam = confirmChange.kind === 'team';
+          return (
+            <div className="sheet-overlay" onClick={() => setConfirmChange(null)} style={{ position: 'fixed', inset: 0, zIndex: 250, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', background: 'rgba(0,0,0,0.35)', padding: '0 16px calc(24px + env(safe-area-inset-bottom))' }}>
+              <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 420, background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 -8px 32px rgba(0,0,0,0.12)' }}>
+                <div style={{ fontSize: 17, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>{isToTeam ? 'Cambiar de equipo' : '¿Continuar sin equipo?'}</div>
+                <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, marginTop: 8 }}>
+                  {currentTeamName
+                    ? (isToTeam ? `Ya estás inscrito en ${currentTeamName}. ¿Quieres cambiarte a ${confirmChange.teamName}?` : `Ya estás inscrito en ${currentTeamName}. Si continúas, dejarás el equipo y quedarás inscrito sin equipo.`)
+                    : (isToTeam ? `¿Quieres unirte a ${confirmChange.teamName}?` : '¿Quieres continuar sin equipo?')}
+                </div>
+                <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+                  <button onClick={() => setConfirmChange(null)} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: `1.5px solid ${HAIR}`, background: '#fff', color: TEXT, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Cancelar</button>
+                  <button onClick={confirmChangeGo} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: 'none', background: ORANGE, color: '#1B1B1F', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{isToTeam ? 'Cambiarme' : 'Continuar sin equipo'}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Toast breve — copiar clave / compartir fallback / avisos de inscripción única */}
         {toast && (
           <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.75)', color: '#fff', padding: '8px 18px', borderRadius: 20, fontSize: 14, fontWeight: 500, zIndex: 9999, pointerEvents: 'none', whiteSpace: 'nowrap', maxWidth: '84%', textAlign: 'center' }}>{toast}</div>
@@ -949,6 +1183,8 @@ export default function ChampionshipView() {
       {confirmExit && (
         <ConfirmExitDialog onCancel={() => setConfirmExit(false)} onConfirm={() => navigate('/championships')} />
       )}
+      {/* Perfil público del jugador — MISMO PlayerModal que el roster de Match (privacidad/avatar iguales). */}
+      {selectedPlayer && <PlayerModal player={selectedPlayer} onClose={() => setSelectedPlayer(null)} />}
     </div>
   );
 }
@@ -958,6 +1194,14 @@ const pill = { padding: '6px 12px', borderRadius: 999, background: '#EEF2FF', co
 const coverPill = { padding: '6px 12px', borderRadius: 999, background: 'rgba(0,0,0,0.35)', color: '#fff', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700, WebkitTapHighlightColor: 'transparent', outline: 'none' };
 // Cápsula de amenity — mismos valores que el Chip de GameDetail (altura 28, borde HAIR, #fff, 12/500).
 const amenityChip = { flex: '0 0 auto', height: 28, padding: '0 10px', borderRadius: 999, border: `1px solid ${HAIR}`, background: '#fff', display: 'inline-flex', alignItems: 'center', color: TEXT, fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap' };
+
+// Avatar de fila del roster: foto real (avatar_path) o fallback hue+iniciales — MISMA lógica que PlayerModal.
+function RosterAvatar({ path, hue, name, size = 34 }) {
+  const h = hue ?? ([...(name || '·')].reduce((a, c) => a + c.charCodeAt(0), 0) % 360);
+  if (path) return <div style={{ width: size, height: size, borderRadius: '50%', overflow: 'hidden', flexShrink: 0 }}><img src={getAvatarUrl(supabase, path)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /></div>;
+  const ini = (name || '·').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase() || '·';
+  return <div style={{ width: size, height: size, borderRadius: '50%', background: `hsl(${h} 35% 92%)`, color: `hsl(${h} 45% 35%)`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: Math.round(size * 0.4), fontWeight: 700, flexShrink: 0 }}>{ini}</div>;
+}
 
 function ResumenRow({ icon, value, sub, action }) {
   const ic = (c) => icon === 'cal'
@@ -1043,7 +1287,7 @@ function Inscripciones({ teams, emptySlots, canCreate, onCreate, onOpenTeam, ros
 
         <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginBottom: 8 }}>¿No tienes equipo todavía? Únete a la lista general y luego te acomodamos.</div>
         <button onClick={onToggleJoin} className="pressable" style={{ width: '100%', height: 46, borderRadius: 14, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, WebkitTapHighlightColor: 'transparent', outline: 'none', background: joined ? '#D7F0DD' : '#fff', color: joined ? '#1F6B36' : TEXT, boxShadow: joined ? 'none' : `inset 0 0 0 1px ${HAIR}` }}>
-          {joined ? 'Estás en la lista' : 'Unirme sin equipo'}
+          {joined ? 'Estás en la lista sin equipo' : 'Unirme sin equipo'}
         </button>
       </div>
 

@@ -85,6 +85,9 @@ export default function ChampionshipCheckout() {
   const summary = nav.summary || {};
   const organizeState = nav.organizeState || null;
   const championshipName = nav.championshipName || summary.name || 'Copa AlGrass';
+  // Color de portada elegido en "Ver mi campeonato" (default rojo = COVER_THEMES[0]). Se PERSISTE al crear
+  // (p_config.cover_theme) para que el listado/Profile respeten el mismo color aunque el owner no edite portada.
+  const coverTheme = nav.coverTheme || '#E24A4A';
 
   // Pago CONFIRMADO (electrónico) → el campeonato existe como 'pending_publish' (NO se publica solo).
   // Crea el campeonato con el `status` inicial según el método de pago y navega a Profile con la confirmación.
@@ -193,6 +196,7 @@ export default function ChampionshipCheckout() {
   // el resto es metadata visual para championship.format_config. NO se envía precio/city/venue/fecha como autoridad.
   const buildHoldConfig = () => ({
     name: championshipName,
+    cover_theme: coverTheme,   // color de portada real elegido → se guarda en championships.cover_theme
     privacy: 'private',
     registration_key: null,   // materialización SIN clave: NULL en DB. El owner la define después (Fase 5).
     results_public: true,

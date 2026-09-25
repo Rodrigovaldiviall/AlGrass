@@ -632,6 +632,8 @@ export default function ChampionshipOrganize() {
       venueId: resolvedVenue?.id ?? null,
       city: resolvedVenue?.city ?? null,      // ciudad REAL del venue → checkout la usa para config/quote
       selectedGameIds,                        // se propaga hasta ChampionshipCheckout (hold real)
+      // Nombres (distintos) de las canchas elegidas → "Ver mi campeonato" muestra "Canchas: …".
+      courtNames: [...new Set((games || []).filter(g => selectedGameIds.includes(g.id)).map(g => g.fieldName).filter(Boolean))],
       // amenities REALES = objeto { parking:bool, showers:bool, covered:bool } → etiquetas de las activas.
       venueAmenities: resolvedVenue?.amenities
         ? Object.keys(resolvedVenue.amenities).filter(k => resolvedVenue.amenities[k]).map(a => AMENITY_LABEL[a] || a)
