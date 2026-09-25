@@ -13,7 +13,9 @@ const _avatarSeedInFlight = new Set();
 // Keys that belong to the device, not the user — preserved across logout.
 const _DEVICE_KEYS = new Set(['algrass_intro_seen', 'pichanga_welcome_seen', 'pichanga_coach_seen']);
 // Dynamic key prefixes (uid / gameId suffixes) scrubbed by scan.
-const _USER_PREFIXES = ['pf_player_rows_', 'pg_player_rows_', 'pg_waitlist_', 'gd_roster_', 'pichanga_global_roles_'];
+// champ_access_<id>: GRANT de acceso por clave a un campeonato protegido (Fase 7). Es actor-scoped: NO debe
+// heredarse entre usuarios → se limpia al logout/cambio de sesión (Usuario B vuelve a pedir la clave).
+const _USER_PREFIXES = ['pf_player_rows_', 'pg_player_rows_', 'pg_waitlist_', 'gd_roster_', 'pichanga_global_roles_', 'champ_access_'];
 // Static user-scoped localStorage keys.
 const _USER_STATIC = [
   'pichanga_user', 'pichanga_profile', 'pichanga_reservations', 'pichanga_rental_games',
@@ -24,7 +26,9 @@ const _USER_STATIC = [
   'pichanga_notif_unread', 'staff_invites_last_dismissed_at',
 ];
 // Static user-scoped sessionStorage keys.
-const _SESSION_STATIC = ['pg_confirmed_counts', 'profile_dirty', 'pf_scroll', 'pf_back', 'algr_sidebar_ctx'];
+// championship_view_state: caché del CV de ChampionshipView; incluye regState ACTOR-SPECIFIC (membership,
+// is_algrass, owner/permisos, "Tu equipo"). NO debe heredarse entre usuarios → se limpia al cambiar de sesión.
+const _SESSION_STATIC = ['pg_confirmed_counts', 'profile_dirty', 'pf_scroll', 'pf_back', 'algr_sidebar_ctx', 'championship_view_state'];
 
 // Remove every user-scoped cache (static + dynamic-prefix) from both storages,
 // preserving only device-level onboarding flags. Prevents user B from seeing user A's data.

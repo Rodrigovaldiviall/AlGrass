@@ -262,7 +262,11 @@ export default function ChampionshipTeam() {
     const pc = rt?.player_count ?? 0;                                   // roster ACTUAL (del state real)
     const captain = roster.find(p => p.is_captain) || null;            // capitán DINÁMICO (miembro más antiguo)
     const amCaptain = !!captain && captain.user_id === user?.id;
-    const creatorPrivileged = !!rt?.creator_is_privileged;             // team creado por owner/AlGrass → DELETE protegido
+    // Team creado por owner/AlGrass → estructura PROTEGIDA (DELETE solo owner/AlGrass). Es propiedad del ORIGEN
+    // del team, no del actor. Se usa el flag del backend Y, como defensa, la comparación local con owner_user_id
+    // (created_by === owner) por si el flag no llegara: así el botón nunca se muestra al jugador normal.
+    const creatorPrivileged = !!rt?.creator_is_privileged
+      || (!!rt?.created_by_user_id && !!rState?.owner_user_id && rt.created_by_user_id === rState.owner_user_id);
     const adminStates = st === 'pending_publish' || st === 'registration_open' || st === 'registration_closed';
     // Edición COMPLETA (nombre+color+diseño): equipo VACÍO → cualquier usuario si lo creó un jugador normal;
     // si lo creó owner/AlGrass, solo owner/AlGrass. Con jugadores → SOLO el capitán. Válida en open (o pending
@@ -384,16 +388,16 @@ export default function ChampionshipTeam() {
               </div>
             )}
 
-            {/* En pending_publish el equipo vacío auto-abre en edición (rEditing); el botón debe seguir
-                visible bajo el roster. En open/closed se mantiene solo en lectura. Permiso: canDeleteTeam. */}
-            {canDeleteTeam && (!rEditing || st === 'pending_publish') && (
+            {/* "Eliminar equipo" depende SOLO de canDeleteTeam (roster=0 + permisos), NO de estar editando:
+                debe convivir con el auto-edit del team vacío (Guardar + Únete + empty state). */}
+            {canDeleteTeam && (
               <button onClick={rBusy ? undefined : rDelete} disabled={rBusy} className="pressable" style={{ width: '100%', height: 46, borderRadius: 14, border: '1px solid #F3C0C0', background: '#fff', color: DANGER, cursor: rBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 14.5, fontWeight: 700, marginTop: 8, opacity: rBusy ? 0.7 : 1, outline: 'none' }}>Eliminar equipo</button>
             )}
           </div>
 
-          {/* CTA de pertenencia: Únete al equipo ↔ En el equipo (check). Solo si el estado permite join/leave.
-              En pending_publish el owner puede unirse aun estando en edición (el equipo vacío auto-abre en edit). */}
-          {canJoin && (!rEditing || st === 'pending_publish') && (
+          {/* CTA de pertenencia: Únete al equipo ↔ En el equipo. Depende SOLO de canJoin (estado permite
+              join/leave), NO de estar editando: editar el team y unirse son acciones independientes. */}
+          {canJoin && (
             <div style={{ position: 'absolute', left: 16, right: 16, bottom: 'calc(env(safe-area-inset-bottom) + 12px)', pointerEvents: 'none' }}>
               <button onClick={rBusy ? undefined : rToggleJoin} disabled={rBusy} className="pressable" style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, width: '100%', height: 54, borderRadius: 18, border: 'none', cursor: rBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, outline: 'none', background: joinedHere ? '#D7F0DD' : ORANGE, color: joinedHere ? '#1F6B36' : '#1B1B1F', opacity: rBusy ? 0.75 : 1, boxShadow: joinedHere ? 'none' : '0 6px 18px rgba(245,165,36,0.40)' }}>
                 <span style={{ width: 20, height: 20, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', border: joinedHere ? 'none' : '2px solid #1B1B1F', background: joinedHere ? '#1F6B36' : 'transparent' }}>

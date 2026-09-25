@@ -188,8 +188,14 @@ export default function ChampionshipView() {
   //   OJO: results_public/privacy NO son gate aquí (semántica futura de Calendario/Resultados).
   const amOwner = isRealMode && !!user?.id && !!realRow && realRow.owner_user_id === user.id;
   const amMember = isRealMode && !!realRow?.is_member;   // inscrito → bypass de clave (validado en backend)
-  const ACCESS_GRANT_KEY = realId ? ('champ_access_' + realId) : null;
-  const hasLocalGrant = () => { try { return !!ACCESS_GRANT_KEY && localStorage.getItem(ACCESS_GRANT_KEY) === '1'; } catch { return false; } };
+  // Grant de acceso por clave (Fase 7), separado por actor:
+  //   LOGUEADO → persistente por uid: champ_access_<uid>_<id> en localStorage. Dura mientras siga ESA sesión;
+  //     se limpia en logout/cambio de uid vía clearUserScopedCache (prefijo champ_access_). Refresh del mismo
+  //     uid NO lo borra. Un usuario nuevo nunca hereda el de otro (la key incluye su uid).
+  //   ANÓNIMO → NO se persiste: solo verifiedGrant en memoria (vive dentro del flujo actual; al salir/reabrir
+  //     se vuelve a pedir la clave). La continuidad anónimo→login se puentea con champ_access_resume (abajo).
+  const grantKey = (realId && user?.id) ? ('champ_access_' + user.id + '_' + realId) : null;
+  const persistentGrant = () => { try { return !!grantKey && localStorage.getItem(grantKey) === '1'; } catch { return false; } };
   const [verifiedGrant, setVerifiedGrant] = useState(false);
   const [gateKey, setGateKey] = useState('');
   const [gateError, setGateError] = useState('');
@@ -219,7 +225,7 @@ export default function ChampionshipView() {
   }
   useEffect(() => { loadRegState(); }, [isRealMode, realId, user?.id, realRow?.status, amOwner, amAlgrassRole]); // eslint-disable-line
   // Gate visible = real + fila cargada + NO owner + NO miembro + sin grant (local ni recién verificado).
-  const gateOpen = isRealMode && !!realRow && !amOwner && !amMember && !verifiedGrant && !hasLocalGrant();
+  const gateOpen = isRealMode && !!realRow && !amOwner && !amMember && !verifiedGrant && !persistentGrant();
   async function submitGate() {
     if (gateChecking) return;
     const typed = gateKey.trim();
@@ -228,7 +234,12 @@ export default function ChampionshipView() {
     const { data, error } = await verifyChampionshipAccess({ championshipId: realId, registrationKey: typed });
     setGateChecking(false);
     if (error) { setGateError('No pudimos validar la clave. Intenta de nuevo.'); return; }
-    if (data === true) { try { localStorage.setItem(ACCESS_GRANT_KEY, '1'); } catch {} setVerifiedGrant(true); setGateKey(''); return; }
+    if (data === true) {
+      setVerifiedGrant(true); setGateKey('');
+      // Logueado → grant persistente asociado a su uid. Anónimo → solo memoria (verifiedGrant), no localStorage.
+      if (user?.id && grantKey) { try { localStorage.setItem(grantKey, '1'); } catch {} }
+      return;
+    }
     setGateError('Clave incorrecta.');
   }
   const [champ, setChamp] = useState(cachedReal?.realRow ? realRowToChamp(cachedReal.realRow) : rawChamp);
@@ -657,6 +668,9 @@ export default function ChampionshipView() {
     if (user) { try { sessionStorage.removeItem(AUTH_RESUME_KEY); } catch {} return true; }
     persistCV();
     try { sessionStorage.setItem(AUTH_RESUME_KEY, action); } catch {}
+    // Continuidad anónimo→login: si el anónimo ya validó la clave (verifiedGrant), puentea el acceso por el
+    // round-trip de /auth para NO re-pedir la clave al volver autenticado (se promueve a grant de su uid).
+    if (verifiedGrant && realId) { try { sessionStorage.setItem('champ_access_resume', realId); } catch {} }
     // Real: volver al MISMO campeonato tras login (conserva el grant de acceso local). Creación: vista sin id.
     navigate('/auth', { state: { backPath: isRealMode ? ('/championships/view/' + realId) : '/championships/view' } });
     return false;
@@ -678,6 +692,13 @@ export default function ChampionshipView() {
   // la MISMA acción final (checkout/contacto) con el estado ya restaurado (restore=persisted). Si el
   // usuario canceló el login (vuelve sin sesión), se descarta la intención para no reanudar luego.
   useEffect(() => {
+    // Puente anónimo→login del GRANT de clave: al volver autenticado a ESTE campeonato, se promueve el acceso
+    // a un grant persistente del uid (sin re-pedir la clave). Si el login se canceló, se descarta el puente.
+    let g; try { g = sessionStorage.getItem('champ_access_resume'); } catch {}
+    if (g) {
+      try { sessionStorage.removeItem('champ_access_resume'); } catch {}
+      if (user?.id && g === realId) { try { localStorage.setItem('champ_access_' + user.id + '_' + realId, '1'); } catch {} setVerifiedGrant(true); }
+    }
     let pending; try { pending = sessionStorage.getItem(AUTH_RESUME_KEY); } catch {}
     if (!pending) return;
     if (!user) { try { sessionStorage.removeItem(AUTH_RESUME_KEY); } catch {} return; }
