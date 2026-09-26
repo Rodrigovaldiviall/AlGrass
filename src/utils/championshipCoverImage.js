@@ -34,9 +34,17 @@ export async function uploadChampionshipCover(supabase, { userId, championshipId
 }
 
 // URL pública derivada del path (bucket público). No se persiste en DB.
-export function getChampionshipCoverUrl(supabase, path) {
+// Opcional `{ width, quality }` → variante TRANSFORMADA de lectura (Supabase Image Transformations): se pide
+// una imagen más pequeña que el master 1600px (que NO cambia). Sin opciones → URL original (compat hacia atrás).
+// Si la transformación no produjera URL → fallback a la original (el banner nunca se rompe).
+export function getChampionshipCoverUrl(supabase, path, opts = null) {
   if (!path) return null;
-  const { data } = supabase.storage.from('championship-covers').getPublicUrl(path);
+  const bucket = supabase.storage.from('championship-covers');
+  if (opts && opts.width) {
+    const { data } = bucket.getPublicUrl(path, { transform: { width: opts.width, quality: opts.quality ?? 80 } });
+    if (data?.publicUrl) return data.publicUrl;
+  }
+  const { data } = bucket.getPublicUrl(path);
   return data?.publicUrl || null;
 }
 

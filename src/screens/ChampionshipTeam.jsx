@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, DANGER } from '../constants';
 import Shield, { DesignSwatch } from '../components/championship/Shield';
 import PlayerAvatar from '../components/championship/PlayerAvatar';
+import RosterAvatar from '../components/championship/RosterAvatar';
+import { PlayerModal } from './GameDetail';   // MISMO perfil público que el roster de Inscripciones (sin duplicar)
 import { TEAM_DESIGNS, DEFAULT_DESIGN, teamDesign, sameDesign, withinTeamNameWordLimit, playerLabel, CURRENT_USER_NAME } from '../data/championshipTeamsMock';
 import { saveChampionshipTeam, getChampionshipRegistrationState, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam } from '../services/championshipService';
 
@@ -77,6 +79,7 @@ export default function ChampionshipTeam() {
   const [rBusy, setRBusy] = useState(false);
   const [rConfirm, setRConfirm] = useState(null);             // { fromName } | null (cambio desde otra membership)
   const [rDelConfirm, setRDelConfirm] = useState(false);      // modal de confirmación de "Eliminar equipo"
+  const [rSelectedPlayer, setRSelectedPlayer] = useState(null);  // fila del roster → PlayerModal (perfil público)
   const [rErr, setRErr] = useState('');
   function loadRState() {
     if (!realExisting) return;
@@ -384,12 +387,14 @@ export default function ChampionshipTeam() {
             ) : (
               <div style={{ marginBottom: 16 }}>
                 {roster.map((p, i) => (
-                  <div key={p.user_id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderTop: i === 0 ? 'none' : `1px solid ${HAIR}` }}>
+                  // Fila clickeable → perfil público (mismo patrón que Inscripciones): setRSelectedPlayer + PlayerModal.
+                  // Avatar/foto y nombre desde rState.players (ya cargado) → CERO queries por jugador.
+                  <button key={p.user_id} onClick={() => setRSelectedPlayer({ user_id: p.user_id, name: p.full_name })} className="pressable" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderTop: i === 0 ? 'none' : `1px solid ${HAIR}`, width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                     <div style={{ width: 18, textAlign: 'right', fontSize: 13, fontWeight: 700, color: SUB, flexShrink: 0 }}>{i < 7 ? i + 1 : '-'}</div>
-                    <PlayerAvatar name={p.full_name || 'Jugador'} size={34} />
+                    <RosterAvatar path={p.avatar_path} hue={p.avatar_hue} name={p.full_name || 'Jugador'} size={34} />
                     <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.full_name || 'Jugador'}</div>
                     {p.is_captain && <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: BLUE, background: '#EAF1FD', borderRadius: 8, padding: '2px 8px' }}>Capitán</span>}
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
@@ -445,6 +450,9 @@ export default function ChampionshipTeam() {
             </div>
           </div>
         )}
+
+        {/* Perfil público del jugador — MISMO PlayerModal que el roster de Inscripciones. Se carga SOLO al pulsar. */}
+        {rSelectedPlayer && <PlayerModal player={rSelectedPlayer} onClose={() => setRSelectedPlayer(null)} />}
       </div>
     );
   }

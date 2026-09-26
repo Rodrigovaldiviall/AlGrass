@@ -99,6 +99,25 @@ const COUNTRIES = [
 
 const PROFILE_KEY      = 'pichanga_profile';
 const STORAGE_KEY      = 'pichanga_reservations';
+
+// ── Caché SWR de "Mis campeonatos" (mismo patrón que PickupGames: sessionStorage por uid + timestamp +
+//    init síncrono + refetch background). Solo optimización UX: el RPC sigue siendo la fuente autoritativa.
+//    Prefijo 'pf_champ_list_' añadido a _USER_PREFIXES (AuthContext) → se limpia en logout/cambio de uid.
+//    TTL 15min como pg_player_rows: caché fresca se pinta y revalida; más vieja se DESCARTA (fetch normal). ──
+const _CHAMP_LIST_KEY = (uid) => `pf_champ_list_${uid}`;
+const _CHAMP_LIST_TTL = 15 * 60 * 1000;
+function _readChampListCache(uid) {
+  if (!uid) return null;
+  try {
+    const d = JSON.parse(sessionStorage.getItem(_CHAMP_LIST_KEY(uid)));
+    if (!d || !Array.isArray(d.list) || Date.now() - d.ts > _CHAMP_LIST_TTL) return null;  // shape-safe: solo arrays
+    return d.list;
+  } catch { return null; }
+}
+function _writeChampListCache(uid, list) {
+  if (!uid || !Array.isArray(list)) return;
+  try { sessionStorage.setItem(_CHAMP_LIST_KEY(uid), JSON.stringify({ list, ts: Date.now() })); } catch {}
+}
 // Card compacta de campeonato/solicitud en Próximos eventos (mismo ritmo vertical que las filas actuales).
 const champRowStyle = { width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' };
 const champCrest = { width: 44, height: 44, borderRadius: 12, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' };
@@ -2822,12 +2841,19 @@ export default function Profile() {
   // ── Campeonatos REALES del usuario (FUENTE DE VERDAD del listado = DB, 0..N) ──────────────────
   // Cada campeonato es un evento independiente con SU championship.id como identidad/key. Ya NO se
   // usa championship_view_state como fuente del listado (solo queda como caché del recién creado).
-  const [champList, setChampList] = useState([]);
+  // Init SÍNCRONO desde caché (si hay datos recientes de ESTE uid) → los campeonatos ya están en el primer
+  // render, en su posición ordenada, sin salto al volver a Profile. Sin caché válida → [] (primera visita).
+  const [champList, setChampList] = useState(() => _readChampListCache(user?.id) ?? []);
   useEffect(() => {
     if (!user?.id) { setChampList([]); return; }
     let alive = true;
+    // Refetch en background (fuente autoritativa). NO se limpia champList antes → no borra lo cacheado.
     listMyChampionships().then(({ data, error }) => {
-      if (alive) setChampList(error ? [] : (data || []));
+      if (!alive) return;
+      if (error) return;                       // fallo → conservar lo que ya se muestra (caché); no poner []
+      const fresh = data || [];
+      setChampList(fresh);
+      _writeChampListCache(user.id, fresh);    // reemplaza caché (incluye [] si ya no hay campeonatos)
     });
     return () => { alive = false; };
   }, [user?.id]);

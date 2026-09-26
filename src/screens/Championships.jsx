@@ -97,6 +97,22 @@ function SectionLabel({ children }) {
   );
 }
 
+// Skeleton de card (datos DESCONOCIDOS, champs === null). Aproxima la estructura de ChampionshipCard
+// (portada 96px + 2 líneas de metadata) para no generar layout shift al llegar las cards. Reutiliza el
+// mismo pulse/gris (#E8E8EC) que SkeletonRows/SkeletonPill del proyecto.
+function ChampionshipCardSkeleton() {
+  const S = { background: '#E8E8EC', borderRadius: 6 };
+  return (
+    <div aria-hidden="true" style={{ width: '100%', marginBottom: 12, background: '#fff', borderRadius: 16, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', animation: 'pulse 1.4s ease-in-out infinite' }}>
+      <div style={{ height: 96, background: '#E8E8EC' }} />
+      <div style={{ padding: '10px 12px 12px' }}>
+        <div style={{ ...S, width: '52%', height: 13, marginBottom: 8 }} />
+        <div style={{ ...S, width: '70%', height: 12 }} />
+      </div>
+    </div>
+  );
+}
+
 export default function Championships() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -206,9 +222,11 @@ export default function Championships() {
         {/* La lista scrollea por detrás del CTA; paddingBottom deja aire para la última card */}
         <div ref={listRef} onScroll={e => { scrollPosRef.current = e.currentTarget.scrollTop; }} className="no-sb" style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '14px 16px 88px' }}>
           {champs === null ? (
-            <div style={{ padding: '48px 24px', display: 'flex', justifyContent: 'center' }}>
-              <span style={{ width: 26, height: 26, borderRadius: '50%', border: '3px solid #E4E4EA', borderTop: `3px solid ${BLUE}`, display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
-            </div>
+            // Datos desconocidos → skeleton con la misma estructura que las cards (evita layout shift).
+            <>
+              <SectionLabel>Activos</SectionLabel>
+              {Array.from({ length: 3 }, (_, i) => <ChampionshipCardSkeleton key={i} />)}
+            </>
           ) : loadError ? (
             <div style={{ padding: '48px 24px', textAlign: 'center' }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4 }}>No pudimos cargar los campeonatos</div>

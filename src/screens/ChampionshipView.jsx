@@ -16,7 +16,7 @@ import { CHAMPIONSHIP_BASE_PRICE, CHAMPIONSHIP_REGISTRATION_CLOSE_DAYS, mockPubl
 import { buildFixture, visualCapacity, realTeamCapacity } from '../data/championshipFixtures';
 import { formatDateLabel } from '../utils/format';
 import { supabase } from '../lib/supabase';
-import { getAvatarUrl } from '../utils/avatar';
+import RosterAvatar from '../components/championship/RosterAvatar';
 import { PlayerModal } from './GameDetail';   // MISMO perfil público que el roster de Match (sin duplicar)
 import { validateCoverImage, uploadChampionshipCover, getChampionshipCoverUrl, deleteChampionshipCover } from '../utils/championshipCoverImage';
 import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, publishChampionshipRpc, updateChampionshipCover, joinChampionshipWithoutTeam, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, getChampionshipRegistrationState } from '../services/championshipService';
@@ -235,7 +235,16 @@ export default function ChampionshipView() {
     getChampionshipRegistrationState({ championshipId: realId })
       .then(({ data, error }) => { if (!error && data) { setRegState(data); setRegFresh(true); } });
   }
-  useEffect(() => { loadRegState(); }, [isRealMode, realId, user?.id, realRow?.status, amOwner, amAlgrassRole]); // eslint-disable-line
+  // Gate como booleano DERIVADO (mismo criterio que loadRegState): abierto/cerrado → true por status;
+  // pending → true solo owner/AlGrass. Depender de ESTE booleano (no de amOwner/amAlgrassRole crudos) evita
+  // el doble fetch: al resolverse roles/owner async, el booleano ya está en true y no cambia → no re-dispara;
+  // en open/closed ni depende de roles. user?.id sigue en deps → refetch legítimo al cambiar de sesión;
+  // realRow?.status también → refetch legítimo ante un cambio REAL de estado.
+  const canLoadRegState = isRealMode && !!user?.id && (
+    realRow?.status === 'registration_open' || realRow?.status === 'registration_closed'
+    || (realRow?.status === 'pending_publish' && (amOwner || amAlgrassRole))
+  );
+  useEffect(() => { loadRegState(); }, [isRealMode, realId, user?.id, realRow?.status, canLoadRegState]); // eslint-disable-line
   // Gate visible = real + fila cargada + NO owner + NO miembro + sin grant (local ni recién verificado).
   const gateOpen = isRealMode && !!realRow && !amOwner && !amMember && !verifiedGrant && !persistentGrant();
   async function submitGate() {
@@ -392,7 +401,9 @@ export default function ChampionshipView() {
     flashToast('Portada actualizada');
   }
   // URL pública de la foto (derivada del path; nunca se guarda la URL en DB). null = sin foto → color.
-  const coverImageUrl = useMemo(() => (isRealMode ? getChampionshipCoverUrl(supabase, coverImagePath) : null), [isRealMode, coverImagePath]);
+  // Variante transformada ~900px (cubre DPR alto en el shell angosto) en vez del master 1600px. Mismo aspecto
+  // visual (background-image, cover, height fijo); solo baja los bytes descargados. El master no cambia.
+  const coverImageUrl = useMemo(() => (isRealMode ? getChampionshipCoverUrl(supabase, coverImagePath, { width: 900, quality: 78 }) : null), [isRealMode, coverImagePath]);
   // Subir/cambiar foto (REAL, owner): valida → sube (uuid nuevo) → persiste path vía RPC → borra la anterior.
   // Si falla el upload, no toca DB. Si el upload va pero la persistencia falla, borra el objeto huérfano.
   async function onPickCoverFile(file) {
@@ -1077,7 +1088,6 @@ export default function ChampionshipView() {
                               {mine && <div style={{ position: 'absolute', bottom: -2, right: -2, width: 20, height: 20, borderRadius: '50%', background: GREEN, border: '2px solid #fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><svg width="10" height="10" viewBox="0 0 14 14" fill="none"><path d="M3 7l3 3 5-5" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg></div>}
                             </div>
                             <span style={{ maxWidth: 66, fontSize: 11, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.name}</span>
-                            {mine && <span style={{ fontSize: 10.5, fontWeight: 700, color: '#1F6B36' }}>Tu equipo</span>}
                           </button>
                         );
                       })}
@@ -1313,14 +1323,6 @@ function OrganizerRow({ person, role, first, onSelect }) {
       <span style={{ fontSize: 12, color: SUB, flexShrink: 0 }}>{role}</span>
     </button>
   );
-}
-
-// Avatar de fila del roster: foto real (avatar_path) o fallback hue+iniciales — MISMA lógica que PlayerModal.
-function RosterAvatar({ path, hue, name, size = 34 }) {
-  const h = hue ?? ([...(name || '·')].reduce((a, c) => a + c.charCodeAt(0), 0) % 360);
-  if (path) return <div style={{ width: size, height: size, borderRadius: '50%', overflow: 'hidden', flexShrink: 0 }}><img src={getAvatarUrl(supabase, path)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /></div>;
-  const ini = (name || '·').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase() || '·';
-  return <div style={{ width: size, height: size, borderRadius: '50%', background: `hsl(${h} 35% 92%)`, color: `hsl(${h} 45% 35%)`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: Math.round(size * 0.4), fontWeight: 700, flexShrink: 0 }}>{ini}</div>;
 }
 
 function ResumenRow({ icon, value, sub, action }) {

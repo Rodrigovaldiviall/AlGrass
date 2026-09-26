@@ -15,7 +15,7 @@ const _DEVICE_KEYS = new Set(['algrass_intro_seen', 'pichanga_welcome_seen', 'pi
 // Dynamic key prefixes (uid / gameId suffixes) scrubbed by scan.
 // champ_access_<id>: GRANT de acceso por clave a un campeonato protegido (Fase 7). Es actor-scoped: NO debe
 // heredarse entre usuarios → se limpia al logout/cambio de sesión (Usuario B vuelve a pedir la clave).
-const _USER_PREFIXES = ['pf_player_rows_', 'pg_player_rows_', 'pg_waitlist_', 'gd_roster_', 'pichanga_global_roles_', 'champ_access_'];
+const _USER_PREFIXES = ['pf_player_rows_', 'pg_player_rows_', 'pg_waitlist_', 'gd_roster_', 'pichanga_global_roles_', 'champ_access_', 'pf_champ_list_'];
 // Static user-scoped localStorage keys.
 const _USER_STATIC = [
   'pichanga_user', 'pichanga_profile', 'pichanga_reservations', 'pichanga_rental_games',
