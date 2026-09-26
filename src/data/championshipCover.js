@@ -12,3 +12,9 @@ export const COVER_THEMES = ['#E24A4A', COVER_BLUE, '#2E9E5B', '#F5A524', '#8E44
 export function coverColor(hex) {
   return hex === LEGACY_COVER_BLUE ? COVER_BLUE : hex;
 }
+
+// Theme ALEATORIO de la paleta existente (para el default de un campeonato NUEVO). Reutiliza COVER_THEMES;
+// no crea themes nuevos. Puede repetirse entre campeonatos. Llamar una sola vez al iniciar la creación.
+export function randomCoverTheme() {
+  return COVER_THEMES[Math.floor(Math.random() * COVER_THEMES.length)];
+}

@@ -6,6 +6,7 @@ import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, RED } from '../constants';
 import Shield from '../components/championship/Shield';
 import PlayerAvatar from '../components/championship/PlayerAvatar';
 import MapsLinkButton from '../components/MapsLinkButton';
+import { useChampionshipOrganizerPhone } from '../hooks/useChampionshipOrganizerPhone';
 import OrganizerContactButton from '../components/OrganizerContactButton';
 import TabBar from '../components/TabBar';
 import ConfirmExitDialog from '../components/ConfirmExitDialog';
@@ -22,7 +23,11 @@ import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionsh
 
 // Temas de PORTADA (independientes de la paleta de equipos). Default rojo; el azul es un tono
 // claramente distinto al azul de marca (#3F5FE0) para que portada y header no se confundan.
-import { COVER_THEMES, coverColor } from '../data/championshipCover';
+import { COVER_THEMES, coverColor, randomCoverTheme } from '../data/championshipCover';
+import { getVenueById } from '../services/venueService';
+
+// Mismo mapa de etiquetas de amenities que ChampionshipOrganize (para chips { kind, label } en /venue).
+const AMENITY_LABEL = { parking: 'Estacionamiento', showers: 'Duchas', covered: 'Techado' };
 
 // Estado de ChampionshipView persistido en sessionStorage para conservarlo en el viaje a/desde
 // ChampionshipTeam (sin Context/Redux/Supabase; session state compatible con la arquitectura actual).
@@ -142,7 +147,10 @@ export default function ChampionshipView() {
     : (group ? `${group.min}–${group.max} equipos` : null);
 
   const [name, setName] = useState(restore?.name ?? summary.name ?? 'Copa AlGrass');
-  const [coverTheme, setCoverTheme] = useState(restore?.coverTheme ?? COVER_THEMES[0]); // default rojo
+  // Creación NUEVA (no real, sin restore) → default ALEATORIO de la paleta, elegido UNA vez (initializer lazy;
+  // no cambia en re-render). Al volver dentro del flujo (restore) se conserva el elegido; real → lo pisa la
+  // hidratación con realRow.cover_theme. Si el usuario cambia el theme, manda su elección.
+  const [coverTheme, setCoverTheme] = useState(() => restore?.coverTheme ?? (isRealMode ? COVER_THEMES[0] : randomCoverTheme()));
   const [coverEditMode, setCoverEditMode] = useState(false);      // portada en edición (paleta + nombre editable)
   const [confirmExit, setConfirmExit] = useState(false);          // X (solo demo) = salir del flujo → confirmación
   const [coverSnap, setCoverSnap] = useState(null);               // snapshot para Cancelar (name+coverTheme)
@@ -188,6 +196,8 @@ export default function ChampionshipView() {
   //   OJO: results_public/privacy NO son gate aquí (semántica futura de Calendario/Resultados).
   const amOwner = isRealMode && !!user?.id && !!realRow && realRow.owner_user_id === user.id;
   const amMember = isRealMode && !!realRow?.is_member;   // inscrito → bypass de clave (validado en backend)
+  // Contacto del organizador: SOLO el owner. La RPC valida owner (gating real); el hook solo consulta si amOwner.
+  const organizerPhone = useChampionshipOrganizerPhone(realId, amOwner);
   // Grant de acceso por clave (Fase 7), separado por actor:
   //   LOGUEADO → persistente por uid: champ_access_<uid>_<id> en localStorage. Dura mientras siga ESA sesión;
   //     se limpia en logout/cambio de uid vía clearUserScopedCache (prefijo champ_access_). Refresh del mismo
@@ -207,6 +217,8 @@ export default function ChampionshipView() {
   // membership real → evita el indicador provisional que aparece y desaparece si el snapshot está stale.
   const [regFresh, setRegFresh] = useState(false);
   const [regBusy, setRegBusy] = useState(false);   // "Unirme sin equipo" en curso
+  const [venueBusy, setVenueBusy] = useState(false);   // resolviendo el venue real antes de abrir /venue
+  const [venueReal, setVenueReal] = useState(null);    // venue PERMANENTE (tabla venues) por summary.venueId
   const [selectedPlayer, setSelectedPlayer] = useState(null);   // fila del roster → PlayerModal (perfil público de Match)
   function loadRegState() {
     // Estado de inscripciones visible en registration_open/closed; y en pending_publish para owner/AlGrass
@@ -462,18 +474,20 @@ export default function ChampionshipView() {
   const regTeamCount = regState?.team_count ?? regTeams.length;
   const regPlayerCount = regState?.player_count ?? 0;
   const myMembership = regState?.current_user_membership || null;
+  // Organizadores reales (Fase 13): owner siempre; host solo si está puesto y es
+  // otra persona —eso lo decide la RPC, aquí no se vuelve a comparar—.
+  const regOrganizers = regState?.organizers || null;
   const emptyRealSlots = Math.max(0, realSlotCount - regTeamCount);
   const designOf = (id) => TEAM_DESIGNS.find(d => d.id === id) || DEFAULT_DESIGN;
 
-  // ── Header del campeonato REAL (regla única). Estados especiales primero; publicado → owner "Tu
-  //    campeonato", no-owner según privacy. "Publicado" = ciclo posterior a pending_publish. ──
-  const PUBLISHED_STATES = ['registration_open', 'registration_closed', 'in_progress', 'completed'];
+  // ── Header del campeonato REAL. Estados especiales primero; publicado → título por ETAPA:
+  //    registration_open = "Inscripciones abiertas"; closed/in_progress/completed = "Calendario y resultados". ──
   const realHeaderTitle =
     champ?.status === 'payment_validation' ? 'Validando pago'
     : champ?.status === 'pending_publish' ? 'Pendiente a publicar'
-    : PUBLISHED_STATES.includes(champ?.status)
-      ? (amOwner ? 'Tu campeonato' : (champ?.privacy === 'public' ? 'Campeonato público' : 'Campeonato privado'))
-      : 'Tu campeonato';   // fallback (p.ej. canceled: solo visible al owner; sin etiqueta especial previa)
+    : champ?.status === 'registration_open' ? 'Inscripciones abiertas'
+    : (champ?.status === 'registration_closed' || champ?.status === 'in_progress' || champ?.status === 'completed') ? 'Calendario y resultados'
+    : 'Tu campeonato';   // fallback (p.ej. canceled: solo visible al owner)
   // Inscripciones deshabilitadas mientras el campeonato aún no está publicado (pending_publish).
   const inscriptionsDisabled = isRealMode && champ?.status === 'pending_publish';
   // Permisos por estado (Fase 10): crear/sin-equipo solo en open; unirse a equipo y salir en open/closed.
@@ -675,6 +689,45 @@ export default function ChampionshipView() {
     navigate('/auth', { state: { backPath: isRealMode ? ('/championships/view/' + realId) : '/championships/view' } });
     return false;
   }
+  // Abre el detalle del VENUE reutilizando /venue (VenueDetail). La FOTO y el MAPA reales (cover/lat/lng) NO
+  // viajan en el summary persistido → se resuelven desde la fuente PERMANENTE (tabla venues vía getVenueById),
+  // por summary.venueId. NO depende del inventario/rentals activos: funciona aunque los games ya estén
+  // completed/vencidos. Se navega DESPUÉS de resolver (sin flash de placeholders). Fallback de texto si no hay
+  // venueId o el venue fue eliminado. backPath + backState → al volver, cvReturn restaura scroll/cache.
+  // Carga ÚNICA del venue permanente (para lat/lng del botón Maps y para el detalle). Fuente de verdad de la
+  // ubicación = lat/lng reales. Se reutiliza en openVenueDetail (sin consulta paralela).
+  useEffect(() => {
+    let alive = true;
+    if (!summary?.venueId) { setVenueReal(null); return; }
+    getVenueById(summary.venueId).then(v => { if (alive) setVenueReal(v); });
+    return () => { alive = false; };
+  }, [summary?.venueId]); // eslint-disable-line
+  async function openVenueDetail() {
+    if (venueBusy) return;
+    if (!(summary?.venueName || summary?.venueAddress)) return;
+    const backPath = isRealMode ? ('/championships/view/' + realId) : '/championships/view';
+    const go = (venue) => { persistCV(); navigate('/venue', { state: { backPath, backState: { cvReturn: true }, venue } }); };
+    // Fallback desde el summary (solo texto): campeonatos antiguos sin venueId o venue ya inexistente.
+    const fallbackVenue = {
+      venueName: summary.venueName, name: summary.venueName,
+      address: summary.venueAddress || undefined, district: summary.venueDistrict || undefined,
+      city: summary.city || undefined,
+      chips: (summary.venueAmenities || []).map(label => ({ label })),
+    };
+    if (!summary.venueId) { go(fallbackVenue); return; }
+    let v = venueReal;                          // reutiliza la carga única; solo consulta si aún no llegó
+    if (!v) { setVenueBusy(true); v = await getVenueById(summary.venueId); setVenueBusy(false); if (v) setVenueReal(v); }
+    if (!v) { go(fallbackVenue); return; }   // venue eliminado → fallback (no romper)
+    // Mismo shape que Organize (foto/lat/lng/chips reales del venue), desde la tabla venues.
+    go({
+      venueName: v.name, name: v.name,
+      address: v.address || undefined, district: v.district || undefined, city: v.city || undefined,
+      lat: v.lat ?? undefined, lng: v.lng ?? undefined,
+      venueCoverPath: v.cover_image_path ?? undefined,
+      venueCoverVersion: v.cover_updated_at ? new Date(v.cover_updated_at).getTime() : undefined,
+      chips: Object.entries(v.amenities || {}).filter(([k, val]) => val === true && AMENITY_LABEL[k]).map(([k]) => ({ kind: k, label: AMENITY_LABEL[k] })),
+    });
+  }
   function goToCheckout() {
     if (!checkoutReady) return;
     if (!requireAuth('checkout')) return;
@@ -853,17 +906,31 @@ export default function ChampionshipView() {
               icon="cal"
               value={complies ? (dateFull || 'Pendiente por confirmar') : 'Pendiente por confirmar'}
               sub={complies ? (timeRange || null) : null}
+              action={amOwner ? <OrganizerContactButton phone={organizerPhone} /> : undefined}
             />
             <div style={{ height: 1, background: HAIR, margin: '10px 0' }} />
             {/* BLOQUE 2 — Venue + dirección · Google Maps. Gate = checkoutReady (complies && !courtCustom):
                 solo con CANCHA REAL confirmada. Si el usuario eligió "contactarme"/"no encuentro" (courtCustom)
                 → NO cancha real → "Pendiente por confirmar" + SIN botón Maps (no inventar dirección). */}
-            <ResumenRow
-              icon="pin"
-              value={checkoutReady ? (summary.venueName || 'Pendiente por confirmar') : 'Pendiente por confirmar'}
-              sub={checkoutReady ? `${summary.venueAddress ?? ''}${summary.venueDistrict ? ' · ' + summary.venueDistrict : ''}` : 'Te contactaremos para coordinar la sede y el horario.'}
-              action={checkoutReady && (summary.venueAddress || summary.venueName) ? <MapsLinkButton address={[summary.venueName, summary.venueAddress, summary.venueDistrict]} down /> : undefined}
-            />
+            {(() => {
+              // Nombre + dirección CLICKEABLES/subrayados → abren el detalle del venue (reutiliza /venue).
+              // El botón Google (action) se mantiene EXACTAMENTE igual. Solo con venue real (checkoutReady).
+              const venueClickable = checkoutReady && (summary.venueName || summary.venueAddress);
+              const addrText = `${summary.venueAddress ?? ''}${summary.venueDistrict ? ' · ' + summary.venueDistrict : ''}`;
+              const linkStyle = { textDecoration: 'underline', textUnderlineOffset: 2, cursor: venueBusy ? 'default' : 'pointer', opacity: venueBusy ? 0.55 : 1, WebkitTapHighlightColor: 'transparent' };
+              return (
+                <ResumenRow
+                  icon="pin"
+                  value={venueClickable
+                    ? <span role="button" onClick={openVenueDetail} style={linkStyle}>{summary.venueName || 'Pendiente por confirmar'}</span>
+                    : (checkoutReady ? (summary.venueName || 'Pendiente por confirmar') : 'Pendiente por confirmar')}
+                  sub={venueClickable && addrText
+                    ? <span role="button" onClick={openVenueDetail} style={linkStyle}>{addrText}</span>
+                    : (checkoutReady ? addrText : 'Te contactaremos para coordinar la sede y el horario.')}
+                  action={checkoutReady && (summary.venueAddress || summary.venueName) ? <MapsLinkButton lat={venueReal?.lat ?? null} lng={venueReal?.lng ?? null} address={[summary.venueName, summary.venueAddress, summary.venueDistrict]} down /> : undefined}
+                />
+              );
+            })()}
             <div style={{ height: 1, background: HAIR, margin: '10px 0' }} />
             {/* BLOQUE 3 — SOLO "X canchas · X horas" (sin segunda línea) */}
             <ResumenRow icon="grid" value={complies ? (summary.courtNames?.length ? `Canchas: ${summary.courtNames.join(', ')}` : (summary.configLabel || 'Cancha por confirmar')) : 'Cancha por confirmar'} />
@@ -913,7 +980,7 @@ export default function ChampionshipView() {
                   <button onClick={() => { if (!isRealMode && keyEditing) persistPrivacy(); setKeyEditing(v => !v); }} className="pressable" style={{ background: 'none', border: 'none', cursor: 'pointer', color: BLUE, fontFamily: 'inherit', fontSize: 13, fontWeight: 700, padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{keyEditing ? 'Listo' : 'Editar'}</button>
                 )}
               </div>
-              <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginTop: 2, marginBottom: 8 }}>Con esta clave podrán acceder tus jugadores para organizarse.</div>
+              <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginTop: 2, marginBottom: 8 }}>Con esta clave podrán acceder tus jugadores.</div>
               {keyLocked ? (
                 /* Clave cerrada → click copia y muestra "Copiado" (no edita) */
                 <button onClick={copyKey} className="pressable" style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', height: 42, borderRadius: 10, border: `1px solid ${HAIR}`, background: SOFT, padding: '0 12px', cursor: 'pointer', fontFamily: 'inherit', boxSizing: 'border-box', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
@@ -928,7 +995,7 @@ export default function ChampionshipView() {
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 700, color: TEXT }}>Resultados públicos</div>
-                  <div style={{ fontSize: 12, color: SUB, lineHeight: 1.5, marginTop: 2 }}>Cualquiera con el enlace puede ver la llave y los resultados — ideal para que más gente siga tu torneo. Desactívalo para que solo lo vean los inscritos.</div>
+                  <div style={{ fontSize: 12, color: SUB, lineHeight: 1.5, marginTop: 2 }}>Cualquier usuario puede ver Calendario y resultados. Ideal para que cualquiera siga tu torneo. Desactívalo para que solo lo vean los inscritos.</div>
                 </div>
                 <button onClick={() => { const next = !resultsPublic; setResultsPublic(next); if (!isRealMode && privacyLocked) persistPrivacy(undefined, next); }} style={{ width: 44, height: 26, borderRadius: 999, border: 'none', background: resultsPublic ? BLUE : '#E5E5EA', cursor: 'pointer', padding: 0, position: 'relative', flexShrink: 0, transition: 'background .2s ease', outline: 'none', WebkitTapHighlightColor: 'transparent' }}>
                   <div style={{ position: 'absolute', top: 2, left: resultsPublic ? 20 : 2, width: 22, height: 22, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,0.25)', transition: 'left .2s ease' }} />
@@ -1048,9 +1115,21 @@ export default function ChampionshipView() {
                     ); })()}
                   </div>
 
-                  {/* CARD 2 — ROSTER real ("Jugadores"). Con datos → filas reales (usuario actual primero).
-                      Sin jugadores → contador 0 + mensaje de empty state. */}
+                  {/* CARD 2 — ORGANIZADORES + ROSTER real ("Jugadores"). Con datos → filas reales
+                      (usuario actual primero). Sin jugadores → contador 0 + mensaje de empty state. */}
                   <div style={CARD}>
+                    {/* Organizadores arriba, en el MISMO holder que el roster y separados por una
+                        línea. Si el owner o el host además están inscritos, siguen saliendo también
+                        abajo: son dos listas que responden a dos preguntas distintas —quién manda y
+                        quién juega—, y quitar a alguien de una por estar en la otra las falsearía. */}
+                    {regOrganizers?.owner && (
+                      <>
+                        <div style={{ ...H, marginBottom: 8 }}>Organizadores</div>
+                        <OrganizerRow person={regOrganizers.owner} role="Organizador" first onSelect={setSelectedPlayer} />
+                        <OrganizerRow person={regOrganizers.host} role="Host" onSelect={setSelectedPlayer} />
+                        <div style={{ height: 1, background: HAIR, margin: '14px 0' }} />
+                      </>
+                    )}
                     <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
                       <div style={H}>Jugadores</div>
                       <div style={{ fontSize: 12.5, fontWeight: 700, color: SUB }}>{regPlayerCount} {regPlayerCount === 1 ? 'inscrito' : 'inscritos'}</div>
@@ -1215,6 +1294,26 @@ const pill = { padding: '6px 12px', borderRadius: 999, background: '#EEF2FF', co
 const coverPill = { padding: '6px 12px', borderRadius: 999, background: 'rgba(0,0,0,0.35)', color: '#fff', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700, WebkitTapHighlightColor: 'transparent', outline: 'none' };
 // Cápsula de amenity — mismos valores que el Chip de GameDetail (altura 28, borde HAIR, #fff, 12/500).
 const amenityChip = { flex: '0 0 auto', height: 28, padding: '0 10px', borderRadius: 999, border: `1px solid ${HAIR}`, background: '#fff', display: 'inline-flex', alignItems: 'center', color: TEXT, fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap' };
+
+// ── Fila de organizador ───────────────────────────────────────────────────────
+// Es una fila de roster con otra etiqueta: mismo RosterAvatar, mismo gesto y el
+// MISMO PlayerModal que abren los jugadores. Un organizador no es una clase
+// aparte de persona, así que se mira su perfil igual que el de cualquiera.
+function OrganizerRow({ person, role, first, onSelect }) {
+  if (!person) return null;
+  const name = person.full_name || 'Organizador';
+  return (
+    <button
+      onClick={() => onSelect({ user_id: person.user_id, name: person.full_name })}
+      className="pressable"
+      style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderTop: first ? 'none' : `1px solid ${HAIR}`, width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}
+    >
+      <RosterAvatar path={person.avatar_path} hue={person.avatar_hue} name={name} />
+      <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
+      <span style={{ fontSize: 12, color: SUB, flexShrink: 0 }}>{role}</span>
+    </button>
+  );
+}
 
 // Avatar de fila del roster: foto real (avatar_path) o fallback hue+iniciales — MISMA lógica que PlayerModal.
 function RosterAvatar({ path, hue, name, size = 34 }) {

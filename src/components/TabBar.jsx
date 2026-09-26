@@ -22,10 +22,14 @@ function getUpcomingBadge() {
   } catch { return undefined; }
 }
 
-function tabFromPath(pathname, backPath) {
+function tabFromPath(pathname, backPath, champOrigin) {
   if (pathname.startsWith('/profile')) return 'perfil';
   // Notificaciones ahora se accede desde el header de Perfil → el TabBar resalta Perfil.
   if (pathname.startsWith('/notifications')) return 'perfil';
+  // Detalle de un campeonato → el tab activo sigue el ORIGEN de navegación (mismo criterio que game/field/
+  // rental con backPath): abierto desde Perfil → Perfil; desde Campeonatos (o sin origen) → Campeonatos.
+  // Solo el detalle /championships/view respeta el origen; la lista/organize siguen en Campeonatos.
+  if (pathname.startsWith('/championships/view')) return champOrigin === 'profile' ? 'perfil' : 'campeonatos';
   if (pathname.startsWith('/championships')) return 'campeonatos';
   if ((pathname.startsWith('/game/') || pathname.startsWith('/field/') || pathname.startsWith('/rental/')) && backPath === '/profile') return 'perfil';
   if (pathname.startsWith('/fields') || pathname.startsWith('/field/') || pathname.startsWith('/rental/')) return 'campos';
@@ -79,7 +83,11 @@ function TabItem({ icon, label, active, badge, dot, onClick }) {
 export default function TabBar({ activeTab: activeProp }) {
   const navigate = useNavigate();
   const { pathname, state } = useLocation();
-  const activeTab = activeProp ?? tabFromPath(pathname, state?.backPath);
+  // Origen del campeonato: del nav state (entrada fresca) o del persistido (sobrevive la navegación interna
+  // View→Team/Venue→volver). Championships lo setea a 'championships' y Profile a 'profile' en cada entrada.
+  const champOrigin = state?.championshipOrigin
+    || (() => { try { return sessionStorage.getItem('championship_back_origin'); } catch { return null; } })();
+  const activeTab = activeProp ?? tabFromPath(pathname, state?.backPath, champOrigin);
   const isDetailScreen = pathname.startsWith('/game/') || pathname.startsWith('/field/') || pathname.startsWith('/rental/');
 
   const [waitlistDot, setWaitlistDot] = useState(readWaitlistBadge);

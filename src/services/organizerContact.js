@@ -85,13 +85,32 @@ async function fetchHostPhone(gameId) {
 }
 
 // Resuelve el teléfono (dígitos) del CTA para un game, o null si no hay uno seguro.
+// Política EXPLÍCITA (coherente con get_championship_organizer_contact):
+//   'algrass'                        → algrass_operational_phone.
+//   'host' con teléfono de host      → ese teléfono.
+//   'host' sin host / sin teléfono   → FALLBACK a algrass_operational_phone (CTA no queda inutilizado).
+//   NULL / modo inesperado           → null (SIN fallback).
+// get_game_host_contact NO cambia (sigue devolviendo el teléfono del host o null tras su gate de legitimidad).
 export async function resolveOrganizerPhone(game) {
   const cfg = await fetchConfig();
   if (!cfg) return null;
-  if (cfg.mode === 'algrass') {
-    const d = digits(cfg.algrassPhone);              // Admin lo guarda ya con código de país
-    return d.length >= 8 ? d : null;
+  const algrass = () => { const d = digits(cfg.algrassPhone); return d.length >= 8 ? d : null; };  // Admin lo guarda con código de país
+  if (cfg.mode === 'algrass') return algrass();
+  if (cfg.mode === 'host') {
+    const host = hostToWa(await fetchHostPhone(game?.id));
+    return host || algrass();   // host ausente/sin teléfono → fallback AlGrass
   }
-  // mode === 'host'
-  return hostToWa(await fetchHostPhone(game?.id));
+  return null;   // mode null/inesperado → sin contacto (sin fallback)
+}
+
+// Championship: teléfono del CTA resuelto EN SERVIDOR y OWNER-GATED (get_championship_organizer_contact
+// valida auth.uid() = owner). La RPC ya respeta organizer_contact_mode (algrass → phone AlGrass; host →
+// teléfono del host del campeonato). Aquí solo se aplica la MISMA normalización WhatsApp que el host de
+// game/rental (hostToWa): el phone AlGrass ya trae código de país → intacto; el del host (local) → +51.
+// Devuelve dígitos válidos o null (no-owner, sin host, host sin teléfono, RPC fallida) → CTA deshabilitado.
+export async function resolveChampionshipOrganizerPhone(championshipId) {
+  if (!supabase || !championshipId) return null;
+  const { data, error } = await supabase.rpc('get_championship_organizer_contact', { p_championship_id: championshipId });
+  if (error) return null;
+  return hostToWa(data);
 }

@@ -35,7 +35,13 @@ export default function VenueDetail() {
   const v = stateVenue ?? _readVenueCache();
   useEffect(() => { if (stateVenue) _writeVenueCache(stateVenue); }, [stateVenue]);
 
-  const back = () => navigate(location.state?.backPath ?? -1);
+  // Back: si el caller pidió un retorno explícito (backPath [+ backState]) → navega ahí con ese state (p. ej.
+  // ChampionshipView pasa cvReturn para restaurar scroll/cache). Sin backPath → navigate(-1) como hoy (Organize).
+  const back = () => {
+    const bp = location.state?.backPath;
+    if (bp) navigate(bp, location.state?.backState ? { state: location.state.backState } : undefined);
+    else navigate(-1);
+  };
 
   const addressText = Array.isArray(v?.address) ? v.address.filter(Boolean).join(' ') : (v?.address || '');
   const secondary = [addressText, v?.district].filter(Boolean).join(' · ') || undefined;

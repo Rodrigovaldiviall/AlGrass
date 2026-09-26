@@ -76,6 +76,7 @@ export default function ChampionshipTeam() {
   const [rDesign, setRDesign] = useState(designById(snapTeam?.design));
   const [rBusy, setRBusy] = useState(false);
   const [rConfirm, setRConfirm] = useState(null);             // { fromName } | null (cambio desde otra membership)
+  const [rDelConfirm, setRDelConfirm] = useState(false);      // modal de confirmación de "Eliminar equipo"
   const [rErr, setRErr] = useState('');
   function loadRState() {
     if (!realExisting) return;
@@ -312,7 +313,12 @@ export default function ChampionshipTeam() {
       setRBusy(false);
       // La UI nunca es fuente de verdad: si el backend rechaza (roster ya no está vacío, o protección), refetch
       // para recalcular player_count/canDelete y que el botón desaparezca según el estado real.
-      if (error) { const m = String(error.message || ''); setRErr(/TEAM_HAS_PLAYERS/.test(m) ? 'Ya no puedes borrar: el equipo tiene jugadores.' : /NOT_AUTHORIZED/.test(m) ? 'Solo el organizador o AlGrass pueden borrar este equipo.' : 'No se pudo borrar.'); rReload(); return; }
+      // Error: NO cerrar en silencio ni asumir borrado. Cierra el modal para que el mensaje sea visible y
+      // refetch (rReload) recalcula canDeleteTeam/roster (p.ej. si ya tiene jugadores, el botón desaparece).
+      if (error) { const m = String(error.message || ''); setRDelConfirm(false); setRErr(/TEAM_HAS_PLAYERS/.test(m) ? 'Ya no puedes borrar: el equipo tiene jugadores.' : /NOT_AUTHORIZED/.test(m) ? 'Solo el organizador o AlGrass pueden borrar este equipo.' : 'No se pudo borrar.'); rReload(); return; }
+      // Éxito: cierra modal y vuelve al campeonato → ChampionshipView refetch (teams/roster; los "sin equipo"
+      // aparecen ahí). No requiere refresh manual.
+      setRDelConfirm(false);
       navigate(viewPath, { state: { cvReturn: true } });
     }
 
@@ -391,7 +397,8 @@ export default function ChampionshipTeam() {
             {/* "Eliminar equipo" depende SOLO de canDeleteTeam (roster=0 + permisos), NO de estar editando:
                 debe convivir con el auto-edit del team vacío (Guardar + Únete + empty state). */}
             {canDeleteTeam && (
-              <button onClick={rBusy ? undefined : rDelete} disabled={rBusy} className="pressable" style={{ width: '100%', height: 46, borderRadius: 14, border: '1px solid #F3C0C0', background: '#fff', color: DANGER, cursor: rBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 14.5, fontWeight: 700, marginTop: 8, opacity: rBusy ? 0.7 : 1, outline: 'none' }}>Eliminar equipo</button>
+              // NUNCA borra en un tap: abre confirmación explícita (setRDelConfirm). La RPC se llama tras confirmar.
+              <button onClick={() => setRDelConfirm(true)} disabled={rBusy} className="pressable" style={{ width: '100%', height: 46, borderRadius: 14, border: '1px solid #F3C0C0', background: '#fff', color: DANGER, cursor: rBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 14.5, fontWeight: 700, marginTop: 8, opacity: rBusy ? 0.7 : 1, outline: 'none' }}>Eliminar equipo</button>
             )}
           </div>
 
@@ -417,6 +424,23 @@ export default function ChampionshipTeam() {
               <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
                 <button onClick={() => setRConfirm(null)} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: `1.5px solid ${HAIR}`, background: '#fff', color: TEXT, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, outline: 'none' }}>Cancelar</button>
                 <button onClick={() => { setRConfirm(null); rDoJoin(); }} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: 'none', background: ORANGE, color: '#1B1B1F', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, outline: 'none' }}>{rConfirm.fromName ? 'Cambiarme' : 'Unirme'}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Confirmación OBLIGATORIA de "Eliminar equipo" (nunca borra en un tap). Mismo sheet que rConfirm.
+            En este flujo el backend SOLO borra equipos VACÍOS (rechaza con jugadores), así que ningún jugador
+            queda sin equipo → texto secundario acorde. El botón destructivo conserva el estilo peligroso. */}
+        {rDelConfirm && (
+          <div className="sheet-overlay" onClick={() => !rBusy && setRDelConfirm(false)} style={{ position: 'fixed', inset: 0, zIndex: 250, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', background: 'rgba(0,0,0,0.35)', padding: '0 16px calc(24px + env(safe-area-inset-bottom))' }}>
+            <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 420, background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 -8px 32px rgba(0,0,0,0.12)' }}>
+              <div style={{ fontSize: 17, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>¿Estás seguro de que quieres eliminar este equipo?</div>
+              <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, marginTop: 8 }}>Esta acción no se puede deshacer.</div>
+              {rErr && <div style={{ fontSize: 12.5, color: DANGER, lineHeight: 1.4, marginTop: 10 }}>{rErr}</div>}
+              <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+                <button onClick={() => !rBusy && setRDelConfirm(false)} disabled={rBusy} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: `1.5px solid ${HAIR}`, background: '#fff', color: TEXT, cursor: rBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, outline: 'none' }}>Cancelar</button>
+                <button onClick={rBusy ? undefined : rDelete} disabled={rBusy} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: '1px solid #F3C0C0', background: '#fff', color: DANGER, cursor: rBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, opacity: rBusy ? 0.7 : 1, outline: 'none' }}>{rBusy ? 'Eliminando…' : 'Eliminar equipo'}</button>
               </div>
             </div>
           </div>
@@ -488,7 +512,7 @@ export default function ChampionshipTeam() {
           {/* REAL: aviso de que al crear el equipo quedas inscrito como su primer jugador. */}
           {realNew && (
             <>
-              <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginBottom: 8 }}>Al crear el equipo quedarás inscrito como su primer jugador. Podrás invitar a más adelante.</div>
+              <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginBottom: 8 }}>Crea tu equipo y dale a guardar, luego tú y tus amigos podrán unirse.</div>
               {createError && <div style={{ fontSize: 12.5, color: DANGER, lineHeight: 1.4, marginBottom: 8 }}>{createError}</div>}
             </>
           )}
