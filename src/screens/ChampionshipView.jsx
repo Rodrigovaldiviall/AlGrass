@@ -11,6 +11,8 @@ import OrganizerContactButton from '../components/OrganizerContactButton';
 import TabBar from '../components/TabBar';
 import ConfirmExitDialog from '../components/ConfirmExitDialog';
 import I from '../icons';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';   // antena "En vivo" (mismo icono que Games/Profile)
 import { buildTeams, combinedRoster, mockStandings, mockScorers, mockMatches, formatForTeamCount, chunkByCounts, playerLabel, CURRENT_USER_NAME, TEAM_DESIGNS, DEFAULT_DESIGN } from '../data/championshipTeamsMock';
 import { CHAMPIONSHIP_BASE_PRICE, CHAMPIONSHIP_REGISTRATION_CLOSE_DAYS, mockPublishDelay, soles } from '../data/championshipCheckoutMock';
 import { buildFixture, visualCapacity, realTeamCapacity } from '../data/championshipFixtures';
@@ -19,7 +21,8 @@ import { supabase } from '../lib/supabase';
 import RosterAvatar from '../components/championship/RosterAvatar';
 import { PlayerModal } from './GameDetail';   // MISMO perfil público que el roster de Match (sin duplicar)
 import { validateCoverImage, uploadChampionshipCover, getChampionshipCoverUrl, deleteChampionshipCover } from '../utils/championshipCoverImage';
-import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, publishChampionshipRpc, updateChampionshipCover, joinChampionshipWithoutTeam, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, getChampionshipRegistrationState } from '../services/championshipService';
+import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, updateChampionshipCover, joinChampionshipWithoutTeam, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, getChampionshipRegistrationState, getChampionshipCompetition } from '../services/championshipService';
+import { clockFromMin } from '../services/championshipAvailabilityService';
 
 // Temas de PORTADA (independientes de la paleta de equipos). Default rojo; el azul es un tono
 // claramente distinto al azul de marca (#3F5FE0) para que portada y header no se confundan.
@@ -37,6 +40,8 @@ const CV_KEY = 'championship_view_state';
 const AUTH_RESUME_KEY = 'championship_auth_resume';
 function readCV() { try { return JSON.parse(sessionStorage.getItem(CV_KEY)); } catch { return null; } }
 function writeCV(o) { try { sessionStorage.setItem(CV_KEY, JSON.stringify(o)); } catch {} }
+// "HH:MM[:SS]" (championship_matches.start_time) → "6:30 pm" (reutiliza clockFromMin de disponibilidad).
+function clockLabel(t) { if (!t) return ''; const [h, m] = String(t).split(':').map(Number); return clockFromMin((h || 0) * 60 + (m || 0)); }
 
 // Usuario actual (mock). Mismo id que se usa en los rosters ('you'); futuro: currentUser.id de Supabase.
 const CURRENT_USER_ID = 'you';
@@ -206,7 +211,12 @@ export default function ChampionshipView() {
   //     se vuelve a pedir la clave). La continuidad anónimo→login se puentea con champ_access_resume (abajo).
   const grantKey = (realId && user?.id) ? ('champ_access_' + user.id + '_' + realId) : null;
   const persistentGrant = () => { try { return !!grantKey && localStorage.getItem(grantKey) === '1'; } catch { return false; } };
-  const [verifiedGrant, setVerifiedGrant] = useState(false);
+  // Acceso ya AUTORIZADO en ESTE flujo: se siembra desde la caché de retorno (cvReturn/authResuming) que solo
+  // existe si el usuario ya estaba viendo el contenido (tras pasar el gate por clave, ser owner o miembro). Así
+  // un RETURN/BACK —p.ej. tras desuscribirse en la pantalla del equipo— NO vuelve a gatear solo porque la
+  // membership haya cambiado. NO es bypass: una entrada nueva/deep-link no trae restore → cachedReal null →
+  // arranca en false; y championship_view_state se limpia en logout/cambio de uid (_SESSION_STATIC).
+  const [verifiedGrant, setVerifiedGrant] = useState(() => cachedReal?.accessOk === true);
   const [gateKey, setGateKey] = useState('');
   const [gateError, setGateError] = useState('');
   const [gateChecking, setGateChecking] = useState(false);
@@ -319,16 +329,14 @@ export default function ChampionshipView() {
   async function publishChampionship() {
     if (publishing) return;                          // evita doble publicación
     if (!champ || champ.status !== 'pending_publish') return;
-    if (isRealMode) {
-      // REAL: publica en DB (pending_publish → registration_open + published_at). NO escribe status en CV.
-      if (!publishEnabled) return;
-      setPublishing(true); setPrivacyError('');
-      const { data, error } = await publishChampionshipRpc({ championshipId: realId });
-      if (error || !data) { setPublishing(false); setPrivacyError('No se pudo publicar. Intenta de nuevo.'); return; }
-      navigate('/championships', { state: { publishedChampionship: data.id } }); // DB ya dice registration_open
-      return;
-    }
-    // Demo/preview legacy (cv.championship): mock local aislado.
+    // REAL: el owner YA NO abre inscripciones. Cambiar de fase es una acción de
+    // AlGrass y su única puerta es set_championship_phase, comprobada en backend;
+    // publish_championship dejó de estar concedida a `authenticated`. Lo que el
+    // dueño sigue haciendo aquí es guardar su clave de acceso y la visibilidad de
+    // resultados (update_championship_privacy), que no es un cambio de fase.
+    if (isRealMode) return;
+    // Demo/preview legacy (cv.championship): mock local aislado. Sigue igual: no
+    // toca la base, solo el mock de la pantalla.
     if (!accessCode.trim()) return;
     const key = accessCode.trim();
     setPublishing(true);
@@ -490,6 +498,11 @@ export default function ChampionshipView() {
   const regOrganizers = regState?.organizers || null;
   const emptyRealSlots = Math.max(0, realSlotCount - regTeamCount);
   const designOf = (id) => TEAM_DESIGNS.find(d => d.id === id) || DEFAULT_DESIGN;
+  // Normaliza un equipo del backend (championship_teams) a la MISMA representación visual que Inscripciones:
+  // design llega como ID (texto) → se resuelve a objeto con designOf (igual que el grid de Inscripciones), y
+  // color cae al gris por defecto si viniera vacío. Así un mismo championship_team.id se ve idéntico en
+  // Inscripciones, Tabla, Partidos, Llave y Goleadores (Shield espera el OBJETO de diseño, no el id).
+  const teamView = (t) => t ? { ...t, color: t.color || '#5B6470', design: designOf(t.design) } : t;
 
   // ── Header del campeonato REAL. Estados especiales primero; publicado → título por ETAPA:
   //    registration_open = "Inscripciones abiertas"; closed/in_progress/completed = "Calendario y resultados". ──
@@ -499,11 +512,16 @@ export default function ChampionshipView() {
     : champ?.status === 'registration_open' ? 'Inscripciones abiertas'
     : (champ?.status === 'registration_closed' || champ?.status === 'in_progress' || champ?.status === 'completed') ? 'Calendario y resultados'
     : 'Tu campeonato';   // fallback (p.ej. canceled: solo visible al owner)
+  // EN VIVO (Fase 21): ÚNICA marca = status in_progress + live_started_at != null. fixture_published_at NO
+  // decide esto. Tolerante a que Phase 21 aún no esté aplicada (columna ausente → undefined → NO live).
+  const isLive = isRealMode && champ?.status === 'in_progress' && realRow?.live_started_at != null;
   // Inscripciones deshabilitadas mientras el campeonato aún no está publicado (pending_publish).
   const inscriptionsDisabled = isRealMode && champ?.status === 'pending_publish';
   // Permisos por estado (Fase 10): crear/sin-equipo solo en open; unirse a equipo y salir en open/closed.
   const canCreate = isRealMode && champ?.status === 'registration_open';
-  const canJoinTeam = isRealMode && (champ?.status === 'registration_open' || champ?.status === 'registration_closed');
+  // Roster CONGELADO (Fase 17): el jugador normal solo muta membership en registration_open. Desde
+  // registration_closed en adelante, Inscripciones queda en modo LECTURA (espejo del gate del backend).
+  const canJoinTeam = isRealMode && champ?.status === 'registration_open';
   const canLeave = canJoinTeam;
   // Área de crear/sin-equipo: visible+activa en registration_open; visible+deshabilitada en pending_publish.
   const showCreateArea = canCreate || inscriptionsDisabled;
@@ -532,6 +550,79 @@ export default function ChampionshipView() {
       phase: m.phase, label: m.label,
     }));
   }, [isCreated, champ, teams, dateFull]); // eslint-disable-line
+
+  // ── Competición REAL (Fase 16): lectura ÚNICA de get_championship_competition → { matches, standings,
+  //    scorers } YA calculados/resueltos por el backend. Se carga SOLO en in_progress/completed (única
+  //    superficie de Calendario/Resultados). Separada de get_championship_registration_state (Inscripciones).
+  const [competition, setCompetition] = useState(cachedReal?.competition ?? null);
+  // Gate DERIVADO (mismo criterio que el fetch) → depender de ESTE booleano evita el doble fetch al resolverse
+  // user/rol async (igual patrón que canLoadRegState). RPC solo authenticated; in_progress/completed son
+  // estados públicos del gate del backend → cualquier usuario autenticado puede leer la competición.
+  const canLoadCompetition = isRealMode && !!user?.id && (realRow?.status === 'in_progress' || realRow?.status === 'completed');
+  useEffect(() => {
+    if (!canLoadCompetition) return;
+    let alive = true;
+    // NO se resetea a null: se mantiene lo último conocido (o la caché de vuelta) mientras llega lo fresco.
+    getChampionshipCompetition({ championshipId: realId })
+      .then(({ data, error }) => { if (alive && !error && data) setCompetition(data); });
+    return () => { alive = false; };
+  }, [isRealMode, realId, user?.id, realRow?.status, canLoadCompetition]); // eslint-disable-line
+
+  // Adapters: re-mapean la RPC a la MISMA shape que ya consumen los presentacionales (Tabla/Llave/Partidos/
+  // Goleadores). NO recalculan nada — standings/scorers vienen derivados del backend; solo renombran campos.
+  const compTeamById = useMemo(() => {
+    const m = {};
+    (competition?.standings || []).forEach(s => { if (s.team) m[s.team.id] = teamView(s.team); });
+    (competition?.matches || []).forEach(x => { if (x.home_team) m[x.home_team.id] = teamView(x.home_team); if (x.away_team) m[x.away_team.id] = teamView(x.away_team); });
+    return m;
+  }, [competition]);
+  // Equipos reales (para cfg/Llave/contador), únicos, en el orden del standings del backend.
+  const compTeams = useMemo(() => {
+    const seen = new Set(); const out = [];
+    (competition?.standings || []).forEach(s => { const t = s.team ? teamView(s.team) : { id: s.team_id, name: 'Equipo', color: '#5B6470', design: DEFAULT_DESIGN }; if (t.id && !seen.has(t.id)) { seen.add(t.id); out.push(t); } });
+    return out;
+  }, [competition]);
+  // Tabla: agrupada por group_code respetando el orden YA ordenado del backend (group_code, PTS, DG, GF).
+  const compGroups = useMemo(() => {
+    const order = []; const byCode = new Map();
+    (competition?.standings || []).forEach(s => {
+      const code = s.group_code ?? '';
+      if (!byCode.has(code)) { byCode.set(code, []); order.push(code); }
+      byCode.get(code).push({ team: s.team ? teamView(s.team) : { id: s.team_id, name: 'Equipo', color: '#5B6470', design: DEFAULT_DESIGN }, pj: s.pj, g: s.pg, e: s.pe, p: s.pp, gf: s.gf, gc: s.gc, dg: s.dg, pts: s.pts, results: [] });
+    });
+    return order.map((code, i) => ({ code, label: isLiga ? 'Tabla de posiciones' : (code ? `Grupo ${code}` : `Grupo ${i + 1}`), rows: byCode.get(code) }));
+  }, [competition, isLiga]);
+  // Goleadores: el backend ya cuenta SOLO goles del equipo ACTUAL del jugador; aquí solo se renombra + resuelve
+  // el escudo del equipo desde el lookup (sin inferir equipo ni reagrupar).
+  const compScorers = useMemo(() => (competition?.scorers || []).map(s => ({
+    id: s.player_user_id, name: s.full_name || 'Jugador', goals: s.goals,
+    avatar_path: s.avatar_path, avatar_hue: s.avatar_hue,
+    team: compTeamById[s.team_id] || { color: '#5B6470', design: DEFAULT_DESIGN },
+  })), [competition, compTeamById]);
+  // Partidos: shape de MatchCard (a/b equipos o {tbd}; played; sa/sb; court/venue; fecha/hora formateadas).
+  const compMatches = useMemo(() => (competition?.matches || []).map(m => {
+    const played = m.home_score != null && m.away_score != null;
+    return {
+      id: m.id,
+      a: m.home_team ? teamView(m.home_team) : { tbd: true }, b: m.away_team ? teamView(m.away_team) : { tbd: true },
+      played, sa: m.home_score, sb: m.away_score,
+      court: (m.field_name || '').replace(/^cancha\s*/i, '') || '—',
+      venue: m.venue_name || '',
+      dateLabel: m.date_key ? formatDateLabel(m.date_key).replace(/^(Hoy|Mañana),\s*/, '') : '',
+      time: clockLabel(m.start_time),
+      stage: m.stage,
+    };
+  }), [competition]);
+  // Llave: estructura DERIVADA de los propios partidos de eliminación (no de cfg): semifinal(es)/final/3.º.
+  const compBracket = useMemo(() => {
+    const ms = competition?.matches || [];
+    const semis = ms.filter(m => m.stage === 'semifinal').sort((a, b) => (a.match_order ?? 0) - (b.match_order ?? 0));
+    const final = ms.find(m => m.stage === 'final') || null;
+    const third = ms.find(m => m.stage === 'third_place') || null;
+    const pair = (m) => ({ a: m?.home_team ? teamView(m.home_team) : null, b: m?.away_team ? teamView(m.away_team) : null });
+    return { hasSemifinals: semis.length > 0, hasThirdPlace: !!third, semis: [pair(semis[0]), pair(semis[1])], final: pair(final), third: pair(third) };
+  }, [competition]);
+  const comp = useMemo(() => ({ teams: compTeams, teamCount: compTeams.length, groups: compGroups, scorers: compScorers, matches: compMatches, bracket: compBracket }), [compTeams, compGroups, compScorers, compMatches, compBracket]);
 
   // Organizadores del campeonato. Principal = usuario que pagó/creó (NO se deriva de games.host_user_id).
   // AlGrass = organizador opcional que Admin podrá asignar (mock: null). No es info privada (owner+jugadores).
@@ -572,7 +663,10 @@ export default function ChampionshipView() {
       const cv = readCV() || {};
       // REAL: además del scrollTop, se cachea realRow + regState para pintar la vuelta ya renderizada
       // (sin skeleton) y refrescar en background. Se re-leen igual por refetch (fuente de verdad = DB).
-      writeCV({ ...cv, summary, organizeState, name, coverTheme, demo, resultsView, matchFilterId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, championship: { ...(cv.championship || {}), realId, teams, realRow, regState } });
+      // accessOk = ¿el actor estaba AUTORIZADO al salir a Team? (owner/miembro/clave verificada/grant persistente).
+      // Al volver (cvReturn) siembra verifiedGrant y evita re-gatear pese a cambios de membership. No persiste
+      // acceso indebido: solo captura la autorización REAL vigente en ese instante.
+      writeCV({ ...cv, summary, organizeState, name, coverTheme, demo, resultsView, matchFilterId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, championship: { ...(cv.championship || {}), realId, teams, realRow, regState, competition, accessOk: (amOwner || amMember || verifiedGrant || persistentGrant()) } });
       return;
     }
     writeCV({ summary, organizeState, name, coverTheme, accessCode, resultsPublic, demo, resultsView, matchFilterId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, contactRequest, championship: isCreated ? { ...champ, teams } : champ });
@@ -1038,11 +1132,19 @@ export default function ChampionshipView() {
               /* ── Campeonato REAL/materializado — CERO datos competitivos mock. Solo shell real + estados
                      vacíos limpios hasta conectar backend de inscripciones/fixture/resultados. ── */
               (champ?.status === 'in_progress' || champ?.status === 'completed') ? (
-                /* in_progress/completed → membership CONGELADA. Calendario/Resultados aún sin backend → vacío. */
-                <div style={CARD}>
-                  <div style={H}>Calendario y resultados</div>
-                  <div style={{ fontSize: 13, color: SUB, lineHeight: 1.5, marginTop: 8 }}>El calendario, la tabla de posiciones y los resultados estarán disponibles cuando el torneo se ponga en marcha.</div>
-                </div>
+                /* in_progress/completed → Calendario/Resultados REAL (Fase 16): Tabla/Llave/Partidos + Goleadores
+                   desde get_championship_competition (datos YA calculados por el backend; sin recálculo aquí).
+                   Indicador "En vivo" (antena) SOLO en LIVE (in_progress + live_started_at != null); pre-live/
+                   completed → misma superficie SIN antena. */
+                <>
+                  {isLive && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 12px', padding: '8px 12px', background: '#FDECEC', border: `1px solid ${RED}55`, borderRadius: 12 }}>
+                      <span style={{ color: RED, display: 'inline-flex', fontSize: 14 }}><FontAwesomeIcon icon={faTowerBroadcast} /></span>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: RED }}>En vivo</span>
+                    </div>
+                  )}
+                  <Resultados view={resultsView} setView={setResultsView} teams={comp.teams} standings={[]} scorers={[]} matches={[]} venueName={summary.venueName || 'AlGrass Arena'} openTeam={openTeamReal} filter={comp.teams.find(t => t.id === matchFilterId) || null} onFilter={team => setMatchFilterId(team ? team.id : null)} isLiga={isLiga} real={true} comp={comp} />
+                </>
               ) : (
                 /* pending_publish / payment_validation / registration_open → Inscripciones REAL.
                    SIN equipos/jugadores mock: solo la GRILLA DE CAPACIDAD (slots vacíos = cupos), derivada
@@ -1057,20 +1159,23 @@ export default function ChampionshipView() {
                       <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, lineHeight: 1.45 }}>Crea equipos que solo tú podrás editar.</div>
                     </div>
                   )}
-                  {/* Indicador "Inscripciones cerradas" (registration_closed): solo unirse a equipo existente / salir. */}
+                  {/* Indicador "Inscripciones cerradas" (registration_closed): roster CONGELADO → solo lectura. */}
                   {champ?.status === 'registration_closed' && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 12px', padding: '10px 14px', background: SOFT, border: `1px solid ${HAIR}`, borderRadius: 12 }}>
                       <span style={{ width: 8, height: 8, borderRadius: '50%', background: SUB, flexShrink: 0 }} />
                       <div style={{ fontSize: 13, fontWeight: 700, color: TEXT }}>Inscripciones cerradas</div>
-                      <div style={{ fontSize: 12, color: SUB }}>· solo puedes unirte a un equipo existente</div>
+                      <div style={{ fontSize: 12, color: SUB }}>· solo lectura: puedes ver equipos y jugadores</div>
                     </div>
                   )}
                   {/* CARD 1 — equipos reales (unirse / tu equipo / borrar propio) + CTAs según estado. */}
                   <div style={CARD}>
                     <div style={H}>Inscripciones</div>
                     <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginTop: 4, marginBottom: 12 }}>
-                      {myMembership ? 'Estás inscrito. Puedes cambiar de equipo o salir mientras las inscripciones sigan abiertas.'
+                      {myMembership
+                        ? (canJoinTeam ? 'Estás inscrito. Puedes cambiar de equipo o salir mientras las inscripciones sigan abiertas.'
+                                       : 'Estás inscrito. Las inscripciones están cerradas: el roster ya no puede cambiarse.')
                         : canJoinTeam ? (regTeams.length ? 'Toca un equipo para unirte.' : 'Aún no hay equipos.') + (canCreate ? ' También puedes crear el tuyo o unirte sin equipo.' : '')
+                        : champ?.status === 'registration_closed' ? 'Las inscripciones están cerradas. Puedes ver los equipos y sus jugadores.'
                         : 'Selecciona un cupo para sumarte o crea tu propio equipo.'}
                     </div>
 
@@ -1218,6 +1323,24 @@ export default function ChampionshipView() {
               ? (!savedPrivacy.key ? 'Configura una clave de acceso y pulsa Guardar'
                 : privacyDirty ? 'Guarda los cambios de privacidad para publicar.' : null)
               : (!accessCode.trim() ? 'Configura una clave de acceso y pulsa Guardar' : null);
+            // REAL: no hay botón de publicar. Las inscripciones las abre AlGrass, y
+            // enseñar un botón que el backend va a rechazar sería mentir. Se dice en
+            // qué punto está y qué falta, que es lo único accionable por el dueño.
+            if (isRealMode) {
+              return (
+                <>
+                  {hint && <div style={{ pointerEvents: 'none', textAlign: 'center', marginBottom: 8, fontSize: 12, fontWeight: 700, color: TEXT, background: '#FFF7EA', border: `1px solid ${ORANGE}66`, borderRadius: 8, padding: '7px 10px' }}>{hint}</div>}
+                  <div style={{ pointerEvents: 'none', textAlign: 'center', background: '#fff', border: `1px solid ${HAIR}`, borderRadius: 16, padding: '12px 14px', boxShadow: '0 6px 18px rgba(0,0,0,0.10)' }}>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: TEXT }}>Pago confirmado</div>
+                    <div style={{ fontSize: 12.5, color: SUB, marginTop: 3, lineHeight: 1.45 }}>
+                      {savedPrivacy.key
+                        ? 'AlGrass abrirá las inscripciones de tu campeonato.'
+                        : 'Guarda tu clave de acceso; AlGrass abrirá las inscripciones después.'}
+                    </div>
+                  </div>
+                </>
+              );
+            }
             return (
               <>
                 {hint && <div style={{ pointerEvents: 'none', textAlign: 'center', marginBottom: 8, fontSize: 12, fontWeight: 700, color: TEXT, background: '#FFF7EA', border: `1px solid ${ORANGE}66`, borderRadius: 8, padding: '7px 10px' }}>{hint}</div>}
@@ -1443,7 +1566,7 @@ function Inscripciones({ teams, emptySlots, canCreate, onCreate, onOpenTeam, ros
 // ── Resultados (§13) — MOCK visual ────────────────────────────────────────────
 // El área swappable reserva `minHeight` = máximo alto MEDIDO entre vistas → cambiar de vista no
 // acorta el documento (evita el clamp de scrollTop / salto). Sin scrollTo.
-function Resultados({ view, setView, teams, standings, scorers, matches, venueName, openTeam, filter, onFilter, isLiga, real = false, organizers = null }) {
+function Resultados({ view, setView, teams, standings, scorers, matches, venueName, openTeam, filter, onFilter, isLiga, real = false, organizers = null, comp = null }) {
   const innerRef = useRef(null);
   const [minH, setMinH] = useState(0);
   // Re-mide también al filtrar → minH conserva el MÁXIMO; filtrar (más corto) nunca reduce la altura.
@@ -1452,20 +1575,25 @@ function Resultados({ view, setView, teams, standings, scorers, matches, venueNa
     if (!el) return;
     const h = el.offsetHeight;
     setMinH(prev => (h > prev ? h : prev));
-  }, [view, teams, filter]);
+  }, [view, teams, filter, comp]);
 
   // Todo deriva del nº de equipos actual (reacciona si se crean equipos): grupos + semifinales.
   // Liga: SIEMPRE un único grupo (todos contra todos), sin semifinales — solo Final + 3.º/4.º.
-  const teamCount = teams.length;
+  // comp (Fase 16) = datos REALES ya calculados por el backend → se usan tal cual (sin recálculo/zero/mock).
+  const useComp = !!comp;
+  const teamCount = useComp ? comp.teamCount : teams.length;
   const cfg = isLiga
     ? { groupSizes: [teamCount], gamesPerTeam: [Math.max(0, teamCount - 1)], hasSemifinals: false, hasFinal: true, hasThirdPlace: true }
     : formatForTeamCount(teamCount);
-  // Campeonato REAL: SIN datos ficticios → Tabla en 0 con equipos reales, sin goleadores.
+  // Campeonato REAL sin backend (preview legacy): Tabla en 0 con equipos reales, sin goleadores.
   // (Demo previa mantiene el mock.) Partidos conserva su mock en ambos como referencia visual.
   const zeroRow = (t) => ({ team: t, pj: 0, g: 0, e: 0, p: 0, pts: 0, gf: 0, gc: 0, dg: 0, results: [] });
   const displayStandings = real ? teams.map(zeroRow) : standings;
-  const displayScorers = real ? [] : scorers;
-  const groups = chunkByCounts(displayStandings, cfg.groupSizes);
+  const displayScorers = useComp ? comp.scorers : (real ? [] : scorers);
+  const groups = useComp ? comp.groups.map(g => g.rows) : chunkByCounts(displayStandings, cfg.groupSizes);
+  const groupLabels = useComp ? comp.groups.map(g => g.label) : null;
+  const displayMatches = useComp ? comp.matches : matches;
+  const bracketTeams = useComp ? comp.teams : teams;
 
   return (
     <>
@@ -1476,11 +1604,11 @@ function Resultados({ view, setView, teams, standings, scorers, matches, venueNa
       </div>
       <div style={{ minHeight: minH }}>
         <div ref={innerRef}>
-          {view === 'tabla' && (real && teamCount === 0
+          {view === 'tabla' && ((useComp ? comp.groups.length === 0 : (real && teamCount === 0))
             ? <div style={CARD}><div style={H}>Tabla de posiciones</div><div style={{ fontSize: 13, color: SUB, marginTop: 8 }}>Aún no hay equipos inscritos.</div></div>
-            : <TablaMock groups={groups} cfg={cfg} openTeam={openTeam} isLiga={isLiga} />)}
-          {view === 'llave' && <LlaveMock teams={teams} cfg={cfg} openTeam={openTeam} real={real} />}
-          {view === 'partidos' && <PartidosMock matches={matches} venueName={venueName} filter={filter} onFilter={onFilter} />}
+            : <TablaMock groups={groups} cfg={cfg} openTeam={openTeam} isLiga={isLiga} groupLabels={groupLabels} />)}
+          {view === 'llave' && <LlaveMock teams={bracketTeams} cfg={cfg} openTeam={openTeam} real={real || useComp} bracket={useComp ? comp.bracket : null} />}
+          {view === 'partidos' && <PartidosMock matches={displayMatches} venueName={venueName} filter={filter} onFilter={onFilter} />}
 
           {/* Organizador — mismo componente que Inscripciones, JUSTO encima de Goleadores (misma vista) */}
           {view !== 'partidos' && organizers && (
@@ -1497,7 +1625,7 @@ function Resultados({ view, setView, teams, standings, scorers, matches, venueNa
                 ) : displayScorers.map((p, i) => (
                   <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '7px 0', borderTop: i === 0 ? 'none' : `1px solid ${HAIR}` }}>
                     <div style={{ width: 16, fontSize: 12, color: SUB, textAlign: 'right', flexShrink: 0 }}>{i + 1}</div>
-                    <PlayerAvatar name={p.name} size={30} />
+                    {useComp ? <RosterAvatar path={p.avatar_path} hue={p.avatar_hue} name={p.name} size={30} /> : <PlayerAvatar name={p.name} size={30} />}
                     <div style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, color: TEXT }}>{playerLabel(p)}</div>
                     <Shield color={p.team.color} design={p.team.design} size={14} />
                     <div style={{ fontSize: 13.5, fontWeight: 800, color: TEXT, minWidth: 16, textAlign: 'right' }}>{p.goals}</div>
@@ -1572,14 +1700,14 @@ function GroupTable({ label, sub, rows, openTeam }) {
 }
 
 // Header y "N partidos por equipo" derivan de cfg (groupSizes + gamesPerTeam) por grupo.
-function TablaMock({ groups, cfg, openTeam, isLiga }) {
+function TablaMock({ groups, cfg, openTeam, isLiga, groupLabels = null }) {
   return (
     <div style={CARD}>
       {groups.map((rows, i) => (
         <GroupTable
           key={i}
-          label={isLiga ? 'Tabla de posiciones' : `Grupo ${i + 1}`}
-          sub={isLiga ? `Todos contra todos · ${cfg.groupSizes[i]} equipos` : `${cfg.groupSizes[i]} equipos · ${cfg.gamesPerTeam[i]} partidos por equipo`}
+          label={groupLabels ? groupLabels[i] : (isLiga ? 'Tabla de posiciones' : `Grupo ${i + 1}`)}
+          sub={groupLabels ? `${rows.length} ${rows.length === 1 ? 'equipo' : 'equipos'}` : (isLiga ? `Todos contra todos · ${cfg.groupSizes[i]} equipos` : `${cfg.groupSizes[i]} equipos · ${cfg.gamesPerTeam[i]} partidos por equipo`)}
           rows={rows} openTeam={openTeam} />
       ))}
     </div>
@@ -1626,15 +1754,23 @@ function SemiCol({ a, b, size = 40, onTeam, pending = false }) {
 
 // Estructura derivada de cfg. CON semifinales (8/12/16): semifinal izquierda + Final/3.º centrados +
 // semifinal derecha (sin partido intermedio). SIN semifinales: solo Final + 3.º/4.º.
-function LlaveMock({ teams, cfg, openTeam, real = false }) {
-  // Campeonato REAL: NO se decide quién clasifica → todos los slots vacíos (grises, "Por definir").
+function LlaveMock({ teams, cfg, openTeam, real = false, bracket = null }) {
+  // bracket (Fase 16) = cuadro REAL derivado de los partidos de eliminación. Sin bracket: preview legacy
+  // (real → todos "Por definir"; demo → teams mock). Con bracket: se pintan los equipos reales por fase.
+  const useReal = !!bracket;
   const t = (i) => real ? null : (teams[i] || null);
+  const hasSemis = useReal ? bracket.hasSemifinals : cfg.hasSemifinals;
+  const hasThird = useReal ? bracket.hasThirdPlace : cfg.hasThirdPlace;
+  const finalA = useReal ? bracket.final.a : (cfg.hasSemifinals ? null : t(0));
+  const finalB = useReal ? bracket.final.b : (cfg.hasSemifinals ? null : t(1));
+  const thirdA = useReal ? bracket.third.a : (cfg.hasSemifinals ? null : t(2));
+  const thirdB = useReal ? bracket.third.b : (cfg.hasSemifinals ? null : t(3));
 
-  // Centro: Final + 3.º/4.º. Con semis, los finalistas son "a definir" (dashed, no clicables).
+  // Centro: Final + 3.º/4.º. Con semis (y sin bracket real), los finalistas son "a definir" (dashed).
   const center = (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-      <VsPair label="Final" a={cfg.hasSemifinals ? null : t(0)} b={cfg.hasSemifinals ? null : t(1)} onTeam={openTeam} pending={real} />
-      {cfg.hasThirdPlace && <VsPair label="3.º y 4.º puesto" a={cfg.hasSemifinals ? null : t(2)} b={cfg.hasSemifinals ? null : t(3)} onTeam={openTeam} pending={real} />}
+      <VsPair label="Final" a={finalA} b={finalB} onTeam={openTeam} pending={real || useReal} />
+      {hasThird && <VsPair label="3.º y 4.º puesto" a={thirdA} b={thirdB} onTeam={openTeam} pending={real || useReal} />}
     </div>
   );
 
@@ -1645,15 +1781,15 @@ function LlaveMock({ teams, cfg, openTeam, real = false }) {
         <div style={{ fontSize: 12, color: SUB }}>{teams.length} equipos</div>
       </div>
 
-      {cfg.hasSemifinals ? (
+      {hasSemis ? (
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 6 }}>
-          <SemiCol a={t(0)} b={t(1)} onTeam={openTeam} pending={real} />
+          <SemiCol a={useReal ? bracket.semis[0].a : t(0)} b={useReal ? bracket.semis[0].b : t(1)} onTeam={openTeam} pending={real || useReal} />
           {center}
-          <SemiCol a={t(2)} b={t(3)} onTeam={openTeam} pending={real} />
+          <SemiCol a={useReal ? bracket.semis[1].a : t(2)} b={useReal ? bracket.semis[1].b : t(3)} onTeam={openTeam} pending={real || useReal} />
         </div>
       ) : center}
 
-      <div style={{ fontSize: 11.5, color: SUB, marginTop: 14, textAlign: 'center' }}>{real ? 'Los clasificados se definirán con los resultados.' : 'Cuadro eliminatorio de ejemplo.'}</div>
+      <div style={{ fontSize: 11.5, color: SUB, marginTop: 14, textAlign: 'center' }}>{useReal ? 'Cuadro eliminatorio.' : real ? 'Los clasificados se definirán con los resultados.' : 'Cuadro eliminatorio de ejemplo.'}</div>
     </div>
   );
 }
@@ -1699,7 +1835,8 @@ function MatchCard({ m, onFilter }) {
 const SEC_LABEL = { fontSize: 11, fontWeight: 700, color: SUB, letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 6 };
 
 function PartidosMock({ matches, venueName, filter, onFilter }) {
-  const all = matches.map(m => ({ ...m, venue: venueName }));
+  // Real (Fase 16): cada partido trae su propio venue (m.venue); mock/demo no → cae al venueName general.
+  const all = matches.map(m => ({ ...m, venue: m.venue || venueName }));
   const shown = filter ? all.filter(m => m.a.id === filter.id || m.b.id === filter.id) : all;
   const upcoming = shown.filter(m => !m.played);
   const played = shown.filter(m => m.played);

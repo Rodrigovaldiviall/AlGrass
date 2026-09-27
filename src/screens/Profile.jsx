@@ -128,6 +128,33 @@ function champTo24(str) {
   let h = Number(m[1]) % 12; if (/pm/i.test(m[3])) h += 12;
   return `${String(h).padStart(2, '0')}:${m[2]}`;
 }
+// Badge COMPACTO de campeonato (≤2 líneas cortas) derivado de status. `live` (Fase 21) = in_progress +
+// live_started_at != null → la tarjeta añade el icono faTowerBroadcast AL COSTADO ("en vivo"), NUNCA como
+// texto de estado. in_progress SIN live_started_at = pre-live (Calendario, sin antena). fixture_published_at
+// NO decide la antena. Tolerante a live_started_at undefined/null (Phase 21 sin aplicar) → NO live.
+// isParticipant hoy NO es distinguible en Profile: list_my_championships no expone membership del usuario, así
+// que se pasa false y salen las etiquetas owner/general. Queda PREPARADO: cuando la RPC exponga is_participant,
+// pasar ese flag hace que la línea 1 sea "Inscrito" y la 2 la etapa (incl. futuro "Calendario" por fixture).
+function champBadge(status, isParticipant = false, liveStartedAt = null) {
+  const live = status === 'in_progress' && liveStartedAt != null;
+  if (isParticipant) {
+    // El participante solo existe desde registration_open; estados de pre-publicación caen al general.
+    if (status === 'registration_open')   return { lines: ['Inscrito', 'Ins. Abiertas'], live };
+    if (status === 'registration_closed') return { lines: ['Inscrito', 'Ins. Cerradas'], live };
+    if (status === 'in_progress')          return { lines: ['Inscrito', 'Calendario'], live };
+    // FUTURO (fixture_published_at != null y aún no in_progress) → { lines: ['Inscrito', 'Calendario'], live:false }
+  }
+  switch (status) {
+    case 'payment_validation':  return { lines: ['Validando', 'Pago'], live };
+    case 'pending_publish':     return { lines: ['Pendiente', 'Publicar'], live };
+    case 'registration_open':   return { lines: ['Ins. Abiertas'], live };
+    case 'registration_closed': return { lines: ['Ins. Cerradas'], live };
+    case 'in_progress':         return { lines: ['Calendario'], live };  // FUTURO: fixture_published_at define este texto antes de in_progress
+    case 'completed':           return { lines: ['Finalizado'], live };  // se ubica en Eventos pasados
+    case 'canceled':            return { lines: ['Cancelado'], live };
+    default:                    return { lines: [], live };              // fallback NEUTRO (sin texto engañoso)
+  }
+}
 const RENTAL_GAMES_KEY = 'pichanga_rental_games';
 const HOSTED_GAMES_KEY = 'pichanga_hosted_games';
 const WAITLIST_KEY_P   = 'pichanga_waitlist';
@@ -521,6 +548,43 @@ const ChevIcon = () => (
     <path d="M1 1l6 5.5L1 12" stroke="#C7C7CC" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
   </svg>
 );
+
+// Fila de campeonato en Perfil (misma geometría que GameRow: hora + tarjeta con color de portada + Chevron).
+// Reutilizada por Próximos y Pasados (evita duplicar el markup). El badge sale de g.badgeLines (≤2 líneas) y,
+// si g.live, se antepone el icono faTowerBroadcast (mismo icono/color RED que Games/Profile para eventos en vivo).
+function ChampRow({ g, onOpen, highlightRef = null, highlighted = false, muted = false }) {
+  return (
+    <div ref={highlightRef} onClick={() => onOpen(g)} className={`pressable${highlighted ? ' game-row-highlighted' : ''}`} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 16px', cursor: 'pointer', opacity: muted ? 0.6 : 1 }}>
+      <div style={{ width: 44, flexShrink: 0, textAlign: 'center' }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, lineHeight: 1.1 }}>{g.time || '—'}</div>
+        {g.ampm && <div style={{ fontSize: 11, color: SUB, fontWeight: 500, lineHeight: 1.1 }}>{g.ampm}</div>}
+      </div>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10, background: coverColor(g.theme), borderRadius: 12, padding: '8px 12px' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: '#fff', letterSpacing: -0.2, textShadow: '0 1px 2px rgba(0,0,0,0.25)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.name}</div>
+          {(g.venueName || g.teamsLabel) && (
+            <div style={{ display: 'flex', alignItems: 'baseline', minWidth: 0, marginTop: 2 }}>
+              {g.venueName && <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.9)', textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>{g.venueName}</span>}
+              {g.teamsLabel && <span style={{ flexShrink: 0, whiteSpace: 'nowrap', fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.9)', textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>{g.venueName ? ' · ' : ''}{g.teamsLabel}</span>}
+            </div>
+          )}
+        </div>
+        {/* EN VIVO (in_progress): icono AL COSTADO del badge, no lo reemplaza. Mismo icono/color que Games/Profile. */}
+        {g.live && (
+          <span style={{ flexShrink: 0, fontSize: 13, lineHeight: 1, color: RED, display: 'inline-flex', textShadow: '0 1px 2px rgba(0,0,0,0.25)' }}>
+            <FontAwesomeIcon icon={faTowerBroadcast} />
+          </span>
+        )}
+        {g.badgeLines?.length > 0 && (
+          <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 700, color: '#fff', textAlign: 'right', lineHeight: 1.2, maxWidth: 90, textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>
+            {g.badgeLines.map((l, i) => <div key={i}>{l}</div>)}
+          </span>
+        )}
+      </div>
+      <ChevIcon />
+    </div>
+  );
+}
 
 const LockIcon = ({ locked }) => (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -2812,7 +2876,6 @@ export default function Profile() {
     || rentalCards.length > 0
     || myPlayerRows.some(r => r.user_id === user?.id && r.status === 'confirmed')
     || isGameHost;
-  const visiblePast     = pastExpanded     ? past     : past.slice(0, 4);
 
   // Campeonatos/solicitudes mock (sessionStorage). MOCK: 1 campeonato + 1 solicitud (se reemplazan; no arrays).
   const _champCv = (() => { try { return JSON.parse(sessionStorage.getItem('championship_view_state')); } catch { return null; } })();
@@ -2878,21 +2941,27 @@ export default function Profile() {
     const teamsLabel = sum.mode === 'liga'
       ? (le?.quantity ? `${le.quantity} ${le.type === 'people' ? 'personas' : 'equipos'}` : '')
       : (sum.group ? (sum.group.min === sum.group.max ? `${sum.group.min} equipos` : `${sum.group.min}–${sum.group.max} equipos`) : '');
-    const statusLabel = row.status === 'payment_validation' ? 'Validando pago'
-      : row.status === 'registration_closed' ? 'Inscripciones cerradas'
-      : row.status === 'registration_open' ? 'Publicado'
-      : 'Pendiente publicar';
+    // Badge por status (mapeo explícito, sin fallback engañoso). is_participant viene de list_my_championships
+    // (Fase 18) → "Inscrito" solo si el usuario está inscrito como jugador, nunca por ser owner/pagador.
+    const { lines: badgeLines, live } = champBadge(row.status, row.is_participant === true, row.live_started_at);
     return {
       __champ: true, id: row.id, status: row.status, dateKey, time24,
       date: dateKey ? formatDateLabel(dateKey) : '', time, ampm,
       name: row.name || 'Campeonato', theme: row.cover_theme || '#E24A4A',
-      venueName: sum.venueName || null, teamsLabel, statusLabel,
+      venueName: sum.venueName || null, teamsLabel, badgeLines, live,
       summary: fc.summary || null, organizeState: fc.organizeState || null,
     };
   }).filter(e => e.dateKey && e.time24);
 
-  const upcomingAll     = champEvents.length ? sortByDt([...upcoming, ...champEvents], false) : upcoming;
+  // completed → Eventos pasados (tanto owner como participante); el resto → Próximos. Sin cutoff temporal aún.
+  const champUpcoming   = champEvents.filter(e => e.status !== 'completed');
+  const champPast       = champEvents.filter(e => e.status === 'completed');
+  const upcomingAll     = champUpcoming.length ? sortByDt([...upcoming, ...champUpcoming], false) : upcoming;
   const visibleUpcoming = upcomingExpanded ? upcomingAll : upcomingAll.slice(0, 10);
+  // pastAll = pasados de juego (games-only `past`) + campeonatos completados. `past` se conserva intacto para
+  // la lógica de rating/pastGameCount (solo partidos/rentals); pastAll es SOLO para el render de "Eventos pasados".
+  const pastAll         = champPast.length ? sortByDt([...past, ...champPast], true) : past;
+  const visiblePast     = pastExpanded ? pastAll : pastAll.slice(0, 4);
 
   // Campeonato recién creado oculto tras "Ver más": expandir mientras el overlay de confirmación aún se ve,
   // para que al continuar su fila ya esté renderizada (ref) y el effect de scroll (highlightedRef) la centre.
@@ -3423,27 +3492,7 @@ export default function Profile() {
                       )}
                       {games.map(g => {
                         if (g.__champ) return (
-                          /* Campeonato pagado como evento del día — misma geometría que GameRow (gap 12 + ChevIcon).
-                             El holder (flex:1) termina en la MISMA línea vertical que el badge de Partido. */
-                          <div key={g.id} ref={highlightedId === g.id ? highlightedRef : null} onClick={() => openChampionship(g)} className={`pressable${highlightedId === g.id ? ' game-row-highlighted' : ''}`} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 16px', cursor: 'pointer' }}>
-                            <div style={{ width: 44, flexShrink: 0, textAlign: 'center' }}>
-                              <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, lineHeight: 1.1 }}>{g.time || '—'}</div>
-                              {g.ampm && <div style={{ fontSize: 11, color: SUB, fontWeight: 500, lineHeight: 1.1 }}>{g.ampm}</div>}
-                            </div>
-                            <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10, background: coverColor(g.theme), borderRadius: 12, padding: '8px 12px' }}>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 15, fontWeight: 800, color: '#fff', letterSpacing: -0.2, textShadow: '0 1px 2px rgba(0,0,0,0.25)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.name}</div>
-                                {(g.venueName || g.teamsLabel) && (
-                                  <div style={{ display: 'flex', alignItems: 'baseline', minWidth: 0, marginTop: 2 }}>
-                                    {g.venueName && <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.9)', textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>{g.venueName}</span>}
-                                    {g.teamsLabel && <span style={{ flexShrink: 0, whiteSpace: 'nowrap', fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.9)', textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>{g.venueName ? ' · ' : ''}{g.teamsLabel}</span>}
-                                  </div>
-                                )}
-                              </div>
-                              <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 700, color: '#fff', textAlign: 'right', lineHeight: 1.2, maxWidth: 90, textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>{g.statusLabel}</span>
-                            </div>
-                            <ChevIcon />
-                          </div>
+                          <ChampRow key={g.id} g={g} onOpen={openChampionship} highlightRef={highlightedId === g.id ? highlightedRef : null} highlighted={highlightedId === g.id} />
                         );
                         const isHighlighted = g.id === highlightedId || g.gameId === highlightedId;
                         return (
@@ -3473,8 +3522,8 @@ export default function Profile() {
             </>
           )}
 
-          <SectionHeader title="Eventos pasados" count={past.length} />
-          {past.length === 0 ? (
+          <SectionHeader title="Eventos pasados" count={pastAll.length} />
+          {pastAll.length === 0 ? (
             <div style={{ padding: '4px 16px 8px', fontSize: 14, color: SUB }}>No tienes ningún partido</div>
           ) : (
             <>
@@ -3490,6 +3539,9 @@ export default function Profile() {
                       )}
                       {games.map(g => {
                         const isHighlighted = g.id === highlightedId || g.gameId === highlightedId;
+                        if (g.__champ) return (
+                          <ChampRow key={g.id} g={g} onOpen={openChampionship} highlightRef={isHighlighted ? highlightedRef : null} highlighted={isHighlighted} muted />
+                        );
                         return (
                         <div key={g.id} ref={isHighlighted ? highlightedRef : null}>
                           <GameRow game={g} onPress={() => openGameDetail(g)} muted userId={user?.id} highlighted={isHighlighted} captainGold={isCaptainGold} />
@@ -3500,7 +3552,7 @@ export default function Profile() {
                   );
                 });
               })()}
-              {!pastExpanded && past.length > 4 && (
+              {!pastExpanded && pastAll.length > 4 && (
                 <button onClick={() => setPastExpanded(true)} style={{
                   display: 'block', width: '100%', padding: '10px 16px',
                   background: 'none', border: 'none', cursor: 'pointer',

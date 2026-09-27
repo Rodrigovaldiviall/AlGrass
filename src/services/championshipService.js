@@ -198,6 +198,14 @@ export function getChampionshipRegistrationState({ championshipId }) {
   return supabase.rpc('get_championship_registration_state', { p_championship_id: championshipId });
 }
 
+// get_championship_competition (Fase 16): LECTURA de fixture/resultados en una sola llamada. Devuelve
+// { matches, standings, scorers } ya resueltos para display (equipos, cancha/venue/fecha vía game_id,
+// goleadores por match; standings y goleadores DERIVADOS, no guardados). Solo lectura, authenticated;
+// mismo gate que el estado de inscripción. Aún NO conectado a la UI (se conectará en una fase posterior).
+export function getChampionshipCompetition({ championshipId }) {
+  return supabase.rpc('get_championship_competition', { p_championship_id: championshipId });
+}
+
 // Lectura mínima del campeonato propio (RLS championships_select acota al owner). Se usa para
 // representar en Profile el campeonato real recién creado ("Validando pago") y su persistencia tras
 // refresh. SIN escritura, SIN lógica: devuelve el { data, error } CRUDO de Supabase.

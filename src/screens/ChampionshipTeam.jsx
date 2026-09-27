@@ -258,8 +258,9 @@ export default function ChampionshipTeam() {
     const isOpen = st === 'registration_open';
     const amCreator = !!rt && rt.created_by_user_id === user?.id;
     const amOwner = !!rState && rState.owner_user_id === user?.id;      // pagador del campeonato
-    // Unirse/cambiar/salir: open/closed cualquiera; en pending_publish SOLO el owner (membership anticipada).
-    const canJoin = isOpen || st === 'registration_closed' || (st === 'pending_publish' && amOwner);
+    // Unirse/cambiar/salir (Fase 17): SOLO registration_open; en pending_publish SOLO el owner (membership
+    // anticipada). Desde registration_closed el roster está CONGELADO para el jugador normal (espejo del backend).
+    const canJoin = isOpen || (st === 'pending_publish' && amOwner);
     const amAlgrass = !!rState?.is_algrass;                             // back-office AlGrass
     const amAdmin = amOwner || amAlgrass;
     const joinedHere = myMem?.team_id === teamId;
