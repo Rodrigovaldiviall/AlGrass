@@ -1,0 +1,22 @@
+-- ============================================================================
+-- Campeonatos · Fase 23 — Restaurar el flujo de PUBLICACIÓN del owner (corrige regresión de Phase 21)
+-- ============================================================================
+-- Phase 21 revocó publish_championship(uuid) a `authenticated` por una interpretación demasiado restrictiva
+-- ("solo AlGrass cambia lifecycle"). Regla DEFINITIVA: el owner conserva SIEMPRE su única transición de
+-- lifecycle propia —publicar su campeonato (pending_publish → registration_open)— vía la RPC específica
+-- publish_championship. AlGrass mantiene el control completo del resto vía set_championship_status.
+--
+-- Auditoría de public.publish_championship(uuid) (Fase 5): TODOS los gates están presentes y correctos, así
+-- que la corrección es SOLO un GRANT (no se cambia el cuerpo):
+--   · AUTH_REQUIRED si auth.uid() es null.
+--   · NOT_OWNER si owner_user_id <> auth.uid()  → exclusivamente el owner.
+--   · idempotente si ya está registration_open; INVALID_STATE si no está en pending_publish → solo PP→RO.
+--   · NO_REGISTRATION_KEY si la clave está vacía → exige registration_key guardada.
+--   · setea status='registration_open' + published_at=now(); ninguna otra transición.
+--   · SELECT ... FOR UPDATE (serializa).
+--
+-- NO se amplía set_championship_status (Owner NO gana acceso general al lifecycle). NO se crea RPC nueva.
+-- NO se edita Phase 21 (ya aplicada). Host/player siguen sin poder publicar (la RPC exige owner).
+-- ============================================================================
+
+grant execute on function public.publish_championship(uuid) to authenticated;

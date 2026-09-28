@@ -1,9 +1,9 @@
 import { useState, useMemo, useRef, useLayoutEffect, useEffect } from 'react';
-import { useNavigate, useLocation, useParams } from 'react-router-dom';
+import { useNavigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useGlobalRoles } from '../hooks/useGlobalRoles';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, RED } from '../constants';
-import Shield from '../components/championship/Shield';
+import Shield, { getTeamAbbreviation } from '../components/championship/Shield';
 import PlayerAvatar from '../components/championship/PlayerAvatar';
 import MapsLinkButton from '../components/MapsLinkButton';
 import { useChampionshipOrganizerPhone } from '../hooks/useChampionshipOrganizerPhone';
@@ -19,10 +19,14 @@ import { buildFixture, visualCapacity, realTeamCapacity } from '../data/champion
 import { formatDateLabel } from '../utils/format';
 import { supabase } from '../lib/supabase';
 import RosterAvatar from '../components/championship/RosterAvatar';
+import PlayerActionSheet from '../components/championship/PlayerActionSheet';
+import MatchDetailModal from '../components/championship/MatchDetailModal';
+import { effPhaseOf, rosterWindows } from '../utils/championshipRoster';
 import { PlayerModal } from './GameDetail';   // MISMO perfil público que el roster de Match (sin duplicar)
 import { validateCoverImage, uploadChampionshipCover, getChampionshipCoverUrl, deleteChampionshipCover } from '../utils/championshipCoverImage';
-import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, updateChampionshipCover, joinChampionshipWithoutTeam, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, getChampionshipRegistrationState, getChampionshipCompetition } from '../services/championshipService';
-import { clockFromMin } from '../services/championshipAvailabilityService';
+import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, publishChampionshipRpc, updateChampionshipCover, joinChampionshipWithoutTeam, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, getChampionshipRegistrationState, getChampionshipCompetition, manageChampionshipPlayer, saveChampionshipMatchResult, setChampionshipMatchTeam, toggleChampionshipLive } from '../services/championshipService';
+import TeamPickerSheet from '../components/championship/TeamPickerSheet';
+import { slotTeamConflicts } from '../utils/championshipFixture';
 
 // Temas de PORTADA (independientes de la paleta de equipos). Default rojo; el azul es un tono
 // claramente distinto al azul de marca (#3F5FE0) para que portada y header no se confundan.
@@ -40,8 +44,17 @@ const CV_KEY = 'championship_view_state';
 const AUTH_RESUME_KEY = 'championship_auth_resume';
 function readCV() { try { return JSON.parse(sessionStorage.getItem(CV_KEY)); } catch { return null; } }
 function writeCV(o) { try { sessionStorage.setItem(CV_KEY, JSON.stringify(o)); } catch {} }
-// "HH:MM[:SS]" (championship_matches.start_time) → "6:30 pm" (reutiliza clockFromMin de disponibilidad).
-function clockLabel(t) { if (!t) return ''; const [h, m] = String(t).split(':').map(Number); return clockFromMin((h || 0) * 60 + (m || 0)); }
+// Rango 24h "HH:mm – HH:mm" a partir de start_time ("HH:MM[:SS]") + duration_min. NO se guarda end_time: se
+// deriva en presentación (envuelve medianoche). Sin start → ''; sin duración válida → solo la hora de inicio.
+function matchTimeRange(startTime, durationMin) {
+  if (!startTime) return '';
+  const [h, m] = String(startTime).split(':').map(Number);
+  if (Number.isNaN(h)) return '';
+  const startMin = (h || 0) * 60 + (m || 0);
+  const fmt = (mins) => { const t = ((mins % 1440) + 1440) % 1440; return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
+  const start = fmt(startMin);
+  return (durationMin > 0) ? `${start} – ${fmt(startMin + durationMin)}` : start;
+}
 
 // Usuario actual (mock). Mismo id que se usa en los rosters ('you'); futuro: currentUser.id de Supabase.
 const CURRENT_USER_ID = 'you';
@@ -49,11 +62,12 @@ const CURRENT_USER_ID = 'you';
 const CARD = { background: '#fff', border: `1px solid ${HAIR}`, borderRadius: 16, padding: 16, marginBottom: 12 };
 const H = { fontSize: 15, fontWeight: 800, color: TEXT, letterSpacing: -0.2 };
 
-function Seg({ active, onClick, children }) {
+function Seg({ active, onClick, disabled = false, children }) {
   return (
-    <button onClick={onClick} className="pressable" style={{
-      flex: 1, height: 36, borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-      background: active ? BLUE : '#fff', color: active ? '#fff' : TEXT, fontSize: 13.5, fontWeight: 700,
+    <button onClick={disabled ? undefined : onClick} disabled={disabled} className={disabled ? undefined : 'pressable'} style={{
+      flex: 1, height: 36, borderRadius: 10, border: 'none', cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+      background: active ? BLUE : '#fff', color: disabled ? '#B0B0B8' : (active ? '#fff' : TEXT), fontSize: 13.5, fontWeight: 700,
+      opacity: disabled ? 0.65 : 1,
       WebkitTapHighlightColor: 'transparent', outline: 'none', boxShadow: active ? 'none' : `inset 0 0 0 1px ${HAIR}`,
     }}>{children}</button>
   );
@@ -70,6 +84,11 @@ export default function ChampionshipView() {
   const amAlgrassRole = isAlGrassStaff || isAlGrassAdmin;
   const nav = location.state || null;
   const { id: routeId } = useParams();
+  // Deep-link a un EQUIPO: /championships/view/:id?team=<teamId>. Se reenvía a ChampionshipTeam en cuanto el
+  // acceso está resuelto (tras el gate de clave si aplica). Reutiliza gate/acceso/auth de esta pantalla.
+  const [searchParams] = useSearchParams();
+  const deepTeamId = searchParams.get('team');
+  const deepFwdRef = useRef(false);
   const realId = routeId || null;              // /championships/view/:id → campeonato REAL (DB = fuente de verdad)
   const isRealMode = !!realId;
   const persisted = readCV();
@@ -201,6 +220,10 @@ export default function ChampionshipView() {
   //   OJO: results_public/privacy NO son gate aquí (semántica futura de Calendario/Resultados).
   const amOwner = isRealMode && !!user?.id && !!realRow && realRow.owner_user_id === user.id;
   const amMember = isRealMode && !!realRow?.is_member;   // inscrito → bypass de clave (validado en backend)
+  // Host asignado (Fase 28): organizador operativo → bypass de clave, igual que owner/miembro. Señal
+  // AUTORITATIVA del backend (get_championship_public.is_host, fuente championships.host_user_id), disponible
+  // junto a realRow (sin depender de regState) → el gate no parpadea antes de resolver.
+  const amHostAccess = isRealMode && !!realRow?.is_host;
   // Contacto del organizador: SOLO el owner. La RPC valida owner (gating real); el hook solo consulta si amOwner.
   const organizerPhone = useChampionshipOrganizerPhone(realId, amOwner);
   // Grant de acceso por clave (Fase 7), separado por actor:
@@ -230,6 +253,19 @@ export default function ChampionshipView() {
   const [venueBusy, setVenueBusy] = useState(false);   // resolviendo el venue real antes de abrir /venue
   const [venueReal, setVenueReal] = useState(null);    // venue PERMANENTE (tabla venues) por summary.venueId
   const [selectedPlayer, setSelectedPlayer] = useState(null);   // fila del roster → PlayerModal (perfil público de Match)
+  // Asignar equipo a un slot VACÍO de la llave (Fase 31). { matchId, side, otherTeamId } | null.
+  const [bracketAssign, setBracketAssign] = useState(null);     // { matchId, side, otherTeamId, uat }
+  const [bracketSel, setBracketSel] = useState(null);           // team_id seleccionado en el picker
+  const [bracketBusy, setBracketBusy] = useState(false);
+  const [bracketErr, setBracketErr] = useState('');
+  const [bracketConflicts, setBracketConflicts] = useState({}); // { teamId: "HH:MM–HH:MM" } equipos ocupados
+  const [liveBusy, setLiveBusy] = useState(false);              // toggle EN VIVO en curso (evita doble click)
+  // Gestión Owner/Host (Fase 23): subvista admin (Inscripciones/Calendario), modo edición del roster y el
+  // action sheet del jugador. NO cambian status ni lifecycle; es navegación/gestión interna de la pantalla.
+  const [adminView, setAdminView] = useState(restore?.adminView ?? null);   // 'inscripciones' | 'resultados' | null
+  const [playerAction, setPlayerAction] = useState(null);       // { user_id, name, team_id } → action sheet (⋮)
+  const [matchDetailId, setMatchDetailId] = useState(null);     // partido abierto en el detalle (id) | null
+  const [matchSaving, setMatchSaving] = useState(false);        // guardado de resultado en curso
   function loadRegState() {
     // Estado de inscripciones visible en registration_open/closed; y en pending_publish para owner/AlGrass
     // (crean/gestionan equipos antes de publicar, sin membership). El backend autoriza (owner/AlGrass); un
@@ -237,9 +273,15 @@ export default function ChampionshipView() {
     const st = realRow?.status;
     // pending_publish: la RPC solo autoriza owner/AlGrass; llamarla como usuario normal genera un 400
     // esperado. Se gatea con señales ya disponibles en frontend (amOwner + rol AlGrass global).
+    // in_progress/completed: la RPC es legible para cualquier autenticado (estados públicos) → se carga para
+    // alimentar la subvista Inscripciones de gestión (managers) y detectar host. Fase 23.
+    // Lectura PÚBLICA (Fase 30): los 4 estados publicados son legibles por CUALQUIERA (incl. anónimo) — mismo
+    // gate público del backend. pending_publish sigue restringido a owner/AlGrass (requiere sesión). Así un
+    // anónimo puede MIRAR inscripciones/equipos/jugadores en RO/RC/PRE/LIVE sin login (login solo en acciones).
     const canLoad = st === 'registration_open' || st === 'registration_closed'
+      || st === 'in_progress' || st === 'completed'
       || (st === 'pending_publish' && (amOwner || amAlgrassRole));
-    if (!isRealMode || !user?.id || !canLoad) return;
+    if (!isRealMode || !canLoad) return;
     // NO se resetea regState a null: se mantiene el último estado conocido visible mientras llega el fresco
     // (evita flash/salto del roster). Solo se reemplaza con los datos nuevos cuando responde el backend.
     getChampionshipRegistrationState({ championshipId: realId })
@@ -250,13 +292,14 @@ export default function ChampionshipView() {
   // el doble fetch: al resolverse roles/owner async, el booleano ya está en true y no cambia → no re-dispara;
   // en open/closed ni depende de roles. user?.id sigue en deps → refetch legítimo al cambiar de sesión;
   // realRow?.status también → refetch legítimo ante un cambio REAL de estado.
-  const canLoadRegState = isRealMode && !!user?.id && (
+  const canLoadRegState = isRealMode && (
     realRow?.status === 'registration_open' || realRow?.status === 'registration_closed'
+    || realRow?.status === 'in_progress' || realRow?.status === 'completed'
     || (realRow?.status === 'pending_publish' && (amOwner || amAlgrassRole))
   );
   useEffect(() => { loadRegState(); }, [isRealMode, realId, user?.id, realRow?.status, canLoadRegState]); // eslint-disable-line
   // Gate visible = real + fila cargada + NO owner + NO miembro + sin grant (local ni recién verificado).
-  const gateOpen = isRealMode && !!realRow && !amOwner && !amMember && !verifiedGrant && !persistentGrant();
+  const gateOpen = isRealMode && !!realRow && !amOwner && !amHostAccess && !amMember && !verifiedGrant && !persistentGrant();
   async function submitGate() {
     if (gateChecking) return;
     const typed = gateKey.trim();
@@ -329,12 +372,17 @@ export default function ChampionshipView() {
   async function publishChampionship() {
     if (publishing) return;                          // evita doble publicación
     if (!champ || champ.status !== 'pending_publish') return;
-    // REAL: el owner YA NO abre inscripciones. Cambiar de fase es una acción de
-    // AlGrass y su única puerta es set_championship_phase, comprobada en backend;
-    // publish_championship dejó de estar concedida a `authenticated`. Lo que el
-    // dueño sigue haciendo aquí es guardar su clave de acceso y la visibilidad de
-    // resultados (update_championship_privacy), que no es un cambio de fase.
-    if (isRealMode) return;
+    // REAL: el owner publica su campeonato (pending_publish → registration_open) vía publish_championship.
+    // Es la ÚNICA transición de lifecycle propia del owner; el backend valida owner + estado + clave. (AlGrass
+    // puede hacer lo mismo desde Admin con set_championship_status, pero eso NO reemplaza este flujo del owner.)
+    if (isRealMode) {
+      if (!publishEnabled) return;                     // exige clave GUARDADA + sin cambios pendientes
+      setPublishing(true); setPrivacyError('');
+      const { data, error } = await publishChampionshipRpc({ championshipId: realId });
+      if (error || !data) { setPublishing(false); setPrivacyError('No se pudo publicar. Intenta de nuevo.'); return; }
+      navigate('/championships', { state: { publishedChampionship: data.id } });   // DB ya dice registration_open
+      return;
+    }
     // Demo/preview legacy (cv.championship): mock local aislado. Sigue igual: no
     // toca la base, solo el mock de la pantalla.
     if (!accessCode.trim()) return;
@@ -460,11 +508,12 @@ export default function ChampionshipView() {
   }
   function copyKey() { if (accessCode) navigator.clipboard?.writeText(accessCode).then(flashCopied).catch(() => {}); }
 
-  // ── Compartir (mock): Web Share API si existe, si no copia al portapapeles. Privado → incluye clave. ──
+  // ── Compartir: enlace PÚBLICO del campeonato (no la clave ni una ruta temporal). Web Share API si existe;
+  //    si no, copia la URL al portapapeles. Mismo patrón que Compartir de equipo (deep-link a /championships/view/:id). ──
   function shareChampionship() {
-    const msg = `${name}\nLas inscripciones están abiertas.\nClave de acceso: ${accessCode}`;
-    if (navigator.share) navigator.share({ title: name, text: msg }).catch(() => {});
-    else if (navigator.clipboard) navigator.clipboard.writeText(msg).then(flashCopied).catch(() => {});
+    const url = (isRealMode && realId) ? `${window.location.origin}/championships/view/${realId}` : window.location.href;
+    if (navigator.share) { navigator.share({ title: name, text: `${name} en AlGrass`, url }).catch(() => {}); return; }
+    if (navigator.clipboard) navigator.clipboard.writeText(url).then(flashCopied).catch(() => {});
   }
 
   const you = joinedNoTeam ? { id: 'you', name: CURRENT_USER_NAME, team: null } : null;
@@ -510,7 +559,8 @@ export default function ChampionshipView() {
     champ?.status === 'payment_validation' ? 'Validando pago'
     : champ?.status === 'pending_publish' ? 'Pendiente a publicar'
     : champ?.status === 'registration_open' ? 'Inscripciones abiertas'
-    : (champ?.status === 'registration_closed' || champ?.status === 'in_progress' || champ?.status === 'completed') ? 'Calendario y resultados'
+    : champ?.status === 'registration_closed' ? 'Inscripciones cerradas'
+    : (champ?.status === 'in_progress' || champ?.status === 'completed') ? 'Calendario y resultados'
     : 'Tu campeonato';   // fallback (p.ej. canceled: solo visible al owner)
   // EN VIVO (Fase 21): ÚNICA marca = status in_progress + live_started_at != null. fixture_published_at NO
   // decide esto. Tolerante a que Phase 21 aún no esté aplicada (columna ausente → undefined → NO live).
@@ -528,6 +578,34 @@ export default function ChampionshipView() {
   // PAGADOR y AlGrass pueden crear equipos ya en pending_publish (sin membership). Bloqueado para el resto.
   const amAlgrass = !!regState?.is_algrass;
   const createLocked = inscriptionsDisabled && !(amOwner || amAlgrass);
+  // ── Gestión Owner/Host/AlGrass (Fase 23). amHost: el actor es el host del campeonato (organizers.host del
+  //    estado real). amManager = quien puede gestionar roster. Fase efectiva (in_progress desdoblado por
+  //    live_started_at, Fase 21) para reflejar en la UI las MISMAS ventanas del backend (que igual valida). ──
+  const amHost = isRealMode && !!user?.id && !!regState?.organizers?.host && regState.organizers.host.user_id === user.id;
+  const amManager = amOwner || amHost || amAlgrass;
+  // Editar PORTADA (Fase 25): owner, host o AlGrass (jugador normal NO). El backend valida igual (update_championship_cover).
+  const canEditCover = amOwner || amHost || amAlgrass;
+  // Ventanas de gestión de roster: MISMA lógica compartida que ChampionshipTeam (util championshipRoster).
+  const effPhase = effPhaseOf(champ?.status, realRow?.live_started_at);
+  const { canAdminMove, canAdminEdit, canAdminCreate, canAdminAddNew } = rosterWindows(effPhase, { amOwner, amHost, amAlgrass }); // eslint-disable-line no-unused-vars
+  // Edición de RESULTADOS (Fase 24, helper separado): host en in_progress; AlGrass en in_progress+completed.
+  // Owner/player NUNCA. Espejo de _champ_can_manage_results; el backend valida igual.
+  const canManageResults = (amAlgrass && (champ?.status === 'in_progress' || champ?.status === 'completed'))
+    || (amHost && champ?.status === 'in_progress');
+  // Asignar/cambiar equipos de slots de la LLAVE (Fase 31): host/AlGrass y SOLO in_progress (PRE-LIVE/LIVE) —
+  // ventana estricta (excluye completed incluso para AlGrass). Espejo del guard del backend; el backend valida.
+  // Host: se usa amHostAccess (realRow.is_host, de host_user_id) porque está SIEMPRE cargado en la superficie
+  // de Resultados/Llave (con el shell), a diferencia de amHost que depende de regState (puede no estar aún).
+  const canAssignSlot = (amHostAccess || amHost || amAlgrass) && champ?.status === 'in_progress';
+  // Toggle EN VIVO (Fase 34): host (realRow.is_host, autoritativo) o AlGrass, SOLO en in_progress. Owner puro/jugador NO.
+  const canToggleLive = (amHostAccess || amAlgrass) && champ?.status === 'in_progress';
+  // SELF (Fase 35): el Host NUNCA se inscribe como jugador (aunque sea owner; el rol Host tiene prioridad) →
+  // oculta las acciones SELF (unirse sin equipo). Conserva su gestión operativa (equipos/terceros). Espejo del backend.
+  const hostBlocksSelf = amHost;
+  // Crear equipo desde la subvista Inscripciones (managers) donde la fase lo permita (canAdminCreate).
+  // Complementa showCreateArea (solo open/pending para el jugador normal). Ya NO depende de un modo Editar.
+  const showCreateAdmin = amManager && canAdminCreate;
+  // (managerTabs / effAdminView / showResults / hasFixture se derivan MÁS ABAJO, tras cargar `competition`.)
 
   // Fecha completa "Mié 16 Sep 2026" (reutiliza formatDateLabel; sin el prefijo "Hoy,/Mañana,").
   const dateFull = organizeState?.dateKey ? formatDateLabel(organizeState.dateKey).replace(/^(Hoy|Mañana),\s*/, '') : (summary.dateLabel || null);
@@ -556,17 +634,46 @@ export default function ChampionshipView() {
   //    superficie de Calendario/Resultados). Separada de get_championship_registration_state (Inscripciones).
   const [competition, setCompetition] = useState(cachedReal?.competition ?? null);
   // Gate DERIVADO (mismo criterio que el fetch) → depender de ESTE booleano evita el doble fetch al resolverse
-  // user/rol async (igual patrón que canLoadRegState). RPC solo authenticated; in_progress/completed son
-  // estados públicos del gate del backend → cualquier usuario autenticado puede leer la competición.
-  const canLoadCompetition = isRealMode && !!user?.id && (realRow?.status === 'in_progress' || realRow?.status === 'completed');
-  useEffect(() => {
+  // user/rol async (igual patrón que canLoadRegState). in_progress/completed son estados PÚBLICOS del gate del
+  // backend → cualquiera (incl. anónimo, Fase 30) puede leer Calendario/Resultados sin login.
+  const canLoadCompetition = isRealMode && (
+    realRow?.status === 'in_progress' || realRow?.status === 'completed'
+    // Managers en open/closed: se carga para detectar si YA hay fixture (habilita el tab Resultados). Requiere
+    // sesión (amManager). Owner/AlGrass/host resuelven amManager sin bloquear la carga.
+    || (!!user?.id && amManager && (realRow?.status === 'registration_open' || realRow?.status === 'registration_closed'))
+  );
+  // Carga/refresco de competición (reutilizable: montaje + tras guardar un resultado). NO resetea a null:
+  // mantiene lo último conocido mientras llega lo fresco (evita flash).
+  function loadCompetition() {
     if (!canLoadCompetition) return;
-    let alive = true;
-    // NO se resetea a null: se mantiene lo último conocido (o la caché de vuelta) mientras llega lo fresco.
     getChampionshipCompetition({ championshipId: realId })
-      .then(({ data, error }) => { if (alive && !error && data) setCompetition(data); });
-    return () => { alive = false; };
-  }, [isRealMode, realId, user?.id, realRow?.status, canLoadCompetition]); // eslint-disable-line
+      .then(({ data, error }) => { if (!error && data) setCompetition(data); });
+  }
+  useEffect(() => { loadCompetition(); }, [isRealMode, realId, user?.id, realRow?.status, canLoadCompetition]); // eslint-disable-line
+  // Refetch al reenfocar/volver (p.ej. tras "Cambiar equipo" en ChampionshipTeam) → la llave refleja el cambio.
+  useEffect(() => {
+    if (!isRealMode) return;
+    const refetch = () => { if (!document.hidden) loadCompetition(); };
+    window.addEventListener('focus', refetch);
+    document.addEventListener('visibilitychange', refetch);
+    return () => { window.removeEventListener('focus', refetch); document.removeEventListener('visibilitychange', refetch); };
+  }, [isRealMode, realId, canLoadCompetition]); // eslint-disable-line
+
+  // ── Deep-link a EQUIPO (?team=): reenvío a ChampionshipTeam en cuanto el acceso está resuelto (NO gateOpen).
+  //    Si el campeonato pide clave, primero se muestra el gate existente; al validarla, gateOpen pasa a false y
+  //    este effect reenvía al MISMO equipo. Mismo estado que openTeamReal (regSnapshot/champStatus/champLive).
+  //    replace:true → volver atrás desde el equipo no re-dispara el reenvío. Compartir NO bypassa permisos. ──
+  useEffect(() => {
+    if (deepFwdRef.current || !deepTeamId) return;
+    if (!isRealMode || !realRow || gateOpen) return;   // gate primero; sin fila real, esperar
+    deepFwdRef.current = true;
+    persistCV();
+    navigate('/championships/team', { replace: true, state: {
+      realChampionship: true, teamMode: 'existing', champId: realId, teamId: deepTeamId,
+      champStatus: realRow.status, champLive: realRow.live_started_at ?? null, regSnapshot: regState,
+      championshipOrigin: readBackOrigin() || 'championships',
+    } });
+  }, [deepTeamId, isRealMode, realRow, gateOpen]); // eslint-disable-line
 
   // Adapters: re-mapean la RPC a la MISMA shape que ya consumen los presentacionales (Tabla/Llave/Partidos/
   // Goleadores). NO recalculan nada — standings/scorers vienen derivados del backend; solo renombran campos.
@@ -592,13 +699,27 @@ export default function ChampionshipView() {
     });
     return order.map((code, i) => ({ code, label: isLiga ? 'Tabla de posiciones' : (code ? `Grupo ${code}` : `Grupo ${i + 1}`), rows: byCode.get(code) }));
   }, [competition, isLiga]);
-  // Goleadores: el backend ya cuenta SOLO goles del equipo ACTUAL del jugador; aquí solo se renombra + resuelve
-  // el escudo del equipo desde el lookup (sin inferir equipo ni reagrupar).
-  const compScorers = useMemo(() => (competition?.scorers || []).map(s => ({
-    id: s.player_user_id, name: s.full_name || 'Jugador', goals: s.goals,
-    avatar_path: s.avatar_path, avatar_hue: s.avatar_hue,
-    team: compTeamById[s.team_id] || { color: '#5B6470', design: DEFAULT_DESIGN },
-  })), [competition, compTeamById]);
+  // Goleadores: LISTA COMPLETA de jugadores CON equipo (roster real de regState.players) + su total de goles.
+  // Los goles salen del backend (competition.scorers ya cuenta SOLO los del equipo ACTUAL del jugador) → map por
+  // user_id; quien no marcó → 0 (NO se ocultan). NO recalcula goles ni reagrupa; NO consulta por jugador.
+  // Orden: usuario actual primero, luego alfabético por nombre (MISMO criterio que el roster de Inscripciones).
+  const compScorers = useMemo(() => {
+    const goalsBy = {};
+    (competition?.scorers || []).forEach(s => { if (s.player_user_id) goalsBy[s.player_user_id] = s.goals || 0; });
+    const teamOf = (tid) => {
+      if (!tid) return { name: '—', color: '#5B6470', design: DEFAULT_DESIGN };
+      const raw = regTeams.find(t => t.id === tid);
+      return compTeamById[tid] || (raw ? teamView(raw) : { name: '—', color: '#5B6470', design: DEFAULT_DESIGN });
+    };
+    const list = (regPlayers || [])
+      .filter(p => p.team_id)   // SOLO jugadores con equipo (team_id null → no pertenece a ninguno)
+      .map(p => ({
+        id: p.user_id, name: p.full_name || 'Jugador', avatar_path: p.avatar_path, avatar_hue: p.avatar_hue,
+        team: teamOf(p.team_id), goals: goalsBy[p.user_id] || 0,
+      }));
+    return list.sort((a, b) =>
+      ((b.id === user?.id ? 1 : 0) - (a.id === user?.id ? 1 : 0)) || (a.name || '').localeCompare(b.name || ''));
+  }, [competition, compTeamById, regPlayers, regTeams, user?.id]);
   // Partidos: shape de MatchCard (a/b equipos o {tbd}; played; sa/sb; court/venue; fecha/hora formateadas).
   const compMatches = useMemo(() => (competition?.matches || []).map(m => {
     const played = m.home_score != null && m.away_score != null;
@@ -609,7 +730,7 @@ export default function ChampionshipView() {
       court: (m.field_name || '').replace(/^cancha\s*/i, '') || '—',
       venue: m.venue_name || '',
       dateLabel: m.date_key ? formatDateLabel(m.date_key).replace(/^(Hoy|Mañana),\s*/, '') : '',
-      time: clockLabel(m.start_time),
+      time: matchTimeRange(m.start_time, m.duration_min),
       stage: m.stage,
     };
   }), [competition]);
@@ -619,10 +740,38 @@ export default function ChampionshipView() {
     const semis = ms.filter(m => m.stage === 'semifinal').sort((a, b) => (a.match_order ?? 0) - (b.match_order ?? 0));
     const final = ms.find(m => m.stage === 'final') || null;
     const third = ms.find(m => m.stage === 'third_place') || null;
-    const pair = (m) => ({ a: m?.home_team ? teamView(m.home_team) : null, b: m?.away_team ? teamView(m.away_team) : null });
+    // sa/sb = marcador YA existente del match (chequeo explícito de null; 0 válido). mid = id del match (para
+    // asignar equipos a sus slots). Solo se transportan datos existentes, no se deriva nada nuevo.
+    const pair = (m) => ({ a: m?.home_team ? teamView(m.home_team) : null, b: m?.away_team ? teamView(m.away_team) : null, sa: m?.home_score ?? null, sb: m?.away_score ?? null, mid: m?.id ?? null });
     return { hasSemifinals: semis.length > 0, hasThirdPlace: !!third, semis: [pair(semis[0]), pair(semis[1])], final: pair(final), third: pair(third) };
   }, [competition]);
   const comp = useMemo(() => ({ teams: compTeams, teamCount: compTeams.length, groups: compGroups, scorers: compScorers, matches: compMatches, bracket: compBracket }), [compTeams, compGroups, compScorers, compMatches, compBracket]);
+  // Campeón: SOLO la FINAL (stage='final'). Ganador = qualified_team_id si está (mecanismo vigente para empates);
+  // si no, por marcador (mayor). Sin marcador o empate sin qualified → null (no se muestra el holder). No crea
+  // champion_team_id nuevo: se deriva de datos existentes. Público (no depende del actor). Persiste en completed.
+  const champion = useMemo(() => {
+    const f = (competition?.matches || []).find(m => m.stage === 'final');
+    if (!f) return null;
+    let winnerId = null;
+    if (f.qualified_team_id) winnerId = f.qualified_team_id;
+    else if (f.home_score != null && f.away_score != null && f.home_score !== f.away_score) {
+      winnerId = f.home_score > f.away_score ? f.home_team_id : f.away_team_id;
+    }
+    if (!winnerId) return null;
+    const t = f.home_team_id === winnerId ? f.home_team : (f.away_team_id === winnerId ? f.away_team : null);
+    return t ? { id: winnerId, team: teamView(t) } : null;
+  }, [competition]);
+
+  // ── Subvista Owner/Host/AlGrass (Fase 23 rework): selector [Inscripciones | Resultados] desde pending_publish
+  //    en adelante. hasFixture = ¿existe calendario? (competition.matches, dato existente); Resultados solo se
+  //    habilita con fixture. Cambiar de tab NO toca status/live_started_at/fixture_published_at. ──
+  const hasFixture = (competition?.matches?.length || 0) > 0;
+  const managerTabs = amManager && ['pending_publish', 'registration_open', 'registration_closed', 'in_progress', 'completed'].includes(champ?.status);
+  const defaultAdminView = ((champ?.status === 'in_progress' || champ?.status === 'completed') && hasFixture) ? 'resultados' : 'inscripciones';
+  const _wantAdminView = adminView ?? defaultAdminView;
+  const effAdminView = managerTabs ? ((_wantAdminView === 'resultados' && hasFixture) ? 'resultados' : 'inscripciones') : null;
+  // Superficie: managers deciden por el selector (Resultados solo con fixture); jugador normal, por status.
+  const showResults = managerTabs ? (effAdminView === 'resultados') : (champ?.status === 'in_progress' || champ?.status === 'completed');
 
   // Organizadores del campeonato. Principal = usuario que pagó/creó (NO se deriva de games.host_user_id).
   // AlGrass = organizador opcional que Admin podrá asignar (mock: null). No es info privada (owner+jugadores).
@@ -644,12 +793,13 @@ export default function ChampionshipView() {
     : null;
 
   // Scroll del contenedor propio: entrada principal (desde Perfil/Campeonatos/Crear) → arriba.
-  // Volver desde ChampionshipTeam (cvReturn sin `from`) → restaura la posición guardada al entrar al equipo.
+  // Volver desde ChampionshipTeam (cvReturn sin `from`) O desde /auth (authResuming) → restaura la posición
+  // guardada por persistCV. En ambos casos `restore` trae scrollTop; sin caché de vuelta → 0 (navegación nueva).
   const scrollRef = useRef(null);
   const isTeamReturn = cvReturn && !nav?.from; // regreso desde ChampionshipTeam (no es navegación principal)
   useLayoutEffect(() => {
     const el = scrollRef.current; if (!el) return;
-    el.scrollTop = isTeamReturn ? (restore?.scrollTop || 0) : 0;
+    el.scrollTop = (isTeamReturn || authResuming) ? (restore?.scrollTop || 0) : 0;
   }, []); // eslint-disable-line
 
   // Guarda TODO el estado antes de ir a ChampionshipTeam (session state, sin persistencia real).
@@ -666,7 +816,7 @@ export default function ChampionshipView() {
       // accessOk = ¿el actor estaba AUTORIZADO al salir a Team? (owner/miembro/clave verificada/grant persistente).
       // Al volver (cvReturn) siembra verifiedGrant y evita re-gatear pese a cambios de membership. No persiste
       // acceso indebido: solo captura la autorización REAL vigente en ese instante.
-      writeCV({ ...cv, summary, organizeState, name, coverTheme, demo, resultsView, matchFilterId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, championship: { ...(cv.championship || {}), realId, teams, realRow, regState, competition, accessOk: (amOwner || amMember || verifiedGrant || persistentGrant()) } });
+      writeCV({ ...cv, summary, organizeState, name, coverTheme, adminView, demo, resultsView, matchFilterId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, championship: { ...(cv.championship || {}), realId, teams, realRow, regState, competition, accessOk: (amOwner || amHostAccess || amMember || verifiedGrant || persistentGrant()) } });
       return;
     }
     writeCV({ summary, organizeState, name, coverTheme, accessCode, resultsPublic, demo, resultsView, matchFilterId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, contactRequest, championship: isCreated ? { ...champ, teams } : champ });
@@ -706,11 +856,63 @@ export default function ChampionshipView() {
   //    en otra opción → confirmación antes de cambiar (membership única, cambiable). ──
   const [confirmChange, setConfirmChange] = useState(null);   // { kind:'team'|'noteam', teamId?, teamName? }
   // Abrir la pantalla de detalle del equipo real (membership se gestiona DENTRO). Siempre clicable.
-  function openTeamReal(t) {
+  function openTeamReal(t, bracketCtx = null) {
     persistCV();   // guarda scroll + caché (realRow/regState) para volver ya renderizado, sin flash del top
+    // fromBracket: si se entró desde un SLOT de la llave, se lleva match_id + side (+ el equipo del otro lado)
+    // para habilitar "Cambiar equipo" SOLO en ese contexto. Sin contexto de llave → null (entrada normal).
+    let fromBracket = null;
+    if (bracketCtx?.matchId && bracketCtx?.side) {
+      const m = (competition?.matches || []).find(x => x.id === bracketCtx.matchId);
+      const otherTeamId = m ? (bracketCtx.side === 'home' ? m.away_team_id : m.home_team_id) : null;
+      fromBracket = { matchId: bracketCtx.matchId, side: bracketCtx.side, otherTeamId };
+    }
     // regSnapshot: estado ya conocido (teams/roster/membership/owner/is_algrass) → ChampionshipTeam pinta la
     // estructura real en el primer render (sin flash) y luego refresca por RPC (backend = fuente de verdad).
-    navigate('/championships/team', { state: { realChampionship: true, teamMode: 'existing', champId: realId, teamId: t.id, champStatus: champ?.status, regSnapshot: regState } });
+    navigate('/championships/team', { state: { realChampionship: true, teamMode: 'existing', champId: realId, teamId: t.id, champStatus: champ?.status, champLive: realRow?.live_started_at ?? null, regSnapshot: regState, fromBracket } });
+  }
+  // Abrir el selector de equipo para un slot VACÍO de la llave (host/AlGrass en in_progress). Toma el equipo del
+  // otro lado para excluirlo y el actual (si lo hubiera) como preselección. NO asigna al tocar: se confirma con Guardar.
+  function openBracketAssign({ matchId, side }) {
+    const m = (competition?.matches || []).find(x => x.id === matchId);
+    const otherTeamId = m ? (side === 'home' ? m.away_team_id : m.home_team_id) : null;
+    const currentTeamId = m ? (side === 'home' ? m.home_team_id : m.away_team_id) : null;
+    setBracketConflicts(slotTeamConflicts(competition?.matches || [], matchId));   // equipos ocupados a esa hora
+    setBracketSel(currentTeamId || null); setBracketErr('');
+    setBracketAssign({ matchId, side, otherTeamId, uat: m?.updated_at ?? null });
+  }
+  async function saveBracketAssign() {
+    if (bracketBusy || !bracketAssign || !bracketSel) return;
+    setBracketBusy(true); setBracketErr('');
+    const { error } = await setChampionshipMatchTeam({ matchId: bracketAssign.matchId, side: bracketAssign.side, teamId: bracketSel, updatedAt: bracketAssign.uat });
+    setBracketBusy(false);
+    if (error) {
+      const m = String(error.message || '');
+      setBracketErr(/NOT_AUTHORIZED/.test(m) ? 'No tienes permiso para asignar equipos.'
+        : /INVALID_PHASE/.test(m) ? 'Solo puedes asignar equipos con el campeonato en juego.'
+        : /MATCH_HAS_RESULT/.test(m) ? 'El partido ya tiene resultado; no se puede cambiar el equipo.'
+        : /SAME_TEAM/.test(m) ? 'Ese equipo ya está en el otro lado del partido.'
+        : /TEAM_TIME_OVERLAP/.test(m) ? 'Ese equipo ya juega otro partido a esa hora.'
+        : /TEAM_NOT_FOUND/.test(m) ? 'Ese equipo no es válido.'
+        : /CONCURRENT_UPDATE/.test(m) ? 'Alguien actualizó el partido; vuelve a intentar.'
+        : 'No se pudo asignar el equipo.');
+      return;
+    }
+    setBracketAssign(null); setBracketSel(null); setBracketConflicts({});
+    loadCompetition();   // refresca la llave → el slot ya muestra el equipo asignado
+  }
+  // Alternar EN VIVO (Fase 34): host/AlGrass en in_progress. Guarda en backend y refresca SOLO realRow (sin
+  // recargar la app); el indicador reacciona a realRow.live_started_at. Doble click bloqueado con liveBusy.
+  async function toggleLive() {
+    if (liveBusy || !canToggleLive) return;
+    setLiveBusy(true);
+    const { data, error } = await toggleChampionshipLive({ championshipId: realId, live: !isLive });
+    setLiveBusy(false);
+    if (error || !data) {
+      const m = String(error?.message || '');
+      flashToast(/NOT_AUTHORIZED/.test(m) ? 'No tienes permiso.' : /INVALID_PHASE/.test(m) ? 'Solo disponible con el campeonato en juego.' : 'No se pudo cambiar el estado en vivo.');
+      return;   // sin cambiar realRow → el indicador conserva su estado visual
+    }
+    setRealRow(prev => (prev ? { ...prev, status: data.status, live_started_at: data.live_started_at } : prev));
   }
   function requestJoinTeam(t) {
     if (regBusy) return;
@@ -753,6 +955,31 @@ export default function ChampionshipView() {
     if (error) { flashToast(/NOT_OPEN/.test(error.message || '') ? 'No puedes salir en este estado.' : 'No se pudo salir. Intenta de nuevo.'); loadRegState(); return; }
     flashToast('Saliste del campeonato');
     loadRegState();
+  }
+  // Gestión ADMINISTRATIVA de un jugador (Fase 23) vía manage_championship_player. Mueve a equipo (teamId),
+  // deja sin equipo (teamId=null) o elimina la inscripción (remove). El backend valida rol+fase; aquí solo se
+  // ofrecen las acciones permitidas (canAdminMove). Funciona también sobre uno mismo (backend lo trata como self).
+  async function doManagePlayer({ teamId = null, remove = false }) {
+    if (regBusy || !playerAction) return;
+    setRegBusy(true);
+    const { error } = await manageChampionshipPlayer({ championshipId: realId, userId: playerAction.user_id, teamId, remove });
+    setRegBusy(false);
+    if (error) { const m = String(error.message || ''); flashToast(/NOT_AUTHORIZED/.test(m) ? 'No tienes permiso para esta acción.' : /NOT_OPEN/.test(m) ? 'No disponible en esta fase.' : 'No se pudo actualizar el roster.'); return; }
+    setPlayerAction(null);
+    flashToast('Roster actualizado');
+    loadRegState();
+  }
+  // Guardar resultado + goleadores de un partido (Fase 24) en UNA llamada. El backend valida permiso/fase.
+  // Éxito → recarga competición (marcador/goles/tabla/goleadores) y cierra el detalle.
+  async function doSaveMatchResult({ homeScore, awayScore, goals }) {
+    if (matchSaving || !matchDetailId) return;
+    setMatchSaving(true);
+    const { error } = await saveChampionshipMatchResult({ matchId: matchDetailId, homeScore, awayScore, goals });
+    setMatchSaving(false);
+    if (error) { const m = String(error.message || ''); flashToast(/NOT_AUTHORIZED/.test(m) ? 'No tienes permiso para editar resultados.' : /NOT_OPEN/.test(m) ? 'No disponible en esta fase.' : /PLAYER_NOT_IN_TEAM|TEAM_NOT_IN_MATCH/.test(m) ? 'Datos de goles inválidos.' : 'No se pudo guardar el resultado.'); return; }
+    setMatchDetailId(null);
+    flashToast('Resultado guardado');
+    loadCompetition();
   }
   // REAL: borrar un equipo propio (solo registration_open; reglas de vacíos las valida el backend).
   async function deleteTeamReal(teamId) {
@@ -904,6 +1131,10 @@ export default function ChampionshipView() {
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </button>
             <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>Acceso al campeonato</div>
+            {/* Compartir el enlace público — visible también en el gate (anon sin clave puede compartir). */}
+            <button className="pressable" onClick={shareChampionship} aria-label="Compartir" style={{ position: 'absolute', right: 0, width: 30, height: 26, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', WebkitTapHighlightColor: 'transparent' }}>
+              {I.share('#fff')}
+            </button>
           </div>
         </div>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px 20px', maxWidth: 420, width: '100%', margin: '0 auto' }}>
@@ -933,12 +1164,11 @@ export default function ChampionshipView() {
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
           <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>{isRealMode ? realHeaderTitle : isCreated && champ?.status === 'registration_open' ? 'Inscripciones abiertas' : isCreated && champ?.status === 'registration_closed' ? 'Calendario y resultados' : 'Ver mi campeonato'}</div>
-          {/* Compartir en el header — mismo icono/tamaño/posición que Partidos. Solo owner + publicado. */}
-          {isOwner && isCreated && champ?.status === 'registration_open' && (
-            <button className="pressable" onClick={shareChampionship} aria-label="Compartir" style={{ position: 'absolute', right: 0, width: 30, height: 26, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', WebkitTapHighlightColor: 'transparent' }}>
-              {I.share('#fff')}
-            </button>
-          )}
+          {/* Compartir — SIEMPRE visible (todo actor, toda fase). Comparte el enlace PÚBLICO del campeonato.
+              Si hay X de salir (demo, !isCreated) se ubica a su izquierda (right:40); si no, en right:0. */}
+          <button className="pressable" onClick={shareChampionship} aria-label="Compartir" style={{ position: 'absolute', right: isCreated ? 0 : 40, width: 30, height: 26, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', WebkitTapHighlightColor: 'transparent' }}>
+            {I.share('#fff')}
+          </button>
           {/* Demo (previa de Crear campeonato, root del flujo): X = SALIR → listado. La flecha izquierda
               vuelve un nivel (a Crear un campeonato). El campeonato REAL no lleva X (es pantalla principal). */}
           {!isCreated && (
@@ -956,8 +1186,8 @@ export default function ChampionshipView() {
             {/* REAL con foto → imagen del bucket público; si no, queda el cover_theme de fondo. */}
             {coverImageUrl && <div style={{ position: 'absolute', inset: 0, backgroundImage: `url(${coverImageUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' }} />}
             <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, rgba(0,0,0,0) 45%, rgba(0,0,0,0.55) 100%)' }} />
-            {/* Acciones (top-right) — SOLO owner. Jugador: portada en lectura, sin acciones. */}
-            {isOwner && (
+            {/* Acciones (top-right) — owner/host/AlGrass. Jugador: portada en lectura, sin acciones. */}
+            {canEditCover && (
               <div style={{ position: 'absolute', top: 10, right: 12, display: 'flex', gap: 8 }}>
                 {coverEditMode ? (
                   <>
@@ -977,6 +1207,24 @@ export default function ChampionshipView() {
             )}
             {coverBadge && (
               <div style={{ position: 'absolute', right: 12, bottom: 14, padding: '5px 11px', borderRadius: 999, background: 'rgba(0,0,0,0.42)', color: '#fff', fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap' }}>{coverBadge}</div>
+            )}
+            {/* "Ahora" (EN VIVO) SOBRE la portada, ENCIMA del contador de equipos.
+                · Host/AlGrass en in_progress (canToggleLive): CLICABLE → alterna PRE-LIVE↔LIVE (toggle_championship_live).
+                  OFF (pre-live) = chip tenue; ON (live) = chip rojo.
+                · Resto: solo se muestra en LIVE, no clicable (lectura). */}
+            {(isLive || canToggleLive) && (
+              canToggleLive ? (
+                <button onClick={liveBusy ? undefined : toggleLive} disabled={liveBusy} className="pressable"
+                  style={{ position: 'absolute', right: 12, bottom: coverBadge ? 44 : 14, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 11px', borderRadius: 999, border: isLive ? 'none' : '1px solid rgba(255,255,255,0.7)', background: isLive ? RED : 'rgba(0,0,0,0.42)', color: '#fff', fontSize: 12.5, fontWeight: 800, whiteSpace: 'nowrap', cursor: liveBusy ? 'default' : 'pointer', opacity: liveBusy ? 0.7 : 1, boxShadow: isLive ? '0 2px 8px rgba(0,0,0,0.28)' : 'none', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                  <FontAwesomeIcon icon={faTowerBroadcast} style={{ fontSize: 12 }} />
+                  {isLive ? 'Ahora' : 'Poner en vivo'}
+                </button>
+              ) : (
+                <div style={{ position: 'absolute', right: 12, bottom: coverBadge ? 44 : 14, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 11px', borderRadius: 999, background: RED, color: '#fff', fontSize: 12.5, fontWeight: 800, whiteSpace: 'nowrap', boxShadow: '0 2px 8px rgba(0,0,0,0.28)' }}>
+                  <FontAwesomeIcon icon={faTowerBroadcast} style={{ fontSize: 12 }} />
+                  Ahora
+                </div>
+              )
             )}
           </div>
 
@@ -1128,22 +1376,56 @@ export default function ChampionshipView() {
             </div>
             )}
 
+            {/* Holder de CAMPEÓN — ARRIBA del selector y del contenido (no rompe la continuidad selector↔contenido).
+                Visible SIEMPRE que la Final tenga ganador (info pública), independiente del tab. Diseño limpio:
+                fondo claro, borde sutil, sombra muy suave y un acento dorado mínimo (no bloque amarillo). Todo
+                clickeable → ChampionshipTeam del campeón (openTeamReal SIN fromBracket → no activa edición de slot). */}
+            {champion && (
+              <button onClick={() => openTeamReal(champion.team)} className="pressable" style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, padding: '12px 14px', borderRadius: 16, border: `1px solid ${HAIR}`, background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                <Shield color={champion.team.color} design={champion.team.design} name={champion.team.name} size={46} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, textTransform: 'uppercase', color: '#B8860B', display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <span aria-hidden="true">🏆</span> Campeón <span aria-hidden="true" style={{ fontSize: 10 }}>🎉</span>
+                  </div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: TEXT, letterSpacing: -0.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1 }}>{champion.team.name}</div>
+                  <div style={{ fontSize: 12.5, color: SUB, marginTop: 1 }}>¡Felicitaciones, campeones!</div>
+                </div>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, color: '#C7C7CC' }}><path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </button>
+            )}
+
+            {/* Selector de subvista Owner/Host/AlGrass (Fase 23): SOLO navegación interna; NO cambia status.
+                Visible en in_progress/completed (donde conviven Inscripciones y Calendario). El jugador normal
+                NO lo ve (managerTabs=false) y sigue viendo la superficie por status. */}
+            {/* Aviso (organizador) ENCIMA del selector: recuerda que solo el organizador navega entre
+                Inscripciones/Resultados para editar. El título refleja el estado: "Inscripciones cerradas" en
+                registration_closed; "Calendario y resultados" con el calendario publicado (in_progress/completed).
+                Solo presentación; el jugador normal no lo ve. */}
+            {isRealMode && managerTabs && ['registration_closed', 'in_progress', 'completed'].includes(champ?.status) && (
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, margin: '0 0 12px', padding: '12px 14px', background: '#FFF7EA', border: `1px solid ${ORANGE}66`, borderRadius: 12 }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="12" cy="12" r="9" stroke={ORANGE} strokeWidth="1.8" /><path d="M12 11v5" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" /><circle cx="12" cy="7.5" r="1.1" fill={ORANGE} /></svg>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: TEXT, lineHeight: 1.45 }}>{champ?.status === 'registration_closed' ? 'Inscripciones cerradas' : 'Calendario y resultados'}</div>
+                  <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.45, marginTop: 3 }}>Solo tú como organizador podrás navegar entre inscripciones y resultados para editar.</div>
+                </div>
+              </div>
+            )}
+            {isRealMode && managerTabs && (
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                <Seg active={effAdminView === 'inscripciones'} onClick={() => setAdminView('inscripciones')}>Inscripciones</Seg>
+                <Seg active={effAdminView === 'resultados'} disabled={!hasFixture} onClick={() => setAdminView('resultados')}>Resultados</Seg>
+              </div>
+            )}
+
             {isRealMode ? (
               /* ── Campeonato REAL/materializado — CERO datos competitivos mock. Solo shell real + estados
                      vacíos limpios hasta conectar backend de inscripciones/fixture/resultados. ── */
-              (champ?.status === 'in_progress' || champ?.status === 'completed') ? (
+              showResults ? (
                 /* in_progress/completed → Calendario/Resultados REAL (Fase 16): Tabla/Llave/Partidos + Goleadores
                    desde get_championship_competition (datos YA calculados por el backend; sin recálculo aquí).
-                   Indicador "En vivo" (antena) SOLO en LIVE (in_progress + live_started_at != null); pre-live/
-                   completed → misma superficie SIN antena. */
+                   El estado LIVE se indica con "Ahora" SOBRE la portada (arriba), no aquí. */
                 <>
-                  {isLive && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 12px', padding: '8px 12px', background: '#FDECEC', border: `1px solid ${RED}55`, borderRadius: 12 }}>
-                      <span style={{ color: RED, display: 'inline-flex', fontSize: 14 }}><FontAwesomeIcon icon={faTowerBroadcast} /></span>
-                      <span style={{ fontSize: 13, fontWeight: 800, color: RED }}>En vivo</span>
-                    </div>
-                  )}
-                  <Resultados view={resultsView} setView={setResultsView} teams={comp.teams} standings={[]} scorers={[]} matches={[]} venueName={summary.venueName || 'AlGrass Arena'} openTeam={openTeamReal} filter={comp.teams.find(t => t.id === matchFilterId) || null} onFilter={team => setMatchFilterId(team ? team.id : null)} isLiga={isLiga} real={true} comp={comp} />
+                  <Resultados view={resultsView} setView={setResultsView} teams={comp.teams} standings={[]} scorers={[]} matches={[]} venueName={summary.venueName || 'AlGrass Arena'} openTeam={openTeamReal} filter={comp.teams.find(t => t.id === matchFilterId) || null} onFilter={team => setMatchFilterId(team ? team.id : null)} onOpenMatch={setMatchDetailId} isLiga={isLiga} real={true} comp={comp} meId={user?.id} onSelectPlayer={setSelectedPlayer} realOrganizers={regOrganizers} onAssignSlot={openBracketAssign} canAssignSlot={canAssignSlot} />
                 </>
               ) : (
                 /* pending_publish / payment_validation / registration_open → Inscripciones REAL.
@@ -1159,12 +1441,19 @@ export default function ChampionshipView() {
                       <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, lineHeight: 1.45 }}>Crea equipos que solo tú podrás editar.</div>
                     </div>
                   )}
-                  {/* Indicador "Inscripciones cerradas" (registration_closed): roster CONGELADO → solo lectura. */}
-                  {champ?.status === 'registration_closed' && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 12px', padding: '10px 14px', background: SOFT, border: `1px solid ${HAIR}`, borderRadius: 12 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: SUB, flexShrink: 0 }} />
-                      <div style={{ fontSize: 13, fontWeight: 700, color: TEXT }}>Inscripciones cerradas</div>
-                      <div style={{ fontSize: 12, color: SUB }}>· solo lectura: puedes ver equipos y jugadores</div>
+                  {/* registration_closed: holder AMARILLO (MISMO patrón que el aviso de pending_publish) para el
+                      JUGADOR NORMAL (versión informativa). El organizador ve su propio aviso encima del selector
+                      (no se duplica aquí). Es solo presentación: NO cambia las acciones permitidas. */}
+                  {champ?.status === 'registration_closed' && !amManager && (
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, margin: '0 0 12px', padding: '12px 14px', background: '#FFF7EA', border: `1px solid ${ORANGE}66`, borderRadius: 12 }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="12" cy="12" r="9" stroke={ORANGE} strokeWidth="1.8" /><path d="M12 11v5" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" /><circle cx="12" cy="7.5" r="1.1" fill={ORANGE} /></svg>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 800, color: TEXT, lineHeight: 1.45 }}>Inscripciones cerradas</div>
+                        {!amManager && <>
+                          <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.45, marginTop: 3 }}>Ya no es posible registrarse. Para nuevas solicitudes, comunícate con el organizador.</div>
+                          <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.45, marginTop: 8 }}>Próximamente publicaremos el calendario del campeonato.</div>
+                        </>}
+                      </div>
                     </div>
                   )}
                   {/* CARD 1 — equipos reales (unirse / tu equipo / borrar propio) + CTAs según estado. */}
@@ -1196,7 +1485,7 @@ export default function ChampionshipView() {
                           </button>
                         );
                       })}
-                      {showCreateArea && Array.from({ length: emptyRealSlots }, (_, i) => (
+                      {(showCreateArea || showCreateAdmin) && Array.from({ length: emptyRealSlots }, (_, i) => (
                         <button key={`cap${i}`} onClick={createLocked ? undefined : createNewTeam} disabled={createLocked} className={createLocked ? undefined : 'pressable'} aria-label="Crear equipo" style={{ width: 66, border: 'none', background: 'transparent', cursor: createLocked ? 'not-allowed' : 'pointer', opacity: createLocked ? 0.5 : 1, padding: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
                           <div style={{ position: 'relative', width: 60 }}>
                             <Shield dashed size={60} />
@@ -1210,7 +1499,7 @@ export default function ChampionshipView() {
                     </div>
 
                     {/* Crear un equipo (open enabled / pending disabled) — visible con o sin membership. */}
-                    {showCreateArea && (() => { const createDisabled = emptyRealSlots === 0 || createLocked; return (
+                    {(showCreateArea || showCreateAdmin) && (() => { const createDisabled = emptyRealSlots === 0 || createLocked; return (
                       <button onClick={createDisabled ? undefined : createNewTeam} disabled={createDisabled} className={createDisabled ? undefined : 'pressable'} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 46, background: createDisabled ? '#E8E8EC' : BLUE, color: createDisabled ? '#9A9AA0' : '#fff', border: 'none', borderRadius: 14, cursor: createDisabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, WebkitTapHighlightColor: 'transparent', outline: 'none', marginBottom: 12 }}>
                         <svg width="16" height="16" viewBox="0 0 18 18" fill="none"><path d="M9 3v12M3 9h12" stroke={createDisabled ? '#9A9AA0' : '#fff'} strokeWidth="2" strokeLinecap="round" /></svg>
                         {emptyRealSlots === 0 && !createLocked ? 'Cupos completos' : 'Crear un equipo'}
@@ -1219,7 +1508,7 @@ export default function ChampionshipView() {
                     {/* Unirme sin equipo — TOGGLE (solo registration_open). En lista → "Estás en la lista" (check)
                         → tocar de nuevo sale directo (sin confirmación). En un equipo → tocar pide confirmación
                         de cambio (requestNoTeam). Salir del equipo se hace desde la pantalla del equipo. */}
-                    {(canCreate || inscriptionsDisabled) && (() => { const inList = !!myMembership && !myMembership.team_id; const joinDisabled = regBusy || (inscriptionsDisabled && !amOwner); return (
+                    {(canCreate || inscriptionsDisabled) && !hostBlocksSelf && (() => { const inList = !!myMembership && !myMembership.team_id; const joinDisabled = regBusy || (inscriptionsDisabled && !amOwner); return (
                       <>
                         <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginBottom: 8 }}>¿No tienes equipo todavía? Únete a la lista general y luego te acomodamos.</div>
                         <button onClick={joinDisabled ? undefined : (inList ? leaveReal : requestNoTeam)} disabled={joinDisabled} className={joinDisabled ? undefined : 'pressable'} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, width: '100%', height: 46, borderRadius: 14, border: 'none', cursor: joinDisabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, background: inList ? '#D7F0DD' : '#fff', color: inList ? '#1F6B36' : (joinDisabled ? '#9A9AA0' : TEXT), opacity: regBusy ? 0.7 : 1, boxShadow: inList ? 'none' : `inset 0 0 0 1px ${HAIR}`, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
@@ -1237,33 +1526,38 @@ export default function ChampionshipView() {
                         línea. Si el owner o el host además están inscritos, siguen saliendo también
                         abajo: son dos listas que responden a dos preguntas distintas —quién manda y
                         quién juega—, y quitar a alguien de una por estar en la otra las falsearía. */}
-                    {regOrganizers?.owner && (
-                      <>
-                        <div style={{ ...H, marginBottom: 8 }}>Organizadores</div>
-                        <OrganizerRow person={regOrganizers.owner} role="Organizador" first onSelect={setSelectedPlayer} />
-                        <OrganizerRow person={regOrganizers.host} role="Host" onSelect={setSelectedPlayer} />
-                        <div style={{ height: 1, background: HAIR, margin: '14px 0' }} />
-                      </>
-                    )}
+                    <RealOrganizers organizers={regOrganizers} onSelect={setSelectedPlayer} divider />
                     <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
                       <div style={H}>Jugadores</div>
                       <div style={{ fontSize: 12.5, fontWeight: 700, color: SUB }}>{regPlayerCount} {regPlayerCount === 1 ? 'inscrito' : 'inscritos'}</div>
                     </div>
+                    {/* Gestión directa (Fase 23 rework): sin modo Editar global. Cada jugador se gestiona desde su ⋮. */}
+                    {amManager && canAdminMove && (
+                      <div style={{ fontSize: 12, color: SUB, lineHeight: 1.45, marginBottom: 8 }}>
+                        Puedes organizar a los jugadores desde ⋮ junto a cada nombre.
+                      </div>
+                    )}
                     {regPlayers.length > 0 ? regPlayers.map((p, i) => (
-                      <button key={p.user_id} onClick={() => setSelectedPlayer({ user_id: p.user_id, name: p.full_name })} className="pressable" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderTop: i === 0 ? 'none' : `1px solid ${HAIR}`, width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-                        <div style={{ width: 18, fontSize: 12, color: SUB, flexShrink: 0, textAlign: 'right' }}>{i + 1}</div>
-                        <RosterAvatar path={p.avatar_path} hue={p.avatar_hue} name={p.full_name || 'Jugador'} />
-                        <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.full_name || 'Jugador'}</div>
+                      <div key={p.user_id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderTop: i === 0 ? 'none' : `1px solid ${HAIR}` }}>
+                        {/* Nombre/avatar → PlayerModal (perfil). NO se mezcla con la gestión (⋮). */}
+                        <button onClick={() => setSelectedPlayer({ user_id: p.user_id, name: p.full_name })} className="pressable" style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 12, background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                          <div style={{ width: 18, fontSize: 12, color: SUB, flexShrink: 0, textAlign: 'right' }}>{i + 1}</div>
+                          <RosterAvatar path={p.avatar_path} hue={p.avatar_hue} name={p.full_name || 'Jugador'} />
+                          <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{(p.full_name || 'Jugador') + (p.user_id === user?.id ? ' (tú)' : '')}</div>
+                        </button>
                         {p.team_id
                           ? (() => { const t = regTeams.find(x => x.id === p.team_id); return (
-                              // Escudo pequeño del equipo (mismo Shield/patrón que la grilla; name="" → sin inicial) + nombre.
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0, minWidth: 0, maxWidth: '45%' }}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0, minWidth: 0, maxWidth: '40%' }}>
                                 <Shield color={t?.color || '#5B6470'} design={designOf(t?.design)} name="" size={14} />
-                                <span style={{ fontSize: 12, color: SUB, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.team_name}</span>
+                                <span style={{ fontSize: 12, color: SUB, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{getTeamAbbreviation(p.team_name)}</span>
                               </span>
                             ); })()
                           : <span style={{ fontSize: 12, color: '#C7C7CC', flexShrink: 0 }}>Sin equipo</span>}
-                      </button>
+                        {/* ⋮ gestión — SOLO managers con acción de roster posible (canAdminMove). Backend valida igual. */}
+                        {amManager && canAdminMove && (
+                          <button onClick={() => setPlayerAction({ user_id: p.user_id, name: p.full_name, team_id: p.team_id })} className="pressable" aria-label="Gestionar jugador" style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 8, border: 'none', background: 'transparent', cursor: 'pointer', color: SUB, fontSize: 18, fontWeight: 800, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>⋮</button>
+                        )}
+                      </div>
                     )) : (
                       <div style={{ fontSize: 13, color: SUB, lineHeight: 1.4 }}>Todavía no hay jugadores inscritos.</div>
                     )}
@@ -1323,24 +1617,9 @@ export default function ChampionshipView() {
               ? (!savedPrivacy.key ? 'Configura una clave de acceso y pulsa Guardar'
                 : privacyDirty ? 'Guarda los cambios de privacidad para publicar.' : null)
               : (!accessCode.trim() ? 'Configura una clave de acceso y pulsa Guardar' : null);
-            // REAL: no hay botón de publicar. Las inscripciones las abre AlGrass, y
-            // enseñar un botón que el backend va a rechazar sería mentir. Se dice en
-            // qué punto está y qué falta, que es lo único accionable por el dueño.
-            if (isRealMode) {
-              return (
-                <>
-                  {hint && <div style={{ pointerEvents: 'none', textAlign: 'center', marginBottom: 8, fontSize: 12, fontWeight: 700, color: TEXT, background: '#FFF7EA', border: `1px solid ${ORANGE}66`, borderRadius: 8, padding: '7px 10px' }}>{hint}</div>}
-                  <div style={{ pointerEvents: 'none', textAlign: 'center', background: '#fff', border: `1px solid ${HAIR}`, borderRadius: 16, padding: '12px 14px', boxShadow: '0 6px 18px rgba(0,0,0,0.10)' }}>
-                    <div style={{ fontSize: 14, fontWeight: 800, color: TEXT }}>Pago confirmado</div>
-                    <div style={{ fontSize: 12.5, color: SUB, marginTop: 3, lineHeight: 1.45 }}>
-                      {savedPrivacy.key
-                        ? 'AlGrass abrirá las inscripciones de tu campeonato.'
-                        : 'Guarda tu clave de acceso; AlGrass abrirá las inscripciones después.'}
-                    </div>
-                  </div>
-                </>
-              );
-            }
+            // REAL y demo comparten el mismo CTA "Publicar campeonato". En REAL, publishEnabled exige clave
+            // GUARDADA (sin cambios pendientes) → sin clave: botón deshabilitado + hint; con clave: habilitado.
+            // Al pulsar, publishChampionship llama publish_championship (owner + pending_publish → registration_open).
             return (
               <>
                 {hint && <div style={{ pointerEvents: 'none', textAlign: 'center', marginBottom: 8, fontSize: 12, fontWeight: 700, color: TEXT, background: '#FFF7EA', border: `1px solid ${ORANGE}66`, borderRadius: 8, padding: '7px 10px' }}>{hint}</div>}
@@ -1418,6 +1697,55 @@ export default function ChampionshipView() {
       )}
       {/* Perfil público del jugador — MISMO PlayerModal que el roster de Match (privacidad/avatar iguales). */}
       {selectedPlayer && <PlayerModal player={selectedPlayer} onClose={() => setSelectedPlayer(null)} />}
+      {/* Selector de equipo para un slot VACÍO de la llave (host/AlGrass en in_progress). Excluye el equipo del
+          otro lado del mismo partido. Guardar → set_championship_match_team → refresca la llave. */}
+      <TeamPickerSheet
+        open={!!bracketAssign}
+        title="Asignar equipo al partido"
+        teams={compTeams}
+        excludeTeamId={bracketAssign?.otherTeamId || null}
+        selectedId={bracketSel}
+        busy={bracketBusy}
+        error={bracketErr}
+        designOf={designOf}
+        conflicts={bracketConflicts}
+        onSelect={setBracketSel}
+        onCancel={() => { if (!bracketBusy) { setBracketAssign(null); setBracketSel(null); setBracketErr(''); setBracketConflicts({}); } }}
+        onSave={saveBracketAssign}
+      />
+
+      {/* Action sheet de GESTIÓN del jugador (⋮) — componente COMPARTIDO con ChampionshipTeam. manage_championship_player. */}
+      <PlayerActionSheet
+        key={playerAction?.user_id || 'none'}
+        player={playerAction} teams={regTeams} designOf={designOf} busy={regBusy}
+        onMove={(teamId) => doManagePlayer({ teamId })}
+        onNoTeam={() => doManagePlayer({ teamId: null })}
+        onRemove={() => doManagePlayer({ remove: true })}
+        onClose={() => setPlayerAction(null)}
+      />
+
+      {/* Detalle OPERATIVO del partido (Fase 24). Datos desde competition.matches + roster desde regState.players
+          (sin RPC de lectura nueva). Editable solo si canManageResults; guarda vía save_championship_match_result. */}
+      {(() => {
+        const dm = matchDetailId ? (competition?.matches || []).find(x => x.id === matchDetailId) : null;
+        if (!dm) return null;
+        const homeRoster = regPlayers.filter(p => dm.home_team_id && p.team_id === dm.home_team_id);
+        const awayRoster = regPlayers.filter(p => dm.away_team_id && p.team_id === dm.away_team_id);
+        return (
+          <MatchDetailModal
+            key={dm.id}
+            match={dm}
+            home={dm.home_team ? teamView(dm.home_team) : null}
+            away={dm.away_team ? teamView(dm.away_team) : null}
+            homeRoster={homeRoster} awayRoster={awayRoster} existingGoals={dm.goals || []}
+            venue={dm.venue_name} court={(dm.field_name || '').replace(/^cancha\s*/i, '') || null}
+            dateLabel={dm.date_key ? formatDateLabel(dm.date_key).replace(/^(Hoy|Mañana),\s*/, '') : null}
+            timeRange={matchTimeRange(dm.start_time, dm.duration_min)} durationMin={dm.duration_min}
+            canEdit={canManageResults} busy={matchSaving} designOf={designOf}
+            onClose={() => setMatchDetailId(null)} onSave={doSaveMatchResult}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -1445,6 +1773,21 @@ function OrganizerRow({ person, role, first, onSelect }) {
       <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
       <span style={{ fontSize: 12, color: SUB, flexShrink: 0 }}>{role}</span>
     </button>
+  );
+}
+
+// ── Organizadores REALES (owner + host desde regState.organizers). MISMO patrón/orden/badges/avatares que
+//    usa Inscripciones: owner ("Organizador") + host ("AlGrass") con OrganizerRow y el MISMO PlayerModal.
+//    Se reutiliza tal cual en Inscripciones (con divisor, arriba del roster) y en Resultados (encima de Goleadores).
+function RealOrganizers({ organizers, onSelect, divider = false }) {
+  if (!organizers?.owner) return null;
+  return (
+    <>
+      <div style={{ ...H, marginBottom: 8 }}>Organizadores</div>
+      <OrganizerRow person={organizers.owner} role="Organizador" first onSelect={onSelect} />
+      <OrganizerRow person={organizers.host} role="AlGrass" onSelect={onSelect} />
+      {divider && <div style={{ height: 1, background: HAIR, margin: '14px 0' }} />}
+    </>
   );
 }
 
@@ -1566,7 +1909,7 @@ function Inscripciones({ teams, emptySlots, canCreate, onCreate, onOpenTeam, ros
 // ── Resultados (§13) — MOCK visual ────────────────────────────────────────────
 // El área swappable reserva `minHeight` = máximo alto MEDIDO entre vistas → cambiar de vista no
 // acorta el documento (evita el clamp de scrollTop / salto). Sin scrollTo.
-function Resultados({ view, setView, teams, standings, scorers, matches, venueName, openTeam, filter, onFilter, isLiga, real = false, organizers = null, comp = null }) {
+function Resultados({ view, setView, teams, standings, scorers, matches, venueName, openTeam, filter, onFilter, onOpenMatch, isLiga, real = false, organizers = null, comp = null, meId = null, onSelectPlayer = null, realOrganizers = null, onAssignSlot = null, canAssignSlot = false }) {
   const innerRef = useRef(null);
   const [minH, setMinH] = useState(0);
   // Re-mide también al filtrar → minH conserva el MÁXIMO; filtrar (más corto) nunca reduce la altura.
@@ -1607,30 +1950,48 @@ function Resultados({ view, setView, teams, standings, scorers, matches, venueNa
           {view === 'tabla' && ((useComp ? comp.groups.length === 0 : (real && teamCount === 0))
             ? <div style={CARD}><div style={H}>Tabla de posiciones</div><div style={{ fontSize: 13, color: SUB, marginTop: 8 }}>Aún no hay equipos inscritos.</div></div>
             : <TablaMock groups={groups} cfg={cfg} openTeam={openTeam} isLiga={isLiga} groupLabels={groupLabels} />)}
-          {view === 'llave' && <LlaveMock teams={bracketTeams} cfg={cfg} openTeam={openTeam} real={real || useComp} bracket={useComp ? comp.bracket : null} />}
-          {view === 'partidos' && <PartidosMock matches={displayMatches} venueName={venueName} filter={filter} onFilter={onFilter} />}
+          {view === 'llave' && <LlaveMock teams={bracketTeams} cfg={cfg} openTeam={openTeam} real={real || useComp} bracket={useComp ? comp.bracket : null} onAssignSlot={onAssignSlot} canAssignSlot={canAssignSlot} />}
+          {view === 'partidos' && <PartidosMock matches={displayMatches} venueName={venueName} filter={filter} onFilter={onFilter} onOpenMatch={onOpenMatch} />}
 
-          {/* Organizador — mismo componente que Inscripciones, JUSTO encima de Goleadores (misma vista) */}
-          {view !== 'partidos' && organizers && (
-            <div style={CARD}><OrganizersBlock organizers={organizers} divider={false} /></div>
-          )}
-
-          {/* Goleadores: visible en Tabla/Llave, oculto en Partidos (§13.6) */}
+          {/* Goleadores: visible en Tabla/Llave, oculto en Partidos (§13.6). Organizadores + Goleadores comparten
+              el MISMO holder separados por una línea, igual que Organizadores + Jugadores en Inscripciones.
+              Real (regState.organizers): owner + host con OrganizerRow. Demo/legacy: OrganizersBlock (mock). */}
           {view !== 'partidos' && (
             <div style={CARD}>
+              {realOrganizers?.owner
+                ? <RealOrganizers organizers={realOrganizers} onSelect={onSelectPlayer} divider />
+                : (organizers && <OrganizersBlock organizers={organizers} divider />)}
               <div style={H}>Goleadores</div>
               <div style={{ marginTop: 6 }}>
                 {displayScorers.length === 0 ? (
-                  <div style={{ fontSize: 13, color: SUB }}>Aún no hay goles registrados.</div>
-                ) : displayScorers.map((p, i) => (
-                  <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '7px 0', borderTop: i === 0 ? 'none' : `1px solid ${HAIR}` }}>
-                    <div style={{ width: 16, fontSize: 12, color: SUB, textAlign: 'right', flexShrink: 0 }}>{i + 1}</div>
-                    {useComp ? <RosterAvatar path={p.avatar_path} hue={p.avatar_hue} name={p.name} size={30} /> : <PlayerAvatar name={p.name} size={30} />}
-                    <div style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, color: TEXT }}>{playerLabel(p)}</div>
-                    <Shield color={p.team.color} design={p.team.design} size={14} />
-                    <div style={{ fontSize: 13.5, fontWeight: 800, color: TEXT, minWidth: 16, textAlign: 'right' }}>{p.goals}</div>
-                  </div>
-                ))}
+                  <div style={{ fontSize: 13, color: SUB }}>{useComp ? 'Aún no hay jugadores en equipos.' : 'Aún no hay goles registrados.'}</div>
+                ) : displayScorers.map((p, i) => {
+                  // Lista de jugadores (NO ranking por goles): avatar + nombre/equipo a la izquierda, goles a la derecha.
+                  // Real (useComp): fila CLICABLE → PlayerModal (perfil público) y "(tú)" tras el nombre propio.
+                  const clickable = useComp && !!onSelectPlayer;
+                  const label = (meId && p.id === meId) ? `${p.name || 'Jugador'} (tú)` : playerLabel(p);
+                  const inner = (
+                    <>
+                      {useComp ? <RosterAvatar path={p.avatar_path} hue={p.avatar_hue} name={p.name} size={34} /> : <PlayerAvatar name={p.name} size={34} />}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13.5, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</div>
+                        {p.team?.name && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 1, maxWidth: '100%', minWidth: 0 }}>
+                            <Shield color={p.team.color || '#5B6470'} design={p.team.design} name="" size={13} />
+                            <span style={{ fontSize: 12, color: SUB, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.team.name}</span>
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: TEXT, minWidth: 16, textAlign: 'right', flexShrink: 0 }}>{p.goals}</div>
+                    </>
+                  );
+                  const rowStyle = { display: 'flex', alignItems: 'center', gap: 12, padding: '7px 0', borderTop: i === 0 ? 'none' : `1px solid ${HAIR}` };
+                  return clickable ? (
+                    <button key={p.id} onClick={() => onSelectPlayer({ user_id: p.id, name: p.name })} className="pressable" style={{ ...rowStyle, width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{inner}</button>
+                  ) : (
+                    <div key={p.id} style={rowStyle}>{inner}</div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1716,10 +2077,19 @@ function TablaMock({ groups, cfg, openTeam, isLiga, groupLabels = null }) {
 
 // Escudo de slot. Equipo real → clicable (openTeam). Silueta punteada "a definir" → NO clicable.
 // pending: en el campeonato REAL, los slots vacíos muestran además el texto gris "Por definir".
-function Slot({ team, size = 44, onTeam, pending = false }) {
+function Slot({ team, size = 44, onTeam, pending = false, matchId = null, side = null, onAssign = null, canAssign = false }) {
   const shield = team ? <Shield color={team.color} design={team.design} name={team.name} size={size} /> : <Shield dashed size={size} />;
   if (team && onTeam) {
-    return <button onClick={() => onTeam(team)} className="pressable" style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', WebkitTapHighlightColor: 'transparent', outline: 'none', display: 'block' }}>{shield}</button>;
+    // Con equipo: tocar entra al equipo (lleva contexto de llave matchId+side si existe → habilita "Cambiar equipo").
+    return <button onClick={() => onTeam(team, matchId && side ? { matchId, side } : null)} className="pressable" style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', WebkitTapHighlightColor: 'transparent', outline: 'none', display: 'block' }}>{shield}</button>;
+  }
+  if (!team && canAssign && matchId && side && onAssign) {
+    // Slot VACÍO + actor autorizado: el placeholder gris es clickeable → abre el selector de equipos.
+    return (
+      <button onClick={() => onAssign({ matchId, side })} className="pressable" aria-label="Asignar equipo" style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', WebkitTapHighlightColor: 'transparent', outline: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+        {shield}<span style={{ fontSize: 10, fontWeight: 700, color: BLUE, whiteSpace: 'nowrap' }}>Asignar</span>
+      </button>
+    );
   }
   if (!team && pending) {
     return <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>{shield}<span style={{ fontSize: 10, color: '#B0B0B8', whiteSpace: 'nowrap' }}>Por definir</span></div>;
@@ -1729,32 +2099,49 @@ function Slot({ team, size = 44, onTeam, pending = false }) {
 const BRK_LABEL = { fontSize: 11, fontWeight: 800, color: SUB, letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 6, textAlign: 'center' };
 
 // Enfrentamiento horizontal (Final / 3.º-4.º): [escudo] VS [escudo] con su label encima.
-function VsPair({ a, b, label, size = 44, onTeam, pending = false }) {
+function VsPair({ a, b, label, size = 44, onTeam, pending = false, sa = null, sb = null, matchId = null, onAssign = null, canAssign = false }) {
+  // Centro: con resultado → marcador HORIZONTAL "X - Y" (0 válido, chequeo explícito de null); sin resultado → VS.
+  const hasScore = sa != null && sb != null;
   return (
     <div style={{ textAlign: 'center' }}>
       {label && <div style={BRK_LABEL}>{label}</div>}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center', gap: 10 }}>
-        <Slot team={a} size={size} onTeam={onTeam} pending={pending} /><span style={{ fontSize: 11, fontWeight: 700, color: SUB, marginTop: size / 2 - 6 }}>VS</span><Slot team={b} size={size} onTeam={onTeam} pending={pending} />
+        <Slot team={a} size={size} onTeam={onTeam} pending={pending} matchId={matchId} side="home" onAssign={onAssign} canAssign={canAssign} />
+        <span style={{ fontSize: hasScore ? 13 : 11, fontWeight: 800, color: hasScore ? TEXT : SUB, marginTop: size / 2 - 6, padding: hasScore ? 0 : '6px 0', whiteSpace: 'nowrap' }}>{hasScore ? `${sa} - ${sb}` : 'VS'}</span>
+        <Slot team={b} size={size} onTeam={onTeam} pending={pending} matchId={matchId} side="away" onAssign={onAssign} canAssign={canAssign} />
       </div>
     </div>
   );
 }
 
 // Semifinal vertical (una por lado): "Semifinal" + [A] VS [B].
-function SemiCol({ a, b, size = 40, onTeam, pending = false }) {
+function SemiCol({ a, b, size = 40, onTeam, pending = false, sa = null, sb = null, matchId = null, onAssign = null, canAssign = false }) {
+  // Centro (entre A arriba y B abajo): con resultado → marcador VERTICAL (home arriba, away abajo; 0 válido,
+  // chequeo explícito de null); sin resultado → VS.
+  const hasScore = sa != null && sb != null;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       <div style={BRK_LABEL}>Semifinal</div>
-      <Slot team={a} size={size} onTeam={onTeam} pending={pending} />
-      <span style={{ fontSize: 11, fontWeight: 700, color: SUB, margin: '3px 0' }}>VS</span>
-      <Slot team={b} size={size} onTeam={onTeam} pending={pending} />
+      <Slot team={a} size={size} onTeam={onTeam} pending={pending} matchId={matchId} side="home" onAssign={onAssign} canAssign={canAssign} />
+      {/* Centro compacto: con resultado → marcador vertical (home/away); sin resultado → "VS" en una línea
+          (estado original, sin relleno vertical). */}
+      {hasScore ? (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', margin: '3px 0', lineHeight: 1.15 }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: TEXT }}>{sa}</span>
+          <span style={{ fontSize: 11, fontWeight: 700, color: SUB }}>-</span>
+          <span style={{ fontSize: 13, fontWeight: 800, color: TEXT }}>{sb}</span>
+        </div>
+      ) : (
+        <span style={{ fontSize: 11, fontWeight: 700, color: SUB, padding: '6px 0' }}>VS</span>
+      )}
+      <Slot team={b} size={size} onTeam={onTeam} pending={pending} matchId={matchId} side="away" onAssign={onAssign} canAssign={canAssign} />
     </div>
   );
 }
 
 // Estructura derivada de cfg. CON semifinales (8/12/16): semifinal izquierda + Final/3.º centrados +
 // semifinal derecha (sin partido intermedio). SIN semifinales: solo Final + 3.º/4.º.
-function LlaveMock({ teams, cfg, openTeam, real = false, bracket = null }) {
+function LlaveMock({ teams, cfg, openTeam, real = false, bracket = null, onAssignSlot = null, canAssignSlot = false }) {
   // bracket (Fase 16) = cuadro REAL derivado de los partidos de eliminación. Sin bracket: preview legacy
   // (real → todos "Por definir"; demo → teams mock). Con bracket: se pintan los equipos reales por fase.
   const useReal = !!bracket;
@@ -1769,8 +2156,8 @@ function LlaveMock({ teams, cfg, openTeam, real = false, bracket = null }) {
   // Centro: Final + 3.º/4.º. Con semis (y sin bracket real), los finalistas son "a definir" (dashed).
   const center = (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-      <VsPair label="Final" a={finalA} b={finalB} onTeam={openTeam} pending={real || useReal} />
-      {hasThird && <VsPair label="3.º y 4.º puesto" a={thirdA} b={thirdB} onTeam={openTeam} pending={real || useReal} />}
+      <VsPair label="Final" a={finalA} b={finalB} sa={useReal ? bracket.final.sa : null} sb={useReal ? bracket.final.sb : null} matchId={useReal ? bracket.final.mid : null} onAssign={onAssignSlot} canAssign={canAssignSlot} onTeam={openTeam} pending={real || useReal} />
+      {hasThird && <VsPair label="3.º y 4.º puesto" a={thirdA} b={thirdB} sa={useReal ? bracket.third.sa : null} sb={useReal ? bracket.third.sb : null} matchId={useReal ? bracket.third.mid : null} onAssign={onAssignSlot} canAssign={canAssignSlot} onTeam={openTeam} pending={real || useReal} />}
     </div>
   );
 
@@ -1783,9 +2170,9 @@ function LlaveMock({ teams, cfg, openTeam, real = false, bracket = null }) {
 
       {hasSemis ? (
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 6 }}>
-          <SemiCol a={useReal ? bracket.semis[0].a : t(0)} b={useReal ? bracket.semis[0].b : t(1)} onTeam={openTeam} pending={real || useReal} />
+          <SemiCol a={useReal ? bracket.semis[0].a : t(0)} b={useReal ? bracket.semis[0].b : t(1)} sa={useReal ? bracket.semis[0].sa : null} sb={useReal ? bracket.semis[0].sb : null} matchId={useReal ? bracket.semis[0].mid : null} onAssign={onAssignSlot} canAssign={canAssignSlot} onTeam={openTeam} pending={real || useReal} />
           {center}
-          <SemiCol a={useReal ? bracket.semis[1].a : t(2)} b={useReal ? bracket.semis[1].b : t(3)} onTeam={openTeam} pending={real || useReal} />
+          <SemiCol a={useReal ? bracket.semis[1].a : t(2)} b={useReal ? bracket.semis[1].b : t(3)} sa={useReal ? bracket.semis[1].sa : null} sb={useReal ? bracket.semis[1].sb : null} matchId={useReal ? bracket.semis[1].mid : null} onAssign={onAssignSlot} canAssign={canAssignSlot} onTeam={openTeam} pending={real || useReal} />
         </div>
       ) : center}
 
@@ -1806,7 +2193,7 @@ function TeamLine({ team, score, onFilter }) {
     );
   }
   return (
-    <button onClick={() => onFilter(team)} className="pressable" style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', padding: '3px 0', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+    <button type="button" onClick={(e) => { e.stopPropagation(); onFilter(team); }} className="pressable" style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', padding: '3px 0', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
       <Shield color={team.color} design={team.design} name={team.name} size={22} />
       <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 700, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{team.name}</span>
       {score != null && <span style={{ fontSize: 15, fontWeight: 800, color: TEXT, flexShrink: 0, minWidth: 16, textAlign: 'right' }}>{score}</span>}
@@ -1815,26 +2202,41 @@ function TeamLine({ team, score, onFilter }) {
 }
 
 // Un partido = un holder. Sin "VS" (los dos equipos apilados ya comunican el enfrentamiento).
-function MatchCard({ m, onFilter }) {
+function MatchCard({ m, onFilter, onOpenMatch }) {
+  // Interacciones separadas: tocar un EQUIPO (TeamLine) filtra; tocar el BLOQUE de info (derecha) abre el
+  // detalle del partido. onOpenMatch solo existe en la superficie real (Fase 24); en mock/demo es undefined.
+  const info = (
+    <>
+      <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.venue}</div>
+      <div style={{ fontSize: 12, color: SUB }}>Cancha {m.court}</div>
+      <div style={{ fontSize: 12, color: BLUE, whiteSpace: 'nowrap' }}>{m.dateLabel}</div>
+      <div style={{ fontSize: 12, color: SUB }}>{m.time}</div>
+    </>
+  );
+  // Marcador por FILA (no centrado). Chequeo EXPLÍCITO de null (0 es resultado real): ambos null → "-" en cada
+  // fila; ambos presentes → el número de cada equipo pegado a la derecha. Solo presentación (no toca datos/permisos).
+  const hasScore = m.sa != null && m.sb != null;
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, background: '#fff', border: `1px solid ${HAIR}`, borderRadius: 14, padding: '10px 12px', marginBottom: 8 }}>
+    <div style={{ display: 'flex', alignItems: 'stretch', gap: 12, background: '#fff', border: `1px solid ${HAIR}`, borderRadius: 14, padding: '10px 12px', marginBottom: 8 }}>
+      {/* Columna IZQUIERDA: fila local / fila visitante, nombre a la izquierda y score pegado a la derecha.
+          Tocar el equipo filtra. null/null → "-" en cada fila; con resultado → número (0 válido). */}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <TeamLine team={m.a} score={m.played ? m.sa : null} onFilter={onFilter} />
-        <TeamLine team={m.b} score={m.played ? m.sb : null} onFilter={onFilter} />
+        <TeamLine team={m.a} score={hasScore ? m.sa : '-'} onFilter={onFilter} />
+        <TeamLine team={m.b} score={hasScore ? m.sb : '-'} onFilter={onFilter} />
       </div>
-      <div style={{ flexShrink: 0, maxWidth: '44%', textAlign: 'right', paddingTop: 3 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.venue}</div>
-        <div style={{ fontSize: 12, color: SUB }}>Cancha {m.court}</div>
-        <div style={{ fontSize: 12, color: BLUE, whiteSpace: 'nowrap' }}>{m.dateLabel}</div>
-        <div style={{ fontSize: 12, color: SUB }}>{m.time}</div>
-      </div>
+      {/* Divisor VERTICAL sutil entre columnas (gris/neutro). */}
+      <div style={{ width: 1, background: HAIR, flexShrink: 0, alignSelf: 'stretch' }} />
+      {/* Columna DERECHA: datos del partido (venue/cancha/fecha/hora), en ese orden vertical. Tocar abre detalle. */}
+      {onOpenMatch
+        ? <button type="button" onClick={(e) => { e.stopPropagation(); onOpenMatch(m.id); }} aria-label="Detalle del partido" className="pressable" style={{ flexShrink: 0, maxWidth: '44%', minWidth: 0, textAlign: 'left', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{info}</button>
+        : <div style={{ flexShrink: 0, maxWidth: '44%', minWidth: 0, textAlign: 'left' }}>{info}</div>}
     </div>
   );
 }
 
 const SEC_LABEL = { fontSize: 11, fontWeight: 700, color: SUB, letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 6 };
 
-function PartidosMock({ matches, venueName, filter, onFilter }) {
+function PartidosMock({ matches, venueName, filter, onFilter, onOpenMatch }) {
   // Real (Fase 16): cada partido trae su propio venue (m.venue); mock/demo no → cae al venueName general.
   const all = matches.map(m => ({ ...m, venue: m.venue || venueName }));
   const shown = filter ? all.filter(m => m.a.id === filter.id || m.b.id === filter.id) : all;
@@ -1853,10 +2255,10 @@ function PartidosMock({ matches, venueName, filter, onFilter }) {
       )}
 
       <div style={SEC_LABEL}>Próximos</div>
-      {upcoming.length ? upcoming.map(m => <MatchCard key={m.id} m={m} onFilter={onFilter} />) : <div style={{ fontSize: 12.5, color: SUB, marginBottom: 8 }}>Sin próximos partidos.</div>}
+      {upcoming.length ? upcoming.map(m => <MatchCard key={m.id} m={m} onFilter={onFilter} onOpenMatch={onOpenMatch} />) : <div style={{ fontSize: 12.5, color: SUB, marginBottom: 8 }}>Sin próximos partidos.</div>}
 
       <div style={{ ...SEC_LABEL, marginTop: 14 }}>Pasados</div>
-      {played.length ? played.map(m => <MatchCard key={m.id} m={m} onFilter={onFilter} />) : <div style={{ fontSize: 12.5, color: SUB }}>Sin partidos jugados.</div>}
+      {played.length ? played.map(m => <MatchCard key={m.id} m={m} onFilter={onFilter} onOpenMatch={onOpenMatch} />) : <div style={{ fontSize: 12.5, color: SUB }}>Sin partidos jugados.</div>}
     </div>
   );
 }

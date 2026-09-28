@@ -559,28 +559,39 @@ function ChampRow({ g, onOpen, highlightRef = null, highlighted = false, muted =
         <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, lineHeight: 1.1 }}>{g.time || '—'}</div>
         {g.ampm && <div style={{ fontSize: 11, color: SUB, fontWeight: 500, lineHeight: 1.1 }}>{g.ampm}</div>}
       </div>
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10, background: coverColor(g.theme), borderRadius: 12, padding: '8px 12px' }}>
+      {/* HOST (Fase 27): TODO el bloque en naranja "esto lo organizo yo" — mismo ORANGE y texto oscuro (#1B1B1F)
+          que la píldora "Organiza" de match/rental. No-host conserva el color del tema (coverColor) y texto blanco. */}
+      {(() => {
+        const isHost = !!g.isHost;
+        const nameColor = isHost ? '#1B1B1F' : '#fff';
+        const subColor  = isHost ? 'rgba(27,27,31,0.72)' : 'rgba(255,255,255,0.9)';
+        const nameShadow = isHost ? 'none' : '0 1px 2px rgba(0,0,0,0.25)';
+        const subShadow  = isHost ? 'none' : '0 1px 2px rgba(0,0,0,0.22)';
+        return (
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10, background: isHost ? ORANGE : coverColor(g.theme), borderRadius: 12, padding: '8px 12px' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: '#fff', letterSpacing: -0.2, textShadow: '0 1px 2px rgba(0,0,0,0.25)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.name}</div>
+          <div style={{ fontSize: 15, fontWeight: 800, color: nameColor, letterSpacing: -0.2, textShadow: nameShadow, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{g.name}</div>
           {(g.venueName || g.teamsLabel) && (
             <div style={{ display: 'flex', alignItems: 'baseline', minWidth: 0, marginTop: 2 }}>
-              {g.venueName && <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.9)', textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>{g.venueName}</span>}
-              {g.teamsLabel && <span style={{ flexShrink: 0, whiteSpace: 'nowrap', fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.9)', textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>{g.venueName ? ' · ' : ''}{g.teamsLabel}</span>}
+              {g.venueName && <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 500, color: subColor, textShadow: subShadow }}>{g.venueName}</span>}
+              {g.teamsLabel && <span style={{ flexShrink: 0, whiteSpace: 'nowrap', fontSize: 12, fontWeight: 500, color: subColor, textShadow: subShadow }}>{g.venueName ? ' · ' : ''}{g.teamsLabel}</span>}
             </div>
           )}
         </div>
         {/* EN VIVO (in_progress): icono AL COSTADO del badge, no lo reemplaza. Mismo icono/color que Games/Profile. */}
         {g.live && (
-          <span style={{ flexShrink: 0, fontSize: 13, lineHeight: 1, color: RED, display: 'inline-flex', textShadow: '0 1px 2px rgba(0,0,0,0.25)' }}>
+          <span style={{ flexShrink: 0, fontSize: 13, lineHeight: 1, color: RED, display: 'inline-flex', textShadow: nameShadow }}>
             <FontAwesomeIcon icon={faTowerBroadcast} />
           </span>
         )}
         {g.badgeLines?.length > 0 && (
-          <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 700, color: '#fff', textAlign: 'right', lineHeight: 1.2, maxWidth: 90, textShadow: '0 1px 2px rgba(0,0,0,0.22)' }}>
-            {g.badgeLines.map((l, i) => <div key={i}>{l}</div>)}
+          <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 700, color: nameColor, textAlign: 'right', lineHeight: 1.2, maxWidth: 90, textShadow: subShadow }}>
+            {g.badgeLines.map((l, i) => <div key={i} style={i === 0 && isHost ? { fontWeight: 800 } : undefined}>{l}</div>)}
           </span>
         )}
       </div>
+        );
+      })()}
       <ChevIcon />
     </div>
   );
@@ -2943,9 +2954,20 @@ export default function Profile() {
       : (sum.group ? (sum.group.min === sum.group.max ? `${sum.group.min} equipos` : `${sum.group.min}–${sum.group.max} equipos`) : '');
     // Badge por status (mapeo explícito, sin fallback engañoso). is_participant viene de list_my_championships
     // (Fase 18) → "Inscrito" solo si el usuario está inscrito como jugador, nunca por ser owner/pagador.
-    const { lines: badgeLines, live } = champBadge(row.status, row.is_participant === true, row.live_started_at);
+    // HOST (Fase 27): host_user_id === yo → SIEMPRE "Organiza" en línea 1 (rol operativo, no cambia por estado);
+    // el estado real va debajo reutilizando el MISMO copy de champBadge (sin traducción paralela). Prioriza
+    // Host aunque también sea owner. El tratamiento naranja del holder se aplica en ChampRow (isHost).
+    const isHost = !!user?.id && row.host_user_id != null && row.host_user_id === user.id;
+    let badgeLines, live;
+    if (isHost) {
+      const base = champBadge(row.status, false, row.live_started_at);
+      live = base.live;
+      badgeLines = ['Organiza', base.lines.join(' ')].filter(Boolean);
+    } else {
+      ({ lines: badgeLines, live } = champBadge(row.status, row.is_participant === true, row.live_started_at));
+    }
     return {
-      __champ: true, id: row.id, status: row.status, dateKey, time24,
+      __champ: true, id: row.id, status: row.status, dateKey, time24, isHost,
       date: dateKey ? formatDateLabel(dateKey) : '', time, ampm,
       name: row.name || 'Campeonato', theme: row.cover_theme || '#E24A4A',
       venueName: sum.venueName || null, teamsLabel, badgeLines, live,

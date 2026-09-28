@@ -206,6 +206,40 @@ export function getChampionshipCompetition({ championshipId }) {
   return supabase.rpc('get_championship_competition', { p_championship_id: championshipId });
 }
 
+// save_championship_match_result (Fase 24): guarda marcador + goleadores de un partido en UNA transacción.
+// goals = [{ user_id, team_id, goals }]. Autorización backend (host in_progress / AlGrass in_progress+completed).
+// El marcador y los goles NO tienen que cuadrar. Tablas cerradas al cliente: todo por esta RPC.
+export function saveChampionshipMatchResult({ matchId, homeScore, awayScore, goals }) {
+  return supabase.rpc('save_championship_match_result', {
+    p_match_id: matchId, p_home_score: homeScore, p_away_score: awayScore, p_goals: goals ?? [],
+  });
+}
+
+// toggle_championship_live (Fase 34): Host/AlGrass alterna EN VIVO dentro de in_progress. live=true → LIVE
+// (live_started_at=now()); live=false → PRE-LIVE (live_started_at=null). Autorización/estado los valida el backend.
+export function toggleChampionshipLive({ championshipId, live }) {
+  return supabase.rpc('toggle_championship_live', { p_championship_id: championshipId, p_live: live });
+}
+
+// set_championship_match_team (Fase 31): asigna/cambia el equipo de UN lado (side 'home'|'away') de un partido
+// de la LLAVE. Escribe SOLO home_team_id/away_team_id. Autorización backend (host/AlGrass en in_progress);
+// bloquea si el match ya tiene marcador/goles/qualified; no mismo equipo en ambos lados. updatedAt = testigo
+// opcional de concurrencia (null → se omite el check, la RPC igual serializa bajo lock).
+export function setChampionshipMatchTeam({ matchId, side, teamId, updatedAt = null }) {
+  return supabase.rpc('set_championship_match_team', {
+    p_match_id: matchId, p_side: side, p_team_id: teamId, p_updated_at: updatedAt,
+  });
+}
+
+// manage_championship_player (Fase 20/21): gestión ADMINISTRATIVA de membership de terceros/propia por
+// owner/host/AlGrass. remove=true → elimina la inscripción; si no, upsert con teamId (null = sin equipo).
+// La autorización (rol + fase) vive 100% en el backend; este wrapper solo llama la RPC existente.
+export function manageChampionshipPlayer({ championshipId, userId, teamId = null, remove = false }) {
+  return supabase.rpc('manage_championship_player', {
+    p_championship_id: championshipId, p_user_id: userId, p_team_id: teamId, p_remove: remove,
+  });
+}
+
 // Lectura mínima del campeonato propio (RLS championships_select acota al owner). Se usa para
 // representar en Profile el campeonato real recién creado ("Validando pago") y su persistencia tras
 // refresh. SIN escritura, SIN lógica: devuelve el { data, error } CRUDO de Supabase.
