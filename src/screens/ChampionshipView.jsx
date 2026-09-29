@@ -21,6 +21,7 @@ import { supabase } from '../lib/supabase';
 import RosterAvatar from '../components/championship/RosterAvatar';
 import PlayerActionSheet from '../components/championship/PlayerActionSheet';
 import MatchDetailModal from '../components/championship/MatchDetailModal';
+import VenuePickerSheet from '../components/championship/VenuePickerSheet';
 import { effPhaseOf, rosterWindows } from '../utils/championshipRoster';
 import { PlayerModal } from './GameDetail';   // MISMO perfil público que el roster de Match (sin duplicar)
 import { validateCoverImage, uploadChampionshipCover, getChampionshipCoverUrl, deleteChampionshipCover } from '../utils/championshipCoverImage';
@@ -252,6 +253,15 @@ export default function ChampionshipView() {
   const [regBusy, setRegBusy] = useState(false);   // "Unirme sin equipo" en curso
   const [venueBusy, setVenueBusy] = useState(false);   // resolviendo el venue real antes de abrir /venue
   const [venueReal, setVenueReal] = useState(null);    // venue PERMANENTE (tabla venues) por summary.venueId
+  const [selectedVenueIdx, setSelectedVenueIdx] = useState(0);   // Fase 38: venue mostrado en multi-venue (solo vista)
+  const [venuePickerOpen, setVenuePickerOpen] = useState(false); // Fase 38: selector de sede (multi-venue)
+  // Fase 38 — Venues OPERATIVOS reales (multi-venue), DERIVADOS por get_championship_public desde la reserva
+  // física (championship_reservation_games → games → fields → venues). Solo lectura/visualización: NO escribe DB,
+  // NO filtra fixture. 1 venue (o vacío en demo/legacy) → comportamiento single-venue INTACTO (summary + /venue).
+  // Deben declararse DESPUÉS de selectedVenueIdx (dependen de él) para evitar la temporal dead zone.
+  const venuesReal = isRealMode ? (Array.isArray(realRow?.venues) ? realRow.venues : []) : [];
+  const isMultiVenue = venuesReal.length > 1;
+  const selectedVenue = isMultiVenue ? (venuesReal[selectedVenueIdx] || venuesReal[0]) : null;
   const [selectedPlayer, setSelectedPlayer] = useState(null);   // fila del roster → PlayerModal (perfil público de Match)
   // Asignar equipo a un slot VACÍO de la llave (Fase 31). { matchId, side, otherTeamId } | null.
   const [bracketAssign, setBracketAssign] = useState(null);     // { matchId, side, otherTeamId, uat }
@@ -269,7 +279,9 @@ export default function ChampionshipView() {
   // action sheet del jugador. NO cambian status ni lifecycle; es navegación/gestión interna de la pantalla.
   const [adminView, setAdminView] = useState(restore?.adminView ?? null);   // 'inscripciones' | 'resultados' | null
   const [playerAction, setPlayerAction] = useState(null);       // { user_id, name, team_id } → action sheet (⋮)
-  const [matchDetailId, setMatchDetailId] = useState(null);     // partido abierto en el detalle (id) | null
+  // Match abierto en el detalle (id) | null. Al volver de /venue (cvReturn/authResuming) se SIEMBRA desde la
+  // caché de retorno (persistCV guardó el match abierto antes de navegar) para reabrir el MISMO modal.
+  const [matchDetailId, setMatchDetailId] = useState(restore?.matchDetailId ?? null);
   const [matchSaving, setMatchSaving] = useState(false);        // guardado de resultado en curso
   function loadRegState() {
     // Estado de inscripciones visible en registration_open/closed; y en pending_publish para owner/AlGrass
@@ -826,6 +838,13 @@ export default function ChampionshipView() {
     el.scrollTop = (isTeamReturn || authResuming) ? (restore?.scrollTop || 0) : 0;
   }, []); // eslint-disable-line
 
+  // Consumo ÚNICO del match reabierto: tras sembrarlo, se limpia del CV para que no se reabra en remounts
+  // posteriores sin persistCV. persistCV lo volverá a guardar si el modal sigue abierto al navegar de nuevo.
+  useEffect(() => {
+    if (restore?.matchDetailId == null) return;
+    const cv = readCV(); if (cv && cv.matchDetailId != null) { cv.matchDetailId = null; writeCV(cv); }
+  }, []); // eslint-disable-line
+
   // Guarda TODO el estado antes de ir a ChampionshipTeam (session state, sin persistencia real).
   // Guarda scrollTop del contenedor para restaurar la posición al volver del equipo (Team-return).
   function persistCV() {
@@ -840,10 +859,10 @@ export default function ChampionshipView() {
       // accessOk = ¿el actor estaba AUTORIZADO al salir a Team? (owner/miembro/clave verificada/grant persistente).
       // Al volver (cvReturn) siembra verifiedGrant y evita re-gatear pese a cambios de membership. No persiste
       // acceso indebido: solo captura la autorización REAL vigente en ese instante.
-      writeCV({ ...cv, summary, organizeState, name, coverTheme, adminView, demo, resultsView, matchFilterId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, championship: { ...(cv.championship || {}), realId, teams, realRow, regState, competition, accessOk: (amOwner || amHostAccess || amMember || verifiedGrant || persistentGrant()) } });
+      writeCV({ ...cv, summary, organizeState, name, coverTheme, adminView, demo, resultsView, matchFilterId, matchDetailId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, championship: { ...(cv.championship || {}), realId, teams, realRow, regState, competition, accessOk: (amOwner || amHostAccess || amMember || verifiedGrant || persistentGrant()) } });
       return;
     }
-    writeCV({ summary, organizeState, name, coverTheme, accessCode, resultsPublic, demo, resultsView, matchFilterId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, contactRequest, championship: isCreated ? { ...champ, teams } : champ });
+    writeCV({ summary, organizeState, name, coverTheme, accessCode, resultsPublic, demo, resultsView, matchFilterId, matchDetailId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, contactRequest, championship: isCreated ? { ...champ, teams } : champ });
   }
   function goToNewTeam() {
     // REAL: Crear equipo exige login (anon → /auth → vuelve). Autenticado → builder REAL (nombre+diseño)
@@ -1110,6 +1129,30 @@ export default function ChampionshipView() {
       chips: Object.entries(v.amenities || {}).filter(([k, val]) => val === true && AMENITY_LABEL[k]).map(([k]) => ({ kind: k, label: AMENITY_LABEL[k] })),
     });
   }
+  // Fase 38 — Abrir la ficha /venue desde una entrada derivada de venues[] (mismo shape que openVenueDetail,
+  // pero con los datos que ya vienen de get_championship_public: sin consulta extra a getVenueById).
+  function venueStateFromEntry(v) {
+    if (!v) return null;
+    return {
+      venueName: v.venue_name, name: v.venue_name,
+      address: v.venue_address || undefined, district: v.district || undefined, city: v.city || undefined,
+      lat: v.lat ?? undefined, lng: v.lng ?? undefined,
+      venueCoverPath: v.cover_image_path ?? undefined,
+      venueCoverVersion: v.cover_updated_at ? new Date(v.cover_updated_at).getTime() : undefined,
+      chips: Object.entries(v.amenities || {}).filter(([k, val]) => val === true && AMENITY_LABEL[k]).map(([k]) => ({ kind: k, label: AMENITY_LABEL[k] })),
+    };
+  }
+  function goVenueState(venueState) {
+    if (!venueState) return;
+    const backPath = isRealMode ? ('/championships/view/' + realId) : '/championships/view';
+    persistCV();
+    navigate('/venue', { state: { backPath, backState: { cvReturn: true }, venue: venueState } });
+  }
+  // El match tiene UNA sede concreta (game_id → field_id): se resuelve el venue por field_id dentro de venues[].
+  function venueEntryForField(fieldId) {
+    if (!fieldId) return null;
+    return venuesReal.find(v => (v.fields || []).some(f => f.field_id === fieldId)) || null;
+  }
   function goToCheckout() {
     if (!checkoutReady) return;
     if (!requireAuth('checkout')) return;
@@ -1316,8 +1359,23 @@ export default function ChampionshipView() {
                 solo con CANCHA REAL confirmada. Si el usuario eligió "contactarme"/"no encuentro" (courtCustom)
                 → NO cancha real → "Pendiente por confirmar" + SIN botón Maps (no inventar dirección). */}
             {(() => {
-              // Nombre + dirección CLICKEABLES/subrayados → abren el detalle del venue (reutiliza /venue).
-              // El botón Google (action) se mantiene EXACTAMENTE igual. Solo con venue real (checkoutReady).
+              // MULTI-VENUE (Fase 38): el bloque muestra el venue SELECCIONADO; tocar sede/dirección NO abre la
+              // ficha /venue, abre el SELECTOR de sedes (elegir qué venue se visualiza). Al elegir otro venue se
+              // actualiza nombre/dirección/canchas y el enlace de mapa (todo local, sin tocar fixture ni DB).
+              if (isMultiVenue) {
+                const vAddr = `${selectedVenue.venue_address ?? ''}${selectedVenue.district ? (selectedVenue.venue_address ? ' · ' : '') + selectedVenue.district : ''}`;
+                const openPicker = () => setVenuePickerOpen(true);
+                const linkStyle = { textDecoration: 'underline', textUnderlineOffset: 2, cursor: 'pointer', WebkitTapHighlightColor: 'transparent' };
+                return (
+                  <ResumenRow
+                    icon="pin"
+                    value={<span role="button" onClick={openPicker} style={linkStyle}>{selectedVenue.venue_name || 'Sede'}</span>}
+                    sub={vAddr ? <span role="button" onClick={openPicker} style={linkStyle}>{vAddr}</span> : undefined}
+                    action={<MapsLinkButton lat={selectedVenue.lat ?? null} lng={selectedVenue.lng ?? null} address={[selectedVenue.venue_name, selectedVenue.venue_address, selectedVenue.district]} down />}
+                  />
+                );
+              }
+              // SINGLE-VENUE: comportamiento INTACTO. Nombre + dirección clickeables → detalle del venue (/venue).
               const venueClickable = checkoutReady && (summary.venueName || summary.venueAddress);
               const addrText = `${summary.venueAddress ?? ''}${summary.venueDistrict ? ' · ' + summary.venueDistrict : ''}`;
               const linkStyle = { textDecoration: 'underline', textUnderlineOffset: 2, cursor: venueBusy ? 'default' : 'pointer', opacity: venueBusy ? 0.55 : 1, WebkitTapHighlightColor: 'transparent' };
@@ -1336,7 +1394,13 @@ export default function ChampionshipView() {
             })()}
             <div style={{ height: 1, background: HAIR, margin: '10px 0' }} />
             {/* BLOQUE 3 — SOLO "X canchas · X horas" (sin segunda línea) */}
-            <ResumenRow icon="grid" value={complies ? (summary.courtNames?.length ? `Canchas: ${summary.courtNames.join(', ')}` : (summary.configLabel || 'Cancha por confirmar')) : 'Cancha por confirmar'} />
+            {isMultiVenue ? (() => {
+              // MULTI-VENUE: canchas del venue SELECCIONADO (fields de esa sede en la reserva física).
+              const names = (selectedVenue.fields || []).map(f => f.field_name).filter(Boolean);
+              return <ResumenRow icon="grid" value={names.length ? `Canchas: ${names.join(', ')}` : 'Cancha por confirmar'} />;
+            })() : (
+              <ResumenRow icon="grid" value={complies ? (summary.courtNames?.length ? `Canchas: ${summary.courtNames.join(', ')}` : (summary.configLabel || 'Cancha por confirmar')) : 'Cancha por confirmar'} />
+            )}
             {/* Amenities — 7v7 (píldora con icono de dos personas de Partidos) + Aire libre + amenities del venue */}
             {complies && !summary.courtCustom && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
@@ -1789,6 +1853,9 @@ export default function ChampionshipView() {
         if (!dm) return null;
         const homeRoster = regPlayers.filter(p => dm.home_team_id && p.team_id === dm.home_team_id);
         const awayRoster = regPlayers.filter(p => dm.away_team_id && p.team_id === dm.away_team_id);
+        // Objetivo 3: el match tiene UNA sede concreta (field_id) → tocar el holder abre la ficha /venue directa
+        // (NO el selector), aunque el campeonato tenga varios venues. Se resuelve por field_id dentro de venues[].
+        const dmVenueEntry = venueEntryForField(dm.field_id);
         return (
           <MatchDetailModal
             key={dm.id}
@@ -1800,10 +1867,20 @@ export default function ChampionshipView() {
             dateLabel={dm.date_key ? formatDateLabel(dm.date_key).replace(/^(Hoy|Mañana),\s*/, '') : null}
             timeRange={matchTimeRange(dm.start_time, dm.duration_min)} durationMin={dm.duration_min}
             canEdit={canManageResults} busy={matchSaving} designOf={designOf}
+            onOpenVenue={dmVenueEntry ? () => goVenueState(venueStateFromEntry(dmVenueEntry)) : undefined}
             onClose={() => setMatchDetailId(null)} onSave={doSaveMatchResult}
           />
         );
       })()}
+
+      {/* Selector de SEDE (Fase 38, multi-venue): solo cambia el venue mostrado en el bloque de sede/dirección. */}
+      <VenuePickerSheet
+        open={venuePickerOpen}
+        venues={venuesReal}
+        selectedIndex={selectedVenueIdx}
+        onSelect={(i) => { setSelectedVenueIdx(i); setVenuePickerOpen(false); }}
+        onCancel={() => setVenuePickerOpen(false)}
+      />
     </div>
   );
 }

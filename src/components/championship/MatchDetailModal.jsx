@@ -58,7 +58,7 @@ function RosterCol({ players, side, goalsMap, setGoal, canEdit }) {
 
 export default function MatchDetailModal({
   match, home, away, homeRoster = [], awayRoster = [], existingGoals = [],
-  venue, court, dateLabel, timeRange, durationMin, canEdit = false, busy = false, designOf, onClose, onSave,
+  venue, court, dateLabel, timeRange, durationMin, canEdit = false, busy = false, designOf, onClose, onSave, onOpenVenue,
 }) {
   // Estado local del marcador (string para permitir vacío) y de los goles por jugador.
   const [hs, setHs] = useState(match?.home_score != null ? String(match.home_score) : '');
@@ -110,13 +110,25 @@ export default function MatchDetailModal({
           <TeamHead team={away} align="right" designOf={designOf} />
         </div>
 
-        {/* Datos del partido */}
-        <div style={{ marginTop: 14, padding: '10px 12px', background: SOFT, borderRadius: 12, fontSize: 12.5, color: TEXT, lineHeight: 1.7 }}>
-          <div><span style={{ color: SUB }}>Sede:</span> {venue || 'Por definir'}</div>
-          <div><span style={{ color: SUB }}>Cancha:</span> {court || 'Por definir'}</div>
-          <div><span style={{ color: SUB }}>Fecha:</span> {dateLabel || 'Por definir'}</div>
-          <div><span style={{ color: SUB }}>Hora:</span> {timeRange || 'Por definir'}{durationMin ? ` · ${durationMin} min` : ''}</div>
-        </div>
+        {/* Datos del partido. Si onOpenVenue existe, el holder abre la ficha del venue/cancha de ESTE partido
+            (sede concreta por field_id) — reutiliza /venue con foto/mapa/info. No es un selector. */}
+        {(() => {
+          const rows = (
+            <>
+              <div><span style={{ color: SUB }}>Sede:</span> {venue || 'Por definir'}</div>
+              <div><span style={{ color: SUB }}>Cancha:</span> {court || 'Por definir'}</div>
+              <div><span style={{ color: SUB }}>Fecha:</span> {dateLabel || 'Por definir'}</div>
+              <div><span style={{ color: SUB }}>Hora:</span> {timeRange || 'Por definir'}{durationMin ? ` · ${durationMin} min` : ''}</div>
+            </>
+          );
+          const box = { marginTop: 14, padding: '10px 12px', background: SOFT, borderRadius: 12, fontSize: 12.5, color: TEXT, lineHeight: 1.7 };
+          if (onOpenVenue) {
+            return (
+              <button type="button" onClick={busy ? undefined : onOpenVenue} className="pressable" style={{ ...box, display: 'block', width: '100%', textAlign: 'left', border: 'none', cursor: busy ? 'default' : 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{rows}</button>
+            );
+          }
+          return <div style={box}>{rows}</div>;
+        })()}
 
         {/* Roster en dos columnas (local izquierda / visitante derecha) con goles al centro */}
         <div style={{ marginTop: 14, display: 'flex', gap: 12 }}>

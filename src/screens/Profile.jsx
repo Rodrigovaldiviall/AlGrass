@@ -2593,7 +2593,7 @@ export default function Profile() {
         `)
         .eq('host_user_id', uid)
         .in('type', ['match', 'rental'])
-        .in('status', ['published', 'reserved', 'completed', 'expired'])
+        .in('status', ['published', 'reserved', 'completed'])   // sin 'expired': reserva host abortada/vencida no se muestra en Perfil
         .is('championship_id', null)   // Campeonatos: un game retenido/reservado por un campeonato NO es un Rental/Match administrable del host original
         .then(async ({ data, error }) => {
           setHostedFresh(true);
