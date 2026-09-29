@@ -3,7 +3,7 @@ import { useNavigate, useLocation, useParams, useSearchParams } from 'react-rout
 import { useAuth } from '../context/AuthContext';
 import { useGlobalRoles } from '../hooks/useGlobalRoles';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, RED } from '../constants';
-import Shield, { getTeamAbbreviation } from '../components/championship/Shield';
+import Shield from '../components/championship/Shield';
 import PlayerAvatar from '../components/championship/PlayerAvatar';
 import MapsLinkButton from '../components/MapsLinkButton';
 import { useChampionshipOrganizerPhone } from '../hooks/useChampionshipOrganizerPhone';
@@ -13,7 +13,7 @@ import ConfirmExitDialog from '../components/ConfirmExitDialog';
 import I from '../icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';   // antena "En vivo" (mismo icono que Games/Profile)
-import { buildTeams, combinedRoster, mockStandings, mockScorers, mockMatches, formatForTeamCount, chunkByCounts, playerLabel, CURRENT_USER_NAME, TEAM_DESIGNS, DEFAULT_DESIGN } from '../data/championshipTeamsMock';
+import { buildTeams, combinedRoster, mockStandings, mockScorers, mockMatches, formatForTeamCount, chunkByCounts, playerLabel, CURRENT_USER_NAME, TEAM_DESIGNS, DEFAULT_DESIGN, designFromColor } from '../data/championshipTeamsMock';
 import { CHAMPIONSHIP_BASE_PRICE, CHAMPIONSHIP_REGISTRATION_CLOSE_DAYS, mockPublishDelay, soles } from '../data/championshipCheckoutMock';
 import { buildFixture, visualCapacity, realTeamCapacity } from '../data/championshipFixtures';
 import { formatDateLabel } from '../utils/format';
@@ -24,7 +24,7 @@ import MatchDetailModal from '../components/championship/MatchDetailModal';
 import { effPhaseOf, rosterWindows } from '../utils/championshipRoster';
 import { PlayerModal } from './GameDetail';   // MISMO perfil público que el roster de Match (sin duplicar)
 import { validateCoverImage, uploadChampionshipCover, getChampionshipCoverUrl, deleteChampionshipCover } from '../utils/championshipCoverImage';
-import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, publishChampionshipRpc, updateChampionshipCover, joinChampionshipWithoutTeam, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, getChampionshipRegistrationState, getChampionshipCompetition, manageChampionshipPlayer, saveChampionshipMatchResult, setChampionshipMatchTeam, toggleChampionshipLive } from '../services/championshipService';
+import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, publishChampionshipRpc, updateChampionshipCover, joinChampionshipWithoutTeam, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, getChampionshipRegistrationState, getChampionshipCompetition, manageChampionshipPlayer, saveChampionshipMatchResult, setChampionshipMatchTeam, toggleChampionshipLive, setChampionshipChampion } from '../services/championshipService';
 import TeamPickerSheet from '../components/championship/TeamPickerSheet';
 import { slotTeamConflicts } from '../utils/championshipFixture';
 
@@ -260,6 +260,11 @@ export default function ChampionshipView() {
   const [bracketErr, setBracketErr] = useState('');
   const [bracketConflicts, setBracketConflicts] = useState({}); // { teamId: "HH:MM–HH:MM" } equipos ocupados
   const [liveBusy, setLiveBusy] = useState(false);              // toggle EN VIVO en curso (evita doble click)
+  // Selección de CAMPEÓN (Fase 36): selector de equipo (TeamPickerSheet) + guardado por RPC.
+  const [champPickOpen, setChampPickOpen] = useState(false);
+  const [champSel, setChampSel] = useState(null);
+  const [champBusy, setChampBusy] = useState(false);
+  const [champErr, setChampErr] = useState('');
   // Gestión Owner/Host (Fase 23): subvista admin (Inscripciones/Calendario), modo edición del roster y el
   // action sheet del jugador. NO cambian status ni lifecycle; es navegación/gestión interna de la pantalla.
   const [adminView, setAdminView] = useState(restore?.adminView ?? null);   // 'inscripciones' | 'resultados' | null
@@ -546,12 +551,14 @@ export default function ChampionshipView() {
   // otra persona —eso lo decide la RPC, aquí no se vuelve a comparar—.
   const regOrganizers = regState?.organizers || null;
   const emptyRealSlots = Math.max(0, realSlotCount - regTeamCount);
-  const designOf = (id) => TEAM_DESIGNS.find(d => d.id === id) || DEFAULT_DESIGN;
+  // design llega como ID (texto). Si el ID está en el catálogo → su template (tema exacto guardado). Si NO está
+  // (catálogo desalineado) → sólido con el COLOR guardado del equipo (refleja el tema, no el azul por defecto).
+  const designOf = (id, color) => TEAM_DESIGNS.find(d => d.id === id) || (color ? designFromColor(color) : DEFAULT_DESIGN);
   // Normaliza un equipo del backend (championship_teams) a la MISMA representación visual que Inscripciones:
   // design llega como ID (texto) → se resuelve a objeto con designOf (igual que el grid de Inscripciones), y
   // color cae al gris por defecto si viniera vacío. Así un mismo championship_team.id se ve idéntico en
   // Inscripciones, Tabla, Partidos, Llave y Goleadores (Shield espera el OBJETO de diseño, no el id).
-  const teamView = (t) => t ? { ...t, color: t.color || '#5B6470', design: designOf(t.design) } : t;
+  const teamView = (t) => t ? { ...t, color: t.color || '#5B6470', design: designOf(t.design, t.color) } : t;
 
   // ── Header del campeonato REAL. Estados especiales primero; publicado → título por ETAPA:
   //    registration_open = "Inscripciones abiertas"; closed/in_progress/completed = "Calendario y resultados". ──
@@ -559,7 +566,7 @@ export default function ChampionshipView() {
     champ?.status === 'payment_validation' ? 'Validando pago'
     : champ?.status === 'pending_publish' ? 'Pendiente a publicar'
     : champ?.status === 'registration_open' ? 'Inscripciones abiertas'
-    : champ?.status === 'registration_closed' ? 'Inscripciones cerradas'
+    : champ?.status === 'registration_closed' ? 'Equipos confirmados'
     : (champ?.status === 'in_progress' || champ?.status === 'completed') ? 'Calendario y resultados'
     : 'Tu campeonato';   // fallback (p.ej. canceled: solo visible al owner)
   // EN VIVO (Fase 21): ÚNICA marca = status in_progress + live_started_at != null. fixture_published_at NO
@@ -583,6 +590,18 @@ export default function ChampionshipView() {
   //    live_started_at, Fase 21) para reflejar en la UI las MISMAS ventanas del backend (que igual valida). ──
   const amHost = isRealMode && !!user?.id && !!regState?.organizers?.host && regState.organizers.host.user_id === user.id;
   const amManager = amOwner || amHost || amAlgrass;
+  // Orden de la lista de Jugadores (solo presentación): TÚ primero (si estás inscrito). Para host/owner: luego
+  // los SIN equipo (alfabético) y después los CON equipo (alfabético). Para el resto: todos alfabético.
+  // Cálculo plano (sort barato): no useMemo para no atarse a la identidad de regPlayers.
+  const sortedRegPlayers = (() => {
+    const arr = [...(regPlayers || [])];
+    const you = (p) => (p.user_id === user?.id ? 1 : 0);
+    const alpha = (a, b) => (a.full_name || '').localeCompare(b.full_name || '');
+    if (amOwner || amHost) {
+      return arr.sort((a, b) => (you(b) - you(a)) || ((a.team_id ? 1 : 0) - (b.team_id ? 1 : 0)) || alpha(a, b));
+    }
+    return arr.sort((a, b) => (you(b) - you(a)) || alpha(a, b));
+  })();
   // Editar PORTADA (Fase 25): owner, host o AlGrass (jugador normal NO). El backend valida igual (update_championship_cover).
   const canEditCover = amOwner || amHost || amAlgrass;
   // Ventanas de gestión de roster: MISMA lógica compartida que ChampionshipTeam (util championshipRoster).
@@ -599,6 +618,9 @@ export default function ChampionshipView() {
   const canAssignSlot = (amHostAccess || amHost || amAlgrass) && champ?.status === 'in_progress';
   // Toggle EN VIVO (Fase 34): host (realRow.is_host, autoritativo) o AlGrass, SOLO en in_progress. Owner puro/jugador NO.
   const canToggleLive = (amHostAccess || amAlgrass) && champ?.status === 'in_progress';
+  // Definir/cambiar campeón (Fase 36): host in_progress; AlGrass in_progress+completed. Espejo de _champ_can_manage_results.
+  const canSetChampion = (amHostAccess && champ?.status === 'in_progress')
+    || (amAlgrass && (champ?.status === 'in_progress' || champ?.status === 'completed'));
   // SELF (Fase 35): el Host NUNCA se inscribe como jugador (aunque sea owner; el rol Host tiene prioridad) →
   // oculta las acciones SELF (unirse sin equipo). Conserva su gestión operativa (equipos/terceros). Espejo del backend.
   const hostBlocksSelf = amHost;
@@ -683,6 +705,15 @@ export default function ChampionshipView() {
     (competition?.matches || []).forEach(x => { if (x.home_team) m[x.home_team.id] = teamView(x.home_team); if (x.away_team) m[x.away_team.id] = teamView(x.away_team); });
     return m;
   }, [competition]);
+  // Resolvedor ÚNICO de equipo por id (para escudos): prioriza la competición (MISMA fuente/objeto que la Tabla)
+  // y cae a regTeams (regState) si aún no hay competición cargada. Así Tabla, Goleadores y Jugadores muestran
+  // EXACTAMENTE el mismo tema/diseño para un mismo equipo (evita divergencias por regState desincronizado).
+  const teamViewById = (id) => {
+    if (!id) return null;
+    if (compTeamById[id]) return compTeamById[id];
+    const r = regTeams.find(t => t.id === id);
+    return r ? teamView(r) : null;
+  };
   // Equipos reales (para cfg/Llave/contador), únicos, en el orden del standings del backend.
   const compTeams = useMemo(() => {
     const seen = new Set(); const out = [];
@@ -695,7 +726,7 @@ export default function ChampionshipView() {
     (competition?.standings || []).forEach(s => {
       const code = s.group_code ?? '';
       if (!byCode.has(code)) { byCode.set(code, []); order.push(code); }
-      byCode.get(code).push({ team: s.team ? teamView(s.team) : { id: s.team_id, name: 'Equipo', color: '#5B6470', design: DEFAULT_DESIGN }, pj: s.pj, g: s.pg, e: s.pe, p: s.pp, gf: s.gf, gc: s.gc, dg: s.dg, pts: s.pts, results: [] });
+      byCode.get(code).push({ team: s.team ? teamView(s.team) : { id: s.team_id, name: 'Equipo', color: '#5B6470', design: DEFAULT_DESIGN }, pj: s.pj, g: s.pg, e: s.pe, p: s.pp, gf: s.gf, gc: s.gc, dg: s.dg, pts: s.pts, results: teamLast5(competition?.matches, s.team_id) });
     });
     return order.map((code, i) => ({ code, label: isLiga ? 'Tabla de posiciones' : (code ? `Grupo ${code}` : `Grupo ${i + 1}`), rows: byCode.get(code) }));
   }, [competition, isLiga]);
@@ -706,19 +737,18 @@ export default function ChampionshipView() {
   const compScorers = useMemo(() => {
     const goalsBy = {};
     (competition?.scorers || []).forEach(s => { if (s.player_user_id) goalsBy[s.player_user_id] = s.goals || 0; });
-    const teamOf = (tid) => {
-      if (!tid) return { name: '—', color: '#5B6470', design: DEFAULT_DESIGN };
-      const raw = regTeams.find(t => t.id === tid);
-      return compTeamById[tid] || (raw ? teamView(raw) : { name: '—', color: '#5B6470', design: DEFAULT_DESIGN });
-    };
+    const teamOf = (tid) => teamViewById(tid) || { name: '—', color: '#5B6470', design: DEFAULT_DESIGN };
     const list = (regPlayers || [])
       .filter(p => p.team_id)   // SOLO jugadores con equipo (team_id null → no pertenece a ninguno)
       .map(p => ({
         id: p.user_id, name: p.full_name || 'Jugador', avatar_path: p.avatar_path, avatar_hue: p.avatar_hue,
         team: teamOf(p.team_id), goals: goalsBy[p.user_id] || 0,
       }));
+    // Orden: TÚ primero (si estás inscrito), luego por MÁS goles (desc); desempate alfabético.
     return list.sort((a, b) =>
-      ((b.id === user?.id ? 1 : 0) - (a.id === user?.id ? 1 : 0)) || (a.name || '').localeCompare(b.name || ''));
+      ((b.id === user?.id ? 1 : 0) - (a.id === user?.id ? 1 : 0))
+      || ((b.goals || 0) - (a.goals || 0))
+      || (a.name || '').localeCompare(b.name || ''));
   }, [competition, compTeamById, regPlayers, regTeams, user?.id]);
   // Partidos: shape de MatchCard (a/b equipos o {tbd}; played; sa/sb; court/venue; fecha/hora formateadas).
   const compMatches = useMemo(() => (competition?.matches || []).map(m => {
@@ -746,21 +776,15 @@ export default function ChampionshipView() {
     return { hasSemifinals: semis.length > 0, hasThirdPlace: !!third, semis: [pair(semis[0]), pair(semis[1])], final: pair(final), third: pair(third) };
   }, [competition]);
   const comp = useMemo(() => ({ teams: compTeams, teamCount: compTeams.length, groups: compGroups, scorers: compScorers, matches: compMatches, bracket: compBracket }), [compTeams, compGroups, compScorers, compMatches, compBracket]);
-  // Campeón: SOLO la FINAL (stage='final'). Ganador = qualified_team_id si está (mecanismo vigente para empates);
-  // si no, por marcador (mayor). Sin marcador o empate sin qualified → null (no se muestra el holder). No crea
-  // champion_team_id nuevo: se deriva de datos existentes. Público (no depende del actor). Persiste en completed.
+  // Campeón OFICIAL (Fase 36): EXCLUSIVAMENTE championships.champion_team_id (dato manual, NO inferido de la
+  // final). NULL → sin campeón. Se resuelve el equipo desde los datos ya cargados (compTeams/regTeams).
+  const championTeamId = realRow?.champion_team_id || null;
   const champion = useMemo(() => {
-    const f = (competition?.matches || []).find(m => m.stage === 'final');
-    if (!f) return null;
-    let winnerId = null;
-    if (f.qualified_team_id) winnerId = f.qualified_team_id;
-    else if (f.home_score != null && f.away_score != null && f.home_score !== f.away_score) {
-      winnerId = f.home_score > f.away_score ? f.home_team_id : f.away_team_id;
-    }
-    if (!winnerId) return null;
-    const t = f.home_team_id === winnerId ? f.home_team : (f.away_team_id === winnerId ? f.away_team : null);
-    return t ? { id: winnerId, team: teamView(t) } : null;
-  }, [competition]);
+    if (!championTeamId) return null;
+    const raw = (regTeams || []).find(x => x.id === championTeamId);
+    const t = compTeamById[championTeamId] || (raw ? teamView(raw) : null);
+    return t ? { id: championTeamId, team: t } : null;
+  }, [championTeamId, compTeamById, regTeams]);
 
   // ── Subvista Owner/Host/AlGrass (Fase 23 rework): selector [Inscripciones | Resultados] desde pending_publish
   //    en adelante. hasFixture = ¿existe calendario? (competition.matches, dato existente); Resultados solo se
@@ -913,6 +937,32 @@ export default function ChampionshipView() {
       return;   // sin cambiar realRow → el indicador conserva su estado visual
     }
     setRealRow(prev => (prev ? { ...prev, status: data.status, live_started_at: data.live_started_at } : prev));
+  }
+  // Guardar campeón OFICIAL (Fase 36): host/AlGrass. Guarda por RPC y refresca solo realRow.champion_team_id.
+  function openChampPick() { setChampSel(championTeamId || null); setChampErr(''); setChampPickOpen(true); }
+  async function saveChampion() {
+    if (champBusy || !champSel) return;
+    setChampBusy(true); setChampErr('');
+    const { data, error } = await setChampionshipChampion({ championshipId: realId, teamId: champSel });
+    setChampBusy(false);
+    if (error || !data) {
+      const m = String(error?.message || '');
+      setChampErr(/NOT_AUTHORIZED/.test(m) ? 'No tienes permiso para definir el campeón.'
+        : /TEAM_NOT_FOUND/.test(m) ? 'Ese equipo no es válido.'
+        : 'No se pudo guardar el campeón.');
+      return;
+    }
+    setChampPickOpen(false); setChampSel(null);
+    setRealRow(prev => (prev ? { ...prev, champion_team_id: data.champion_team_id } : prev));
+  }
+  // Quitar campeón (Fase 36): limpia champion_team_id (p_team_id null) → el slot vuelve a "Seleccionar campeón".
+  async function clearChampion() {
+    if (champBusy) return;
+    setChampBusy(true);
+    const { data, error } = await setChampionshipChampion({ championshipId: realId, teamId: null });
+    setChampBusy(false);
+    if (error || !data) { flashToast('No se pudo quitar el campeón.'); return; }
+    setRealRow(prev => (prev ? { ...prev, champion_team_id: data.champion_team_id } : prev));
   }
   function requestJoinTeam(t) {
     if (regBusy) return;
@@ -1405,7 +1455,7 @@ export default function ChampionshipView() {
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, margin: '0 0 12px', padding: '12px 14px', background: '#FFF7EA', border: `1px solid ${ORANGE}66`, borderRadius: 12 }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="12" cy="12" r="9" stroke={ORANGE} strokeWidth="1.8" /><path d="M12 11v5" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" /><circle cx="12" cy="7.5" r="1.1" fill={ORANGE} /></svg>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: TEXT, lineHeight: 1.45 }}>{champ?.status === 'registration_closed' ? 'Inscripciones cerradas' : 'Calendario y resultados'}</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: TEXT, lineHeight: 1.45 }}>{champ?.status === 'registration_closed' ? 'Equipos confirmados' : 'Calendario y resultados'}</div>
                   <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.45, marginTop: 3 }}>Solo tú como organizador podrás navegar entre inscripciones y resultados para editar.</div>
                 </div>
               </div>
@@ -1425,7 +1475,7 @@ export default function ChampionshipView() {
                    desde get_championship_competition (datos YA calculados por el backend; sin recálculo aquí).
                    El estado LIVE se indica con "Ahora" SOBRE la portada (arriba), no aquí. */
                 <>
-                  <Resultados view={resultsView} setView={setResultsView} teams={comp.teams} standings={[]} scorers={[]} matches={[]} venueName={summary.venueName || 'AlGrass Arena'} openTeam={openTeamReal} filter={comp.teams.find(t => t.id === matchFilterId) || null} onFilter={team => setMatchFilterId(team ? team.id : null)} onOpenMatch={setMatchDetailId} isLiga={isLiga} real={true} comp={comp} meId={user?.id} onSelectPlayer={setSelectedPlayer} realOrganizers={regOrganizers} onAssignSlot={openBracketAssign} canAssignSlot={canAssignSlot} />
+                  <Resultados view={resultsView} setView={setResultsView} teams={comp.teams} standings={[]} scorers={[]} matches={[]} venueName={summary.venueName || 'AlGrass Arena'} openTeam={openTeamReal} filter={comp.teams.find(t => t.id === matchFilterId) || null} onFilter={team => setMatchFilterId(team ? team.id : null)} onOpenMatch={setMatchDetailId} isLiga={isLiga} real={true} comp={comp} meId={user?.id} onSelectPlayer={setSelectedPlayer} realOrganizers={regOrganizers} onAssignSlot={openBracketAssign} canAssignSlot={canAssignSlot} championTeamId={championTeamId} canSetChampion={canSetChampion} onSetChampion={openChampPick} onClearChampion={clearChampion} />
                 </>
               ) : (
                 /* pending_publish / payment_validation / registration_open → Inscripciones REAL.
@@ -1448,11 +1498,8 @@ export default function ChampionshipView() {
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, margin: '0 0 12px', padding: '12px 14px', background: '#FFF7EA', border: `1px solid ${ORANGE}66`, borderRadius: 12 }}>
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="12" cy="12" r="9" stroke={ORANGE} strokeWidth="1.8" /><path d="M12 11v5" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" /><circle cx="12" cy="7.5" r="1.1" fill={ORANGE} /></svg>
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 800, color: TEXT, lineHeight: 1.45 }}>Inscripciones cerradas</div>
-                        {!amManager && <>
-                          <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.45, marginTop: 3 }}>Ya no es posible registrarse. Para nuevas solicitudes, comunícate con el organizador.</div>
-                          <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.45, marginTop: 8 }}>Próximamente publicaremos el calendario del campeonato.</div>
-                        </>}
+                        <div style={{ fontSize: 13, fontWeight: 800, color: TEXT, lineHeight: 1.45 }}>Equipos confirmados</div>
+                        <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.45, marginTop: 3 }}>Aún puedes inscribirte o cambiar de equipo, pero ya no es posible crear nuevos equipos.</div>
                       </div>
                     </div>
                   )}
@@ -1462,9 +1509,9 @@ export default function ChampionshipView() {
                     <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginTop: 4, marginBottom: 12 }}>
                       {myMembership
                         ? (canJoinTeam ? 'Estás inscrito. Puedes cambiar de equipo o salir mientras las inscripciones sigan abiertas.'
-                                       : 'Estás inscrito. Las inscripciones están cerradas: el roster ya no puede cambiarse.')
+                                       : 'Estás inscrito.')
                         : canJoinTeam ? (regTeams.length ? 'Toca un equipo para unirte.' : 'Aún no hay equipos.') + (canCreate ? ' También puedes crear el tuyo o unirte sin equipo.' : '')
-                        : champ?.status === 'registration_closed' ? 'Las inscripciones están cerradas. Puedes ver los equipos y sus jugadores.'
+                        : champ?.status === 'registration_closed' ? 'Inscríbete a un equipo.'
                         : 'Selecciona un cupo para sumarte o crea tu propio equipo.'}
                     </div>
 
@@ -1537,7 +1584,7 @@ export default function ChampionshipView() {
                         Puedes organizar a los jugadores desde ⋮ junto a cada nombre.
                       </div>
                     )}
-                    {regPlayers.length > 0 ? regPlayers.map((p, i) => (
+                    {sortedRegPlayers.length > 0 ? sortedRegPlayers.map((p, i) => (
                       <div key={p.user_id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderTop: i === 0 ? 'none' : `1px solid ${HAIR}` }}>
                         {/* Nombre/avatar → PlayerModal (perfil). NO se mezcla con la gestión (⋮). */}
                         <button onClick={() => setSelectedPlayer({ user_id: p.user_id, name: p.full_name })} className="pressable" style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 12, background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
@@ -1546,11 +1593,9 @@ export default function ChampionshipView() {
                           <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{(p.full_name || 'Jugador') + (p.user_id === user?.id ? ' (tú)' : '')}</div>
                         </button>
                         {p.team_id
-                          ? (() => { const t = regTeams.find(x => x.id === p.team_id); return (
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0, minWidth: 0, maxWidth: '40%' }}>
-                                <Shield color={t?.color || '#5B6470'} design={designOf(t?.design)} name="" size={14} />
-                                <span style={{ fontSize: 12, color: SUB, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{getTeamAbbreviation(p.team_name)}</span>
-                              </span>
+                          ? (() => { const t = teamViewById(p.team_id); return (
+                              // Escudo con SIGLAS dentro (MISMA fuente/resolución que la Tabla, size 28); sin siglas fuera.
+                              <Shield color={t?.color || '#5B6470'} design={t?.design || DEFAULT_DESIGN} name={p.team_name} size={28} />
                             ); })()
                           : <span style={{ fontSize: 12, color: '#C7C7CC', flexShrink: 0 }}>Sin equipo</span>}
                         {/* ⋮ gestión — SOLO managers con acción de roster posible (canAdminMove). Backend valida igual. */}
@@ -1712,6 +1757,19 @@ export default function ChampionshipView() {
         onSelect={setBracketSel}
         onCancel={() => { if (!bracketBusy) { setBracketAssign(null); setBracketSel(null); setBracketErr(''); setBracketConflicts({}); } }}
         onSave={saveBracketAssign}
+      />
+      {/* Selector de CAMPEÓN oficial (Fase 36): host/AlGrass. Equipos del campeonato; Guardar → set_championship_champion. */}
+      <TeamPickerSheet
+        open={champPickOpen}
+        title="Seleccionar campeón"
+        teams={compTeams}
+        selectedId={champSel}
+        busy={champBusy}
+        error={champErr}
+        designOf={designOf}
+        onSelect={setChampSel}
+        onCancel={() => { if (!champBusy) { setChampPickOpen(false); setChampSel(null); setChampErr(''); } }}
+        onSave={saveChampion}
       />
 
       {/* Action sheet de GESTIÓN del jugador (⋮) — componente COMPARTIDO con ChampionshipTeam. manage_championship_player. */}
@@ -1892,10 +1950,7 @@ function Inscripciones({ teams, emptySlots, canCreate, onCreate, onOpenTeam, ros
             <PlayerAvatar name={p.name} size={34} />
             <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: TEXT }}>{playerLabel(p)}</div>
             {p.team ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                <Shield color={p.team.color} design={p.team.design} size={16} />
-                <span style={{ fontSize: 12, color: SUB }}>{p.team.name}</span>
-              </div>
+              <Shield color={p.team.color} design={p.team.design} name={p.team.name} size={28} />
             ) : (
               <span style={{ fontSize: 12, color: '#C7C7CC', flexShrink: 0 }}>Sin equipo</span>
             )}
@@ -1909,7 +1964,7 @@ function Inscripciones({ teams, emptySlots, canCreate, onCreate, onOpenTeam, ros
 // ── Resultados (§13) — MOCK visual ────────────────────────────────────────────
 // El área swappable reserva `minHeight` = máximo alto MEDIDO entre vistas → cambiar de vista no
 // acorta el documento (evita el clamp de scrollTop / salto). Sin scrollTo.
-function Resultados({ view, setView, teams, standings, scorers, matches, venueName, openTeam, filter, onFilter, onOpenMatch, isLiga, real = false, organizers = null, comp = null, meId = null, onSelectPlayer = null, realOrganizers = null, onAssignSlot = null, canAssignSlot = false }) {
+function Resultados({ view, setView, teams, standings, scorers, matches, venueName, openTeam, filter, onFilter, onOpenMatch, isLiga, real = false, organizers = null, comp = null, meId = null, onSelectPlayer = null, realOrganizers = null, onAssignSlot = null, canAssignSlot = false, championTeamId = null, canSetChampion = false, onSetChampion = null, onClearChampion = null }) {
   const innerRef = useRef(null);
   const [minH, setMinH] = useState(0);
   // Re-mide también al filtrar → minH conserva el MÁXIMO; filtrar (más corto) nunca reduce la altura.
@@ -1950,7 +2005,7 @@ function Resultados({ view, setView, teams, standings, scorers, matches, venueNa
           {view === 'tabla' && ((useComp ? comp.groups.length === 0 : (real && teamCount === 0))
             ? <div style={CARD}><div style={H}>Tabla de posiciones</div><div style={{ fontSize: 13, color: SUB, marginTop: 8 }}>Aún no hay equipos inscritos.</div></div>
             : <TablaMock groups={groups} cfg={cfg} openTeam={openTeam} isLiga={isLiga} groupLabels={groupLabels} />)}
-          {view === 'llave' && <LlaveMock teams={bracketTeams} cfg={cfg} openTeam={openTeam} real={real || useComp} bracket={useComp ? comp.bracket : null} onAssignSlot={onAssignSlot} canAssignSlot={canAssignSlot} />}
+          {view === 'llave' && <LlaveMock teams={bracketTeams} cfg={cfg} openTeam={openTeam} real={real || useComp} bracket={useComp ? comp.bracket : null} onAssignSlot={onAssignSlot} canAssignSlot={canAssignSlot} championTeamId={championTeamId} canSetChampion={canSetChampion} onSetChampion={onSetChampion} onClearChampion={onClearChampion} />}
           {view === 'partidos' && <PartidosMock matches={displayMatches} venueName={venueName} filter={filter} onFilter={onFilter} onOpenMatch={onOpenMatch} />}
 
           {/* Goleadores: visible en Tabla/Llave, oculto en Partidos (§13.6). Organizadores + Goleadores comparten
@@ -1972,16 +2027,13 @@ function Resultados({ view, setView, teams, standings, scorers, matches, venueNa
                   const label = (meId && p.id === meId) ? `${p.name || 'Jugador'} (tú)` : playerLabel(p);
                   const inner = (
                     <>
+                      {/* Nº (mismo patrón que la lista de Jugadores de Inscripciones) */}
+                      <div style={{ width: 18, fontSize: 12, color: SUB, flexShrink: 0, textAlign: 'right' }}>{i + 1}</div>
                       {useComp ? <RosterAvatar path={p.avatar_path} hue={p.avatar_hue} name={p.name} size={34} /> : <PlayerAvatar name={p.name} size={34} />}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13.5, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</div>
-                        {p.team?.name && (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 1, maxWidth: '100%', minWidth: 0 }}>
-                            <Shield color={p.team.color || '#5B6470'} design={p.team.design} name="" size={13} />
-                            <span style={{ fontSize: 12, color: SUB, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.team.name}</span>
-                          </span>
-                        )}
-                      </div>
+                      <div style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</div>
+                      {/* Escudo del equipo con SIGLAS dentro (mismo componente/escala que Tabla), a la derecha del
+                          nombre y antes de los goles. Sin nombre/siglas por fuera. */}
+                      {p.team && <Shield color={p.team.color || '#5B6470'} design={p.team.design} name={p.team.name} size={28} />}
                       <div style={{ fontSize: 15, fontWeight: 800, color: TEXT, minWidth: 16, textAlign: 'right', flexShrink: 0 }}>{p.goals}</div>
                     </>
                   );
@@ -2003,12 +2055,38 @@ function Resultados({ view, setView, teams, standings, scorers, matches, venueNa
 
 const FORM_COLORS = { w: GREEN, l: RED, d: '#C7C7CC' };
 const FORM_SYMBOL = { w: '✓', l: '×', d: '–' };
+// Últimos 5 (derivado, NO en DB): partidos de GRUPO jugados (ambos scores no null; 0 válido) de ese equipo,
+// ordenados cronológicamente (date_key → start_time → match_order), resultado desde la perspectiva del equipo,
+// y solo los ÚLTIMOS 5 (antiguo→reciente dentro de esos 5). Semi/final/third NO cuentan.
+function teamLast5(matches, teamId) {
+  if (!teamId) return [];
+  const mine = (matches || []).filter(m =>
+    m.stage === 'group'
+    && m.home_score != null && m.away_score != null
+    && (m.home_team_id === teamId || m.away_team_id === teamId));
+  mine.sort((a, b) =>
+    (a.date_key || '').localeCompare(b.date_key || '')
+    || (a.start_time || '').localeCompare(b.start_time || '')
+    || ((a.match_order ?? 0) - (b.match_order ?? 0)));
+  const res = mine.map(m => {
+    const isHome = m.home_team_id === teamId;
+    const gf = isHome ? m.home_score : m.away_score;
+    const gc = isHome ? m.away_score : m.home_score;
+    return gf > gc ? 'w' : (gf === gc ? 'd' : 'l');
+  });
+  return res.slice(-5);   // solo los últimos 5, conservando orden antiguo→reciente
+}
 function FormDots({ results }) {
+  const arr = results || [];
+  // SIEMPRE 5 posiciones: con resultado → dot de color (✓/–/×); vacío → placeholder neutro y discreto.
   return (
     <div style={{ display: 'flex', gap: 4, padding: '0 8px' }}>
-      {(results || []).map((r, i) => (
-        <span key={i} style={{ width: 16, height: 16, borderRadius: '50%', flexShrink: 0, background: FORM_COLORS[r] || '#C7C7CC', color: '#fff', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>{FORM_SYMBOL[r] || '–'}</span>
-      ))}
+      {Array.from({ length: 5 }, (_, i) => {
+        const r = arr[i];
+        return r
+          ? <span key={i} style={{ width: 16, height: 16, borderRadius: '50%', flexShrink: 0, background: FORM_COLORS[r] || '#C7C7CC', color: '#fff', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>{FORM_SYMBOL[r] || '–'}</span>
+          : <span key={i} style={{ width: 16, height: 16, borderRadius: '50%', flexShrink: 0, background: 'transparent', border: `1px solid ${HAIR}`, boxSizing: 'border-box' }} />;
+      })}
     </div>
   );
 }
@@ -2028,7 +2106,7 @@ function GroupTable({ label, sub, rows, openTeam }) {
           <div style={{ height: 30, display: 'flex', alignItems: 'center', fontSize: 11, fontWeight: 700, color: SUB }}>Equipo</div>
           {rows.map(r => (
             <button key={r.team.id} onClick={() => openTeam(r.team)} className="pressable" style={{ height: 40, width: '100%', display: 'flex', alignItems: 'center', gap: 8, paddingRight: 8, background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', paddingLeft: 0, paddingTop: 0, paddingBottom: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-              <Shield color={r.team.color} design={r.team.design} name={r.team.name} size={20} />
+              <Shield color={r.team.color} design={r.team.design} name={r.team.name} size={28} />
               <span style={{ minWidth: 0, fontSize: 13, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.team.name}</span>
             </button>
           ))}
@@ -2141,7 +2219,7 @@ function SemiCol({ a, b, size = 40, onTeam, pending = false, sa = null, sb = nul
 
 // Estructura derivada de cfg. CON semifinales (8/12/16): semifinal izquierda + Final/3.º centrados +
 // semifinal derecha (sin partido intermedio). SIN semifinales: solo Final + 3.º/4.º.
-function LlaveMock({ teams, cfg, openTeam, real = false, bracket = null, onAssignSlot = null, canAssignSlot = false }) {
+function LlaveMock({ teams, cfg, openTeam, real = false, bracket = null, onAssignSlot = null, canAssignSlot = false, championTeamId = null, canSetChampion = false, onSetChampion = null, onClearChampion = null }) {
   // bracket (Fase 16) = cuadro REAL derivado de los partidos de eliminación. Sin bracket: preview legacy
   // (real → todos "Por definir"; demo → teams mock). Con bracket: se pintan los equipos reales por fase.
   const useReal = !!bracket;
@@ -2152,6 +2230,8 @@ function LlaveMock({ teams, cfg, openTeam, real = false, bracket = null, onAssig
   const finalB = useReal ? bracket.final.b : (cfg.hasSemifinals ? null : t(1));
   const thirdA = useReal ? bracket.third.a : (cfg.hasSemifinals ? null : t(2));
   const thirdB = useReal ? bracket.third.b : (cfg.hasSemifinals ? null : t(3));
+  // Campeón OFICIAL: se resuelve por champion_team_id contra los equipos del campeonato (teams). NO de la final.
+  const championTeam = championTeamId ? (teams || []).find(x => x.id === championTeamId) || null : null;
 
   // Centro: Final + 3.º/4.º. Con semis (y sin bracket real), los finalistas son "a definir" (dashed).
   const center = (
@@ -2175,6 +2255,33 @@ function LlaveMock({ teams, cfg, openTeam, real = false, bracket = null, onAssig
           <SemiCol a={useReal ? bracket.semis[1].a : t(2)} b={useReal ? bracket.semis[1].b : t(3)} sa={useReal ? bracket.semis[1].sa : null} sb={useReal ? bracket.semis[1].sb : null} matchId={useReal ? bracket.semis[1].mid : null} onAssign={onAssignSlot} canAssign={canAssignSlot} onTeam={openTeam} pending={real || useReal} />
         </div>
       ) : center}
+
+      {/* CAMPEÓN del torneo (Fase 36) — DEBAJO de Final/3.º, pieza separada. Fuente ÚNICA: champion_team_id (NO
+          se infiere de la final). Con campeón → equipo + "Campeón" (+ "Cambiar campeón" si autorizado). Sin
+          campeón → placeholder "Seleccionar campeón" SOLO para Host/AlGrass; jugador/owner-no-host/anon no lo ven. */}
+      {useReal && (championTeam || canSetChampion) && (
+        <>
+          <div style={{ height: 1, background: HAIR, margin: '16px 0 12px' }} />
+          {championTeam ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              <Shield color={championTeam.color} design={championTeam.design} name={championTeam.name} size={46} />
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, textTransform: 'uppercase', color: '#B8860B', display: 'flex', alignItems: 'center', gap: 5 }}><span aria-hidden="true">🏆</span> Campeón</div>
+              <div style={{ fontSize: 14.5, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>{championTeam.name}</div>
+              {canSetChampion && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 2 }}>
+                  <button onClick={onSetChampion} className="pressable" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: BLUE, fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700, padding: '2px 6px', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Cambiar campeón</button>
+                  <button onClick={onClearChampion || undefined} className="pressable" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: SUB, fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700, padding: '2px 6px', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Quitar campeón</button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <button onClick={onSetChampion} className="pressable" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+              <Shield dashed size={46} />
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: BLUE }}>Seleccionar campeón</span>
+            </button>
+          )}
+        </>
+      )}
 
       <div style={{ fontSize: 11.5, color: SUB, marginTop: 14, textAlign: 'center' }}>{useReal ? 'Cuadro eliminatorio.' : real ? 'Los clasificados se definirán con los resultados.' : 'Cuadro eliminatorio de ejemplo.'}</div>
     </div>

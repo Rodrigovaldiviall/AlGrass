@@ -140,7 +140,7 @@ function champBadge(status, isParticipant = false, liveStartedAt = null) {
   if (isParticipant) {
     // El participante solo existe desde registration_open; estados de pre-publicación caen al general.
     if (status === 'registration_open')   return { lines: ['Inscrito', 'Ins. Abiertas'], live };
-    if (status === 'registration_closed') return { lines: ['Inscrito', 'Ins. Cerradas'], live };
+    if (status === 'registration_closed') return { lines: ['Inscrito', 'Confirmados'], live };
     if (status === 'in_progress')          return { lines: ['Inscrito', 'Calendario'], live };
     // FUTURO (fixture_published_at != null y aún no in_progress) → { lines: ['Inscrito', 'Calendario'], live:false }
   }
@@ -148,7 +148,7 @@ function champBadge(status, isParticipant = false, liveStartedAt = null) {
     case 'payment_validation':  return { lines: ['Validando', 'Pago'], live };
     case 'pending_publish':     return { lines: ['Pendiente', 'Publicar'], live };
     case 'registration_open':   return { lines: ['Ins. Abiertas'], live };
-    case 'registration_closed': return { lines: ['Ins. Cerradas'], live };
+    case 'registration_closed': return { lines: ['Equipos', 'confirmados'], live };
     case 'in_progress':         return { lines: ['Calendario'], live };  // FUTURO: fixture_published_at define este texto antes de in_progress
     case 'completed':           return { lines: ['Finalizado'], live };  // se ubica en Eventos pasados
     case 'canceled':            return { lines: ['Cancelado'], live };

@@ -318,7 +318,7 @@ export default function ChampionshipTeam() {
     const amAdmin = amOwner || amAlgrass;
     // Gestión de roster (Fase 23): host desde organizers; canAdminMove = MISMA lógica compartida (championshipRoster).
     const amHost = !!rState?.organizers?.host && rState.organizers.host.user_id === user?.id;
-    const { canAdminMove, canAdminAddNew } = rosterWindows(effPhaseOf(st, champLive), { amOwner, amHost, amAlgrass });
+    const { canAdminMove, canAdminEdit, canAdminAddNew } = rosterWindows(effPhaseOf(st, champLive), { amOwner, amHost, amAlgrass });
     const joinedHere = myMem?.team_id === teamId;
     // SELF (Fase 35): Host puro NUNCA se inscribe. Owner: join/cambiar en RO/RC/PRE/LIVE; salir solo RO.
     // Player: join/cambiar en RO/RC/PRE (no LIVE); salir solo RO. Espejo del backend (join_championship_team/leave).
@@ -342,19 +342,23 @@ export default function ChampionshipTeam() {
       || (!!rt?.created_by_user_id && !!rState?.owner_user_id && rt.created_by_user_id === rState.owner_user_id);
     // Edición COMPLETA (nombre+color+diseño): equipo VACÍO → cualquier usuario si lo creó un jugador normal;
     // si lo creó owner/AlGrass, solo owner/AlGrass. Con jugadores → SOLO el capitán. Válida en open (o pending
-    // si owner/AlGrass).
-    const canEditFull = ((pc === 0 && (!creatorPrivileged || amAdmin)) || (pc >= 1 && amCaptain))
-      && (isOpen || (st === 'pending_publish' && amAdmin));
+    // si owner/AlGrass). ADEMÁS: owner/host/AlGrass en su ventana edit_team (canAdminEdit, Phase 33) → también
+    // completa (nombre+color+diseño), no solo nombre — espejo de save_championship_team (v_can_edit). Sin cambiar
+    // quién/cuándo puede editar: solo se habilita el selector de diseño donde el backend ya permite editar.
+    const canEditFull = (((pc === 0 && (!creatorPrivileged || amAdmin)) || (pc >= 1 && amCaptain))
+      && (isOpen || (st === 'pending_publish' && amAdmin)))
+      || canAdminEdit;
     // Rename ADMIN (solo nombre): owner/host/AlGrass, cuando no aplica FULL. CUALQUIER fase (Fase 26).
     const canRenameAdmin = (amOwner || amHost || amAlgrass) && !canEditFull;
     const canEditName = canEditFull || canRenameAdmin;                 // muestra el lápiz
     const editNameOnly = canEditName && !canEditFull;                  // editor sin selector de diseño
-    // Borrar (espejo EXACTO del backend): SOLO roster ACTUAL = 0 y autorización POR ESTADO:
-    //   registration_open → team normal cualquiera / team privilegiado solo owner-AlGrass.
-    //   pending_publish y registration_closed → solo owner/AlGrass. in_progress/completed → nadie.
+    // Borrar (espejo EXACTO del backend delete_championship_team → _champ_can_manage_roster('delete_team')):
+    //   SOLO roster ACTUAL = 0 y autorización POR ESTADO:
+    //   registration_open → team normal cualquiera / team privilegiado solo owner/host/AlGrass.
+    //   pending_publish y registration_closed → owner/host/AlGrass. in_progress/completed → nadie.
     const canDeleteTeam = pc === 0 && (
-      isOpen ? (amAdmin || !creatorPrivileged)
-        : (st === 'pending_publish' || st === 'registration_closed') ? amAdmin
+      isOpen ? (amAdmin || amHost || !creatorPrivileged)
+        : (st === 'pending_publish' || st === 'registration_closed') ? (amAdmin || amHost)
         : false
     );
     const rTrim = rName.trim();

@@ -215,6 +215,12 @@ export function saveChampionshipMatchResult({ matchId, homeScore, awayScore, goa
   });
 }
 
+// set_championship_champion (Fase 36): Host/AlGrass define/cambia/limpia (teamId null) el campeón OFICIAL
+// (championships.champion_team_id). Autorización/estado los valida el backend (_champ_can_manage_results).
+export function setChampionshipChampion({ championshipId, teamId }) {
+  return supabase.rpc('set_championship_champion', { p_championship_id: championshipId, p_team_id: teamId });
+}
+
 // toggle_championship_live (Fase 34): Host/AlGrass alterna EN VIVO dentro de in_progress. live=true → LIVE
 // (live_started_at=now()); live=false → PRE-LIVE (live_started_at=null). Autorización/estado los valida el backend.
 export function toggleChampionshipLive({ championshipId, live }) {

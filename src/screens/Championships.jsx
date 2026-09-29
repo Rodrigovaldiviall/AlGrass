@@ -39,7 +39,7 @@ function ChampionshipCard({ c, onPress, highlighted = false, innerRef = null }) 
   // Label de fase (el texto NO cambia entre PRE-LIVE y LIVE: ambos "Calendario y resultados").
   // LIVE se distingue SOLO por la antena. completed sale del circuito activo → "Finalizado".
   const phaseLabel = c.status === 'open' ? 'Inscripciones abiertas'
-    : c.status === 'closed' ? 'Inscripciones cerradas'
+    : c.status === 'closed' ? 'Equipos confirmados'
     : c.status === 'completed' ? 'Finalizado'
     : 'Calendario y resultados';   // in_progress (pre-live y live)
 
