@@ -6,10 +6,16 @@ import { useId } from 'react';
 
 const PATH = 'M50 4 L92 20 V56 C92 88 72 104 50 112 C28 104 8 88 8 56 V20 Z';
 
-// Iniciales: trim → separar por espacios (ignora múltiples) → 1ª letra de cada palabra →
-// mayúscula → máximo 4 (regla futura: nombre de equipo = máx 4 palabras).
-export function teamInitials(name) {
-  return (name || '').trim().split(/\s+/).filter(Boolean).map(w => w[0]).join('').slice(0, 4).toUpperCase();
+// Abreviatura ÚNICA del equipo (regla reutilizable en toda la UX de campeonatos). trim + colapsa espacios:
+//   1 palabra   → primeras 3 letras (Marketing → MAR, AlGrass → ALG).
+//   2+ palabras → inicial de cada una de las PRIMERAS 3 palabras (Ventas Interna → VI, Canales de Supply → CDS,
+//                 Club Deportivo Los Amigos → CDL). No descarta artículos/preposiciones; todas cuentan.
+// Siempre mayúscula, máximo 3 caracteres.
+export function getTeamAbbreviation(name) {
+  const words = (name || '').trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '';
+  if (words.length === 1) return words[0].slice(0, 3).toUpperCase();
+  return words.slice(0, 3).map(w => w[0]).join('').toUpperCase();
 }
 
 // Capas de relleno del diseño en un lienzo w×h. Reutilizado por el escudo grande y por el swatch.
@@ -47,7 +53,7 @@ export default function Shield({ color = '#5B6470', design, name, size = 68, das
     );
   }
   const d = design || { type: 'solid', colors: [color] };
-  const ini = teamInitials(name);
+  const ini = getTeamAbbreviation(name);
   const fs = ini.length <= 2 ? 32 : ini.length === 3 ? 26 : 21; // que 4 iniciales quepan sin agrandar el escudo
   const cid = 'shc' + rid;
   return (

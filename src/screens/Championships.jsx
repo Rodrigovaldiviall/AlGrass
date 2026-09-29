@@ -1,6 +1,8 @@
 import { useRef, useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { BLUE, TEXT, SUB, ORANGE } from '../constants';
+import { BLUE, TEXT, SUB, ORANGE, RED } from '../constants';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';   // antena "En vivo" (mismo icono que Profile/Games)
 import TabBar from '../components/TabBar';
 import ChampConfirmOverlay from '../components/ChampConfirmOverlay';
 import { listPublicChampionships } from '../services/championshipService';
@@ -34,7 +36,12 @@ const LockIcon = (c = '#fff') => (
 function ChampionshipCard({ c, onPress, highlighted = false, innerRef = null }) {
   const isOpen = c.status === 'open';
   const isPrivate = c.visibility === 'private';
-  const blocked = c.status === 'results' && isPrivate && !c.resultsPublic;
+  // Label de fase (el texto NO cambia entre PRE-LIVE y LIVE: ambos "Calendario y resultados").
+  // LIVE se distingue SOLO por la antena. completed sale del circuito activo → "Finalizado".
+  const phaseLabel = c.status === 'open' ? 'Inscripciones abiertas'
+    : c.status === 'closed' ? 'Equipos confirmados'
+    : c.status === 'completed' ? 'Finalizado'
+    : 'Calendario y resultados';   // in_progress (pre-live y live)
 
   return (
     <button
@@ -46,7 +53,8 @@ function ChampionshipCard({ c, onPress, highlighted = false, innerRef = null }) 
         background: '#fff', border: 'none', borderRadius: 16, overflow: 'hidden',
         boxShadow: '0 1px 4px rgba(0,0,0,0.08)', cursor: 'pointer',
         textAlign: 'left', fontFamily: 'inherit',
-        opacity: blocked ? 0.7 : 1, WebkitTapHighlightColor: 'transparent',
+        // El estado NO altera el color/tema visual de la card (solo pill/candado/superficie). Sin opacidad por estado.
+        WebkitTapHighlightColor: 'transparent',
       }}>
       {/* Portada */}
       <div style={{ position: 'relative', height: 96, background: coverColor(c.coverTheme) }}>
@@ -57,7 +65,12 @@ function ChampionshipCard({ c, onPress, highlighted = false, innerRef = null }) 
             padding: '4px 10px', borderRadius: 999,
             background: isOpen ? BLUE : '#1B1B1F', color: '#fff',
             fontSize: 12.5, fontWeight: 700, letterSpacing: 0.2,
-          }}>{isOpen ? 'Inscripciones abiertas' : 'Resultados'}</div>
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}>
+            {/* LIVE: solo se añade la antena; el texto de fase NO cambia. */}
+            {c.live && <FontAwesomeIcon icon={faTowerBroadcast} style={{ color: RED, fontSize: 12 }} />}
+            {phaseLabel}
+          </div>
           {isOpen && <div style={{ fontSize: 11, fontWeight: 600, color: '#fff', paddingLeft: 10, textShadow: '0 1px 3px rgba(0,0,0,0.35)' }}>Armar equipos o inscribirse solo</div>}
         </div>
         {/* Candado si privado */}
@@ -93,6 +106,22 @@ function SectionLabel({ children }) {
   return (
     <div style={{ fontSize: 11, fontWeight: 700, color: SUB, letterSpacing: 0.3, textTransform: 'uppercase', margin: '4px 2px 8px' }}>
       {children}
+    </div>
+  );
+}
+
+// Skeleton de card (datos DESCONOCIDOS, champs === null). Aproxima la estructura de ChampionshipCard
+// (portada 96px + 2 líneas de metadata) para no generar layout shift al llegar las cards. Reutiliza el
+// mismo pulse/gris (#E8E8EC) que SkeletonRows/SkeletonPill del proyecto.
+function ChampionshipCardSkeleton() {
+  const S = { background: '#E8E8EC', borderRadius: 6 };
+  return (
+    <div aria-hidden="true" style={{ width: '100%', marginBottom: 12, background: '#fff', borderRadius: 16, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', animation: 'pulse 1.4s ease-in-out infinite' }}>
+      <div style={{ height: 96, background: '#E8E8EC' }} />
+      <div style={{ padding: '10px 12px 12px' }}>
+        <div style={{ ...S, width: '52%', height: 13, marginBottom: 8 }} />
+        <div style={{ ...S, width: '70%', height: 12 }} />
+      </div>
     </div>
   );
 }
@@ -152,7 +181,13 @@ export default function Championships() {
       name: row.name || 'Campeonato',
       teamsLabel,
       format: sum.formatLabel || (sum.mode === 'liga' ? 'Liga' : ''),
-      status: row.status === 'registration_open' ? 'open' : 'results', // pill: abiertas vs Resultados
+      // Fase funcional para el pill (label real por estado; ya no binario open/results).
+      status: row.status === 'registration_open' ? 'open'
+            : row.status === 'registration_closed' ? 'closed'
+            : row.status === 'completed' ? 'completed'
+            : 'in_progress',   // in_progress (pre-live y live), diferenciado por `live`
+      // EN VIVO (Fase 21): in_progress + live_started_at != null. Tolerante a columna ausente/undefined → false.
+      live: row.status === 'in_progress' && row.live_started_at != null,
       visibility: row.privacy === 'private' ? 'private' : 'public',
       resultsPublic: row.results_public !== false,
       daysAgo: null,
@@ -206,9 +241,11 @@ export default function Championships() {
         {/* La lista scrollea por detrás del CTA; paddingBottom deja aire para la última card */}
         <div ref={listRef} onScroll={e => { scrollPosRef.current = e.currentTarget.scrollTop; }} className="no-sb" style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '14px 16px 88px' }}>
           {champs === null ? (
-            <div style={{ padding: '48px 24px', display: 'flex', justifyContent: 'center' }}>
-              <span style={{ width: 26, height: 26, borderRadius: '50%', border: '3px solid #E4E4EA', borderTop: `3px solid ${BLUE}`, display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
-            </div>
+            // Datos desconocidos → skeleton con la misma estructura que las cards (evita layout shift).
+            <>
+              <SectionLabel>Activos</SectionLabel>
+              {Array.from({ length: 3 }, (_, i) => <ChampionshipCardSkeleton key={i} />)}
+            </>
           ) : loadError ? (
             <div style={{ padding: '48px 24px', textAlign: 'center' }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4 }}>No pudimos cargar los campeonatos</div>
