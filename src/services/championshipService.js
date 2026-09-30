@@ -137,9 +137,10 @@ export function listMyChampionships() {
 // RLS championships_select ya permite a cualquier authenticated leer los estados publicados; NO hace
 // falta policy/RPC nueva. NO filtra por owner (distinto de listMyChampionships). venue/formato se
 // derivan de format_config (venue_id NO tiene FK → sin join). Ordena por fecha de evento.
-export function listPublicChampionships() {
-  // Superficie PÚBLICA (RPC SECURITY DEFINER): columnas seguras, SIN registration_key, apta para anon.
-  return supabase.rpc('list_public_championships');
+export function listPublicChampionships(city) {
+  // Superficie PÚBLICA (RPC SECURITY DEFINER): columnas seguras, SIN registration_key. Discovery ACOTADO a la
+  // ciudad del usuario (users.city) → ciudad del venue principal del campeonato. Sin ciudad → el backend no devuelve nada.
+  return supabase.rpc('list_public_championships', { p_city: city ?? null });
 }
 
 // get_championship_public(RPC): detalle público seguro (anon+authenticated). Devuelve owner_user_id y

@@ -6,6 +6,7 @@ import { faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';   // anten
 import TabBar from '../components/TabBar';
 import ChampConfirmOverlay from '../components/ChampConfirmOverlay';
 import { listPublicChampionships } from '../services/championshipService';
+import { getActiveCity } from '../utils/profileData';
 import { formatDateLabel } from '../utils/format';
 import { coverColor } from '../data/championshipCover';
 
@@ -129,6 +130,16 @@ function ChampionshipCardSkeleton() {
 export default function Championships() {
   const navigate = useNavigate();
   const location = useLocation();
+  // Ciudad ACTIVA = MISMA fuente que Partidos/Rentals (getActiveCity → localStorage pichanga_profile.city).
+  // Reactiva: se re-lee al volver a la pantalla (focus/visibility) para reflejar un cambio de ciudad sin remount.
+  const [userCity, setUserCity] = useState(getActiveCity);
+  useEffect(() => {
+    const sync = () => setUserCity(getActiveCity());
+    sync();
+    window.addEventListener('focus', sync);
+    document.addEventListener('visibilitychange', sync);
+    return () => { window.removeEventListener('focus', sync); document.removeEventListener('visibilitychange', sync); };
+  }, []);
 
   // Scroll de la lista: mismo mecanismo que Partidos/Canchas.
   const listRef = useRef(null);
@@ -158,13 +169,16 @@ export default function Championships() {
   const [champs, setChamps] = useState(null);
   const [loadError, setLoadError] = useState(false);
   const loadChampionships = () => {
+    // Auth hidratando (user aún sin city): NO marcar vacío; se mantiene en carga y se reintenta cuando city llega.
+    if (!userCity) return;
     setLoadError(false);
-    listPublicChampionships().then(({ data, error }) => {
-      if (error) { setLoadError(true); setChamps([]); return; }
+    listPublicChampionships(userCity).then(({ data, error }) => {
+      if (error) { console.warn('[championships] list_public_championships error:', error.message || error, error); setLoadError(true); setChamps([]); return; }
       setChamps(data || []);
     });
   };
-  useEffect(() => { loadChampionships(); }, []);
+  // Refetch cuando la ciudad del perfil se hidrata o cambia (null → "Arequipa" → "Lima").
+  useEffect(() => { loadChampionships(); }, [userCity]); // eslint-disable-line
 
   // Card desde campos REALES. venue/formato/equipos se derivan de format_config (mismo mapeo que Profile;
   // venue_id sin FK → sin join). teamsLabel = rango/estimación contratada (no inscripciones reales, aún mock).
@@ -176,6 +190,12 @@ export default function Championships() {
       ? (le?.quantity ? `${le.quantity} ${le.type === 'people' ? 'personas' : 'equipos'}` : 'Liga')
       : (sum.group ? (sum.group.min === sum.group.max ? `${sum.group.min} equipos` : `${sum.group.min}–${sum.group.max} equipos`) : '');
     const dateKey = row.event_date || fc.organizeState?.dateKey || null;
+    // Rango REAL del fixture (Fase 39): first_date/last_date derivados de championship_matches. Multi-día →
+    // "PRIMERA a ÚLTIMA" (solo extremos); un día o sin fixture → formato actual con event_date. Misma regla que el detalle.
+    const first = row.first_date || null, last = row.last_date || null;
+    const dateLabel = (first && last && first !== last)
+      ? `${formatDateLabel(first).replace(/^(Hoy|Mañana),\s*/, '')} a ${formatDateLabel(last).replace(/^(Hoy|Mañana),\s*/, '')}`
+      : (dateKey ? formatDateLabel(dateKey) : '');
     return {
       id: row.id,
       name: row.name || 'Campeonato',
@@ -192,7 +212,7 @@ export default function Championships() {
       resultsPublic: row.results_public !== false,
       daysAgo: null,
       coverTheme: row.cover_theme || '#E24A4A',   // mismo default que la vista/Profile (COVER_THEMES[0]) — evita azul incoherente
-      dateLabel: dateKey ? formatDateLabel(dateKey) : '',
+      dateLabel,
       venueName: sum.venueName || '',
     };
   });
