@@ -45,6 +45,23 @@ const CV_KEY = 'championship_view_state';
 const AUTH_RESUME_KEY = 'championship_auth_resume';
 function readCV() { try { return JSON.parse(sessionStorage.getItem(CV_KEY)); } catch { return null; } }
 function writeCV(o) { try { sessionStorage.setItem(CV_KEY, JSON.stringify(o)); } catch {} }
+
+// ── Cache TEMPORAL del acceso por clave (sessionStorage) — SOLO para no volver a PEDIR la clave dentro de 15 min.
+// NO es autoridad: la entrada guarda la clave introducida para REVALIDARLA en silencio con verify_championship_access
+// al reentrar (si el owner la cambió, el backend rechaza y se limpia). Prefijo 'champ_access_' → clearUserScopedCache
+// (AuthContext) la borra en logout/cambio de uid, también en sessionStorage. Key por uid+campeonato (nunca entre
+// usuarios). Solo logueados escriben; anon nunca. (Nota: la clave es un código de invitación, no una contraseña.)
+const KEY_ACCESS_TTL_MS = 15 * 60 * 1000;
+const keyAccessId = (uid, cid) => `champ_access_key_${uid}_${cid}`;
+function readKeyAccess(uid, cid) {
+  if (!uid || !cid) return null;
+  try { const o = JSON.parse(sessionStorage.getItem(keyAccessId(uid, cid))); return (o && o.key && typeof o.expiresAt === 'number' && o.expiresAt > Date.now()) ? o : null; } catch { return null; }
+}
+function writeKeyAccess(uid, cid, key) {
+  if (!uid || !cid || !key) return;
+  try { sessionStorage.setItem(keyAccessId(uid, cid), JSON.stringify({ key, expiresAt: Date.now() + KEY_ACCESS_TTL_MS })); } catch {}
+}
+function clearKeyAccess(uid, cid) { if (!uid || !cid) return; try { sessionStorage.removeItem(keyAccessId(uid, cid)); } catch {} }
 // Rango 24h "HH:mm – HH:mm" a partir de start_time ("HH:MM[:SS]") + duration_min. NO se guarda end_time: se
 // deriva en presentación (envuelve medianoche). Sin start → ''; sin duración válida → solo la hora de inicio.
 function matchTimeRange(startTime, durationMin) {
@@ -161,7 +178,11 @@ export default function ChampionshipView() {
   const rawChamp = isRealMode ? null : (cvReturn ? (persisted?.championship ?? null) : null);
   const isCreated = isRealMode ? !!realRow : !!rawChamp;   // true = campeonato del owner (no demo)
   const group = summary.group || null; // { min, max }
-  const maxTeams = isLiga ? 999 : (group ? group.max : 8);     // Liga: sin límite (crear equipo permanente)
+  // Capacidad AUTORITATIVA de equipos del backend (get_championship_public.team_capacity, misma que valida la
+  // inscripción). En campeonato REAL manda ESTA → refleja cambios de tramo hechos en Admin al refetch. Fallback
+  // (demo/preview o RPC antigua sin el campo) → tramo derivado del summary.
+  const realTeamCap = (isRealMode && Number.isFinite(realRow?.team_capacity)) ? realRow.team_capacity : null;
+  const maxTeams = isLiga ? 999 : (realTeamCap ?? (group ? group.max : 8));     // Liga: sin límite (crear equipo permanente)
   // Demo (Torneo): 2 equipos de prueba hechos; los slots restantes hasta la capacidad (maxTeams) se
   // muestran como escudos grises "crear equipo" (p.ej. 4 equipos → 2 hechos + 2 en gris). Liga: 6 mock.
   const initialTeams = isLiga ? 6 : Math.min(2, group ? group.max : 4);
@@ -193,7 +214,7 @@ export default function ChampionshipView() {
   const [keyEditing, setKeyEditing] = useState(false);            // tras publicar: la clave abre solo al pulsar "Editar"
   const [toast, setToast] = useState('');                         // toast breve ("Copiado" / avisos de inscripción)
   const [demo, setDemo] = useState(restore?.demo ?? 'inscripciones');    // 'inscripciones' | 'resultados'
-  const [resultsView, setResultsView] = useState(restore?.resultsView ?? 'tabla'); // 'tabla' | 'llave' | 'partidos'
+  const [resultsView, setResultsView] = useState(restore?.resultsView ?? 'partidos'); // 'partidos' | 'tabla' | 'llave'
   const [matchFilterId, setMatchFilterId] = useState(restore?.matchFilterId ?? null); // filtro de Partidos (id o null)
   const [joinedNoTeam, setJoinedNoTeam] = useState(restore?.joinedNoTeam ?? false);
   // Campeonato REAL → equipos reales (empiezan []). Demo → equipos mock (buildTeams).
@@ -227,20 +248,16 @@ export default function ChampionshipView() {
   const amHostAccess = isRealMode && !!realRow?.is_host;
   // Contacto del organizador: SOLO el owner. La RPC valida owner (gating real); el hook solo consulta si amOwner.
   const organizerPhone = useChampionshipOrganizerPhone(realId, amOwner);
-  // Grant de acceso por clave (Fase 7), separado por actor:
-  //   LOGUEADO → persistente por uid: champ_access_<uid>_<id> en localStorage. Dura mientras siga ESA sesión;
-  //     se limpia en logout/cambio de uid vía clearUserScopedCache (prefijo champ_access_). Refresh del mismo
-  //     uid NO lo borra. Un usuario nuevo nunca hereda el de otro (la key incluye su uid).
-  //   ANÓNIMO → NO se persiste: solo verifiedGrant en memoria (vive dentro del flujo actual; al salir/reabrir
-  //     se vuelve a pedir la clave). La continuidad anónimo→login se puentea con champ_access_resume (abajo).
-  const grantKey = (realId && user?.id) ? ('champ_access_' + user.id + '_' + realId) : null;
-  const persistentGrant = () => { try { return !!grantKey && localStorage.getItem(grantKey) === '1'; } catch { return false; } };
-  // Acceso ya AUTORIZADO en ESTE flujo: se siembra desde la caché de retorno (cvReturn/authResuming) que solo
-  // existe si el usuario ya estaba viendo el contenido (tras pasar el gate por clave, ser owner o miembro). Así
-  // un RETURN/BACK —p.ej. tras desuscribirse en la pantalla del equipo— NO vuelve a gatear solo porque la
-  // membership haya cambiado. NO es bypass: una entrada nueva/deep-link no trae restore → cachedReal null →
-  // arranca en false; y championship_view_state se limpia en logout/cambio de uid (_SESSION_STATIC).
+  // Acceso por clave (Fase 7):
+  //   LOGUEADO → cache TEMPORAL (sessionStorage, 15 min) de la clave introducida, SOLO para no volver a PEDIRLA.
+  //     NO es autoridad: al reentrar se REVALIDA en silencio con verify_championship_access; si el owner cambió la
+  //     clave, el backend rechaza → se borra el cache y se pide de nuevo. Prefijo champ_access_ → lo limpia
+  //     clearUserScopedCache en logout/cambio de uid. Key por uid+campeonato (nunca compartida entre usuarios).
+  //   ANÓNIMO → NO se cachea nada: solo verifiedGrant en memoria del flujo actual (al salir/recargar pide clave).
+  //   El TTL de 15 min NO se extiende por navegar; solo una nueva validación correcta (submitGate) lo renueva.
   const [verifiedGrant, setVerifiedGrant] = useState(() => cachedReal?.accessOk === true);
+  const [keyRevalidating, setKeyRevalidating] = useState(false);   // revalidación silenciosa en curso
+  const [keyRevalDone, setKeyRevalDone] = useState(false);         // ya se resolvió (éxito o fallo) en este montaje
   const [gateKey, setGateKey] = useState('');
   const [gateError, setGateError] = useState('');
   const [gateChecking, setGateChecking] = useState(false);
@@ -315,8 +332,34 @@ export default function ChampionshipView() {
     || (realRow?.status === 'pending_publish' && (amOwner || amAlgrassRole))
   );
   useEffect(() => { loadRegState(); }, [isRealMode, realId, user?.id, realRow?.status, canLoadRegState]); // eslint-disable-line
-  // Gate visible = real + fila cargada + NO owner + NO miembro + sin grant (local ni recién verificado).
-  const gateOpen = isRealMode && !!realRow && !amOwner && !amHostAccess && !amMember && !verifiedGrant && !persistentGrant();
+  // Lectura PÚBLICA (sin clave) SOLO en fase COMPETITIVA/histórica (in_progress pre-live+live, completed) cuando
+  // results_public=true. En inscripción (registration_open/closed) SIEMPRE se pide clave (results_public NO la
+  // salta). Es solo lectura: el viewer público no es owner/host/miembro → no ve controles de gestión y el backend
+  // rechaza cualquier acción. Owner/host/AlGrass/miembro/grant entran como hoy, independientemente de results_public.
+  const publicReadOk = isRealMode && !!realRow
+    && (realRow.status === 'in_progress' || realRow.status === 'completed')
+    && realRow.results_public === true;
+  // ¿Se necesita clave? real + fila + NO owner/host/miembro + NO lectura pública (results_public en fase competitiva).
+  const needsKey = isRealMode && !!realRow && !amOwner && !amHostAccess && !amMember && !publicReadOk;
+  // Cache TEMPORAL de clave (solo logueado): si hay entrada NO expirada, hay que revalidarla en silencio antes de
+  // dejar entrar. Mientras se revalida (o falta hacerlo), NO se muestra el gate (se muestra carga) → sin flash.
+  const cachedKeyEntry = (needsKey && !verifiedGrant && user?.id) ? readKeyAccess(user.id, realId) : null;
+  const awaitingKeyReval = !!cachedKeyEntry && !keyRevalDone;
+  // Gate visible = se necesita clave, sin grant en memoria, y NO hay revalidación pendiente/en curso del cache.
+  const gateOpen = needsKey && !verifiedGrant && !awaitingKeyReval && !keyRevalidating;
+  // Revalidación SILENCIOSA del cache: autoridad = backend (verify_championship_access), nunca el cache. Éxito →
+  // entra sin pedir clave (sin renovar TTL). Fallo (clave cambiada/expirada) → borra el cache y muestra el gate.
+  useEffect(() => {
+    if (!awaitingKeyReval || keyRevalidating || keyRevalDone) return;
+    const entry = readKeyAccess(user.id, realId);
+    if (!entry) { setKeyRevalDone(true); return; }
+    setKeyRevalidating(true);
+    verifyChampionshipAccess({ championshipId: realId, registrationKey: entry.key }).then(({ data, error }) => {
+      setKeyRevalidating(false); setKeyRevalDone(true);
+      if (!error && data === true) setVerifiedGrant(true);          // clave sigue válida → acceso, sin renovar TTL
+      else clearKeyAccess(user.id, realId);                          // clave cambió/inválida → limpiar → pedir de nuevo
+    });
+  }, [awaitingKeyReval, keyRevalidating, keyRevalDone, realId, user?.id]); // eslint-disable-line
   async function submitGate() {
     if (gateChecking) return;
     const typed = gateKey.trim();
@@ -327,8 +370,9 @@ export default function ChampionshipView() {
     if (error) { setGateError('No pudimos validar la clave. Intenta de nuevo.'); return; }
     if (data === true) {
       setVerifiedGrant(true); setGateKey('');
-      // Logueado → grant persistente asociado a su uid. Anónimo → solo memoria (verifiedGrant), no localStorage.
-      if (user?.id && grantKey) { try { localStorage.setItem(grantKey, '1'); } catch {} }
+      // Logueado → cache TEMPORAL (sessionStorage, 15 min) de la clave para no volver a pedirla (se revalida al
+      // reentrar). Anónimo → solo memoria (verifiedGrant): NO se cachea nada.
+      if (user?.id) writeKeyAccess(user.id, realId, typed);
       return;
     }
     setGateError('Clave incorrecta.');
@@ -543,7 +587,7 @@ export default function ChampionshipView() {
   // Capacidad VISUAL de slots (Torneo REAL): del rango contratado (group.max) → 6/8/12/16. Los equipos
   // reales se colocan por la izquierda y el resto son placeholders grises. NO afecta teams.length ni el
   // fixture (que usa el nº real al cerrar). Liga: un único "+" permanente. Demo: rango del grupo (min→max).
-  const visualCap = (isCreated && !isLiga) ? visualCapacity(group ? group.max : maxTeams) : null;
+  const visualCap = (isCreated && !isLiga) ? (realTeamCap ?? visualCapacity(group ? group.max : maxTeams)) : null;
   const canCreateTeam = isLiga ? teams.length < maxTeams
     : isCreated ? teams.length < visualCap
     : teams.length < maxTeams;
@@ -552,7 +596,7 @@ export default function ChampionshipView() {
     : Math.max(0, maxTeams - teams.length);
   // Capacidad de cupos para Inscripciones REAL: Torneo → tramos del tope contratado real (group.max de
   // format_config); Liga → un único "+". Hoy todos los cupos están vacíos (no hay equipos reales aún).
-  const realSlotCount = isRealMode ? (isLiga ? 1 : realTeamCapacity(group?.max)) : 0;
+  const realSlotCount = isRealMode ? (realTeamCap ?? (isLiga ? 1 : realTeamCapacity(group?.max))) : 0;
   // Inscripciones reales (Fase 9): equipos/roster/membership desde regState. Slots libres = capacidad − equipos.
   const regTeams = regState?.teams || [];
   const regPlayers = regState?.players || [];
@@ -643,8 +687,24 @@ export default function ChampionshipView() {
 
   // Fecha completa "Mié 16 Sep 2026" (reutiliza formatDateLabel; sin el prefijo "Hoy,/Mañana,").
   const dateFull = organizeState?.dateKey ? formatDateLabel(organizeState.dateKey).replace(/^(Hoy|Mañana),\s*/, '') : (summary.dateLabel || null);
-  // Horario "inicio → final": reutiliza slotLabel ("6:00 pm – 8:00 pm") como "6:00 PM a 8:00 PM".
-  const timeRange = summary.slotLabel ? summary.slotLabel.replace(/\s*–\s*/, ' a ').replace(/\b([ap])m\b/gi, s => s.toUpperCase()) : null;
+  // Fase 40 — Rango del RESUMEN desde la RESERVA FÍSICA (get_championship_public.reservation_games[]), NO matches.
+  // Se ordena por date_key+time; primera = [0], última = [n-1]. Multi-día → "PRIMERA a ÚLTIMA"; un día → fecha
+  // única; sin reserva (demo/preview) → fallback dateFull / slotLabel. El backend ya viene ordenado; se reordena
+  // por robustez sin mutar el original.
+  const _fmtDK = (dk) => formatDateLabel(dk).replace(/^(Hoy|Mañana),\s*/, '');
+  const _resGames = (isRealMode && Array.isArray(realRow?.reservation_games))
+    ? [...realRow.reservation_games].sort((a, b) => (a.date_key === b.date_key ? String(a.time).localeCompare(String(b.time)) : String(a.date_key).localeCompare(String(b.date_key))))
+    : [];
+  const _resFirst = _resGames[0] || null;
+  const _resLast = _resGames[_resGames.length - 1] || null;
+  const dateRangeFull = _resFirst
+    ? (_resFirst.date_key !== _resLast.date_key ? `${_fmtDK(_resFirst.date_key)} a ${_fmtDK(_resLast.date_key)}` : _fmtDK(_resFirst.date_key))
+    : dateFull;
+  // Horario: hora de inicio de la PRIMERA reserva → fin (time + duration_min) de la ÚLTIMA reserva.
+  const _addMin = (t, d) => { const [h, m] = String(t).split(':').map(Number); const tot = (h * 60 + m) + (d || 0); return `${String(Math.floor(tot / 60)).padStart(2, '0')}:${String(tot % 60).padStart(2, '0')}`; };
+  const timeRange = (_resFirst && _resLast)
+    ? `${_resFirst.time} a ${_addMin(_resLast.time, _resLast.duration_min)}`
+    : (summary.slotLabel ? summary.slotLabel.replace(/\s*–\s*/, ' a ').replace(/\b([ap])m\b/gi, s => s.toUpperCase()) : null);
 
   // Partidos del campeonato REAL: desde el fixture PERSISTIDO (cv.championship.fixture), no mock.
   // Sin marcador/ganador/goles. Participantes de fases dependientes (semis/final/3.º) → "Por definir".
@@ -772,6 +832,7 @@ export default function ChampionshipView() {
       court: (m.field_name || '').replace(/^cancha\s*/i, '') || '—',
       venue: m.venue_name || '',
       dateLabel: m.date_key ? formatDateLabel(m.date_key).replace(/^(Hoy|Mañana),\s*/, '') : '',
+      date_key: m.date_key || null,   // crudo → agrupar "Próximos" por día (subtítulo de fecha)
       time: matchTimeRange(m.start_time, m.duration_min),
       stage: m.stage,
     };
@@ -859,7 +920,7 @@ export default function ChampionshipView() {
       // accessOk = ¿el actor estaba AUTORIZADO al salir a Team? (owner/miembro/clave verificada/grant persistente).
       // Al volver (cvReturn) siembra verifiedGrant y evita re-gatear pese a cambios de membership. No persiste
       // acceso indebido: solo captura la autorización REAL vigente en ese instante.
-      writeCV({ ...cv, summary, organizeState, name, coverTheme, adminView, demo, resultsView, matchFilterId, matchDetailId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, championship: { ...(cv.championship || {}), realId, teams, realRow, regState, competition, accessOk: (amOwner || amHostAccess || amMember || verifiedGrant || persistentGrant()) } });
+      writeCV({ ...cv, summary, organizeState, name, coverTheme, adminView, demo, resultsView, matchFilterId, matchDetailId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, championship: { ...(cv.championship || {}), realId, teams, realRow, regState, competition, accessOk: (amOwner || amHostAccess || amMember || verifiedGrant) } });
       return;
     }
     writeCV({ summary, organizeState, name, coverTheme, accessCode, resultsPublic, demo, resultsView, matchFilterId, matchDetailId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, contactRequest, championship: isCreated ? { ...champ, teams } : champ });
@@ -1170,12 +1231,14 @@ export default function ChampionshipView() {
   // la MISMA acción final (checkout/contacto) con el estado ya restaurado (restore=persisted). Si el
   // usuario canceló el login (vuelve sin sesión), se descarta la intención para no reanudar luego.
   useEffect(() => {
-    // Puente anónimo→login del GRANT de clave: al volver autenticado a ESTE campeonato, se promueve el acceso
-    // a un grant persistente del uid (sin re-pedir la clave). Si el login se canceló, se descarta el puente.
+    // Puente anónimo→login del acceso por clave: el anónimo YA validó la clave (verifiedGrant) antes de ir a login;
+    // al volver autenticado a ESTE campeonato se conserva el acceso en memoria del flujo actual (sin re-pedir la
+    // clave). NO se cachea en sessionStorage porque aquí no tenemos la clave introducida (solo el id); si sale y
+    // vuelve más tarde, se le pedirá de nuevo. Si el login se canceló, se descarta el puente.
     let g; try { g = sessionStorage.getItem('champ_access_resume'); } catch {}
     if (g) {
       try { sessionStorage.removeItem('champ_access_resume'); } catch {}
-      if (user?.id && g === realId) { try { localStorage.setItem('champ_access_' + user.id + '_' + realId, '1'); } catch {} setVerifiedGrant(true); }
+      if (user?.id && g === realId) setVerifiedGrant(true);
     }
     let pending; try { pending = sessionStorage.getItem(AUTH_RESUME_KEY); } catch {}
     if (!pending) return;
@@ -1187,7 +1250,7 @@ export default function ChampionshipView() {
 
   // REAL: mientras carga (o hidrata) mostramos loading; NUNCA caemos a demo ni a "Crear campeonato".
   // Si falla el fetch → error explícito, sin usar el CV como fallback (no mostrar otro campeonato).
-  if (isRealMode && (realLoading || realError || !champ)) {
+  if (isRealMode && (realLoading || realError || !champ || awaitingKeyReval || keyRevalidating)) {
     return (
       <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: SOFT, overflow: 'hidden' }}>
         <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 8, paddingRight: 12, flexShrink: 0 }}>
@@ -1257,11 +1320,13 @@ export default function ChampionshipView() {
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
           <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>{isRealMode ? realHeaderTitle : isCreated && champ?.status === 'registration_open' ? 'Inscripciones abiertas' : isCreated && champ?.status === 'registration_closed' ? 'Calendario y resultados' : 'Ver mi campeonato'}</div>
-          {/* Compartir — SIEMPRE visible (todo actor, toda fase). Comparte el enlace PÚBLICO del campeonato.
-              Si hay X de salir (demo, !isCreated) se ubica a su izquierda (right:40); si no, en right:0. */}
-          <button className="pressable" onClick={shareChampionship} aria-label="Compartir" style={{ position: 'absolute', right: isCreated ? 0 : 40, width: 30, height: 26, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', WebkitTapHighlightColor: 'transparent' }}>
-            {I.share('#fff')}
-          </button>
+          {/* Compartir — SOLO en campeonato REAL (todo actor, toda fase); comparte el enlace PÚBLICO. En "Crear/Ver
+              mi campeonato" (demo/preview, sin campeonato real) NUNCA se muestra: no hay URL pública que compartir. */}
+          {isRealMode && (
+            <button className="pressable" onClick={shareChampionship} aria-label="Compartir" style={{ position: 'absolute', right: 0, width: 30, height: 26, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', WebkitTapHighlightColor: 'transparent' }}>
+              {I.share('#fff')}
+            </button>
+          )}
           {/* Demo (previa de Crear campeonato, root del flujo): X = SALIR → listado. La flecha izquierda
               vuelve un nivel (a Crear un campeonato). El campeonato REAL no lleva X (es pantalla principal). */}
           {!isCreated && (
@@ -1350,7 +1415,7 @@ export default function ChampionshipView() {
                 (OrganizerContactButton global) se OCULTA SOLO en esta vista; intacto en GameDetail/RentalDetail. */}
             <ResumenRow
               icon="cal"
-              value={complies ? (dateFull || 'Pendiente por confirmar') : 'Pendiente por confirmar'}
+              value={complies ? (dateRangeFull || 'Pendiente por confirmar') : 'Pendiente por confirmar'}
               sub={complies ? (timeRange || null) : null}
               action={amOwner ? <OrganizerContactButton phone={organizerPhone} /> : undefined}
             />
@@ -1414,7 +1479,9 @@ export default function ChampionshipView() {
           <div style={{ padding: '18px 16px', borderTop: `1px solid ${HAIR}` }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, letterSpacing: -0.1, marginBottom: 10 }}>Descripción</div>
             <div style={{ fontSize: 14, color: TEXT, lineHeight: 1.5 }}>
-              Cada equipo juega por lo menos 3 partidos y los finalistas hasta 5. El cronograma se organizará de acuerdo a la cantidad de equipos que se registren.
+              {(champ?.status === 'in_progress' || champ?.status === 'completed')
+                ? 'Cada equipo juega por lo menos 3 partidos y los finalistas hasta 5. Puedes consultar y filtrar tus partidos, ver fechas, ubicaciones, resultados y goleadores.'
+                : 'Cada equipo juega por lo menos 3 partidos y los finalistas hasta 5. El cronograma se organizará de acuerdo a la cantidad de equipos que se registren.'}
             </div>
           </div>
 
@@ -1461,7 +1528,7 @@ export default function ChampionshipView() {
               <div style={{ height: 1, background: HAIR, margin: '14px 0' }} />
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 700, color: TEXT }}>Resultados públicos</div>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: TEXT }}>Calendario y resultados públicos</div>
                   <div style={{ fontSize: 12, color: SUB, lineHeight: 1.5, marginTop: 2 }}>Cualquier usuario puede ver Calendario y resultados. Ideal para que cualquiera siga tu torneo. Desactívalo para que solo lo vean los inscritos.</div>
                 </div>
                 <button onClick={() => { const next = !resultsPublic; setResultsPublic(next); if (!isRealMode && privacyLocked) persistPrivacy(undefined, next); }} style={{ width: 44, height: 26, borderRadius: 999, border: 'none', background: resultsPublic ? BLUE : '#E5E5EA', cursor: 'pointer', padding: 0, position: 'relative', flexShrink: 0, transition: 'background .2s ease', outline: 'none', WebkitTapHighlightColor: 'transparent' }}>
@@ -1527,7 +1594,7 @@ export default function ChampionshipView() {
             {isRealMode && managerTabs && (
               <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                 <Seg active={effAdminView === 'inscripciones'} onClick={() => setAdminView('inscripciones')}>Inscripciones</Seg>
-                <Seg active={effAdminView === 'resultados'} disabled={!hasFixture} onClick={() => setAdminView('resultados')}>Resultados</Seg>
+                <Seg active={effAdminView === 'resultados'} disabled={!hasFixture} onClick={() => setAdminView('resultados')}>Calendario</Seg>
               </div>
             )}
 
@@ -1694,7 +1761,7 @@ export default function ChampionshipView() {
                   <div style={H}>Modo demostración</div>
                   <div style={{ display: 'flex', gap: 8, margin: '10px 0 8px' }}>
                     <Seg active={demo === 'inscripciones'} onClick={() => setDemo('inscripciones')}>Inscripciones</Seg>
-                    <Seg active={demo === 'resultados'} onClick={() => setDemo('resultados')}>Resultados</Seg>
+                    <Seg active={demo === 'resultados'} onClick={() => setDemo('resultados')}>Calendario</Seg>
                   </div>
                   <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5 }}>
                     {demo === 'inscripciones'
@@ -2065,6 +2132,10 @@ function Resultados({ view, setView, teams, standings, scorers, matches, venueNa
   const zeroRow = (t) => ({ team: t, pj: 0, g: 0, e: 0, p: 0, pts: 0, gf: 0, gc: 0, dg: 0, results: [] });
   const displayStandings = real ? teams.map(zeroRow) : standings;
   const displayScorers = useComp ? comp.scorers : (real ? [] : scorers);
+  // Nº de goleador = RANK real por goles (1 = más goles), independiente del pin "tú-primero". Así, si TÚ eres el
+  // máximo goleador el 1 es tuyo; si no, sigues arriba pero el 1 recae en el máximo goleador (fila siguiente).
+  const scorerRankById = new Map();
+  [...displayScorers].sort((a, b) => (b.goals || 0) - (a.goals || 0)).forEach((p, idx) => scorerRankById.set(p.id, idx + 1));
   const groups = useComp ? comp.groups.map(g => g.rows) : chunkByCounts(displayStandings, cfg.groupSizes);
   const groupLabels = useComp ? comp.groups.map(g => g.label) : null;
   const displayMatches = useComp ? comp.matches : matches;
@@ -2073,9 +2144,9 @@ function Resultados({ view, setView, teams, standings, scorers, matches, venueNa
   return (
     <>
       <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        <Seg active={view === 'partidos'} onClick={() => setView('partidos')}>Partidos</Seg>
         <Seg active={view === 'tabla'} onClick={() => setView('tabla')}>Tabla</Seg>
         <Seg active={view === 'llave'} onClick={() => setView('llave')}>Llave</Seg>
-        <Seg active={view === 'partidos'} onClick={() => setView('partidos')}>Partidos</Seg>
       </div>
       <div style={{ minHeight: minH }}>
         <div ref={innerRef}>
@@ -2104,8 +2175,8 @@ function Resultados({ view, setView, teams, standings, scorers, matches, venueNa
                   const label = (meId && p.id === meId) ? `${p.name || 'Jugador'} (tú)` : playerLabel(p);
                   const inner = (
                     <>
-                      {/* Nº (mismo patrón que la lista de Jugadores de Inscripciones) */}
-                      <div style={{ width: 18, fontSize: 12, color: SUB, flexShrink: 0, textAlign: 'right' }}>{i + 1}</div>
+                      {/* Nº = rank real por goles (1 = más goles); "tú" sigue arriba aunque no seas el nº 1. */}
+                      <div style={{ width: 18, fontSize: 12, color: SUB, flexShrink: 0, textAlign: 'right' }}>{scorerRankById.get(p.id) ?? (i + 1)}</div>
                       {useComp ? <RosterAvatar path={p.avatar_path} hue={p.avatar_hue} name={p.name} size={34} /> : <PlayerAvatar name={p.name} size={34} />}
                       <div style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</div>
                       {/* Escudo del equipo con SIGLAS dentro (mismo componente/escala que Tabla), a la derecha del
@@ -2401,7 +2472,7 @@ function MatchCard({ m, onFilter, onOpenMatch }) {
   // fila; ambos presentes → el número de cada equipo pegado a la derecha. Solo presentación (no toca datos/permisos).
   const hasScore = m.sa != null && m.sb != null;
   return (
-    <div style={{ display: 'flex', alignItems: 'stretch', gap: 12, background: '#fff', border: `1px solid ${HAIR}`, borderRadius: 14, padding: '10px 12px', marginBottom: 8 }}>
+    <div data-match-card style={{ display: 'flex', alignItems: 'stretch', gap: 12, background: '#fff', border: `1px solid ${HAIR}`, borderRadius: 14, padding: '10px 12px', marginBottom: 8 }}>
       {/* Columna IZQUIERDA: fila local / fila visitante, nombre a la izquierda y score pegado a la derecha.
           Tocar el equipo filtra. null/null → "-" en cada fila; con resultado → número (0 válido). */}
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -2419,6 +2490,8 @@ function MatchCard({ m, onFilter, onOpenMatch }) {
 }
 
 const SEC_LABEL = { fontSize: 11, fontWeight: 700, color: SUB, letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 6 };
+// Subtítulo de fecha por grupo de día dentro de "Próximos" (campeonato multi-día).
+const DATE_SUB = { fontSize: 13, fontWeight: 700, color: TEXT, letterSpacing: -0.1, margin: '10px 0 6px' };
 
 function PartidosMock({ matches, venueName, filter, onFilter, onOpenMatch }) {
   // Real (Fase 16): cada partido trae su propio venue (m.venue); mock/demo no → cae al venueName general.
@@ -2426,8 +2499,37 @@ function PartidosMock({ matches, venueName, filter, onFilter, onOpenMatch }) {
   const shown = filter ? all.filter(m => m.a.id === filter.id || m.b.id === filter.id) : all;
   const upcoming = shown.filter(m => !m.played);
   const played = shown.filter(m => m.played);
+
+  // Scroll SOLO al CAMBIAR el filtro de equipo: si tras filtrar ningún partido filtrado queda visible en el
+  // viewport (los del equipo estaban más arriba), llevar la vista al primer partido filtrado; si aún se ve
+  // alguno, no mover nada. Reutiliza el contenedor scrolleable existente (ancestro .no-sb de ChampionshipView).
+  // NO corre en montaje/restore/cambio de pestaña (didMountRef), ni al abrir match / live / rerender (dep = filter.id).
+  const rootRef = useRef(null);
+  const didMountRef = useRef(false);
+  useEffect(() => {
+    if (!didMountRef.current) { didMountRef.current = true; return; }   // salta montaje/restore/cambio de tab
+    if (!filter || !rootRef.current) return;                            // quitar filtro → no reposicionar
+    // Ancestro scrolleable real (el mismo scrollRef de ChampionshipView).
+    let sc = rootRef.current.parentElement;
+    while (sc) { const oy = getComputedStyle(sc).overflowY; if ((oy === 'auto' || oy === 'scroll') && sc.scrollHeight > sc.clientHeight) break; sc = sc.parentElement; }
+    if (!sc) return;
+    requestAnimationFrame(() => {
+      const cards = rootRef.current?.querySelectorAll('[data-match-card]');
+      if (!cards || !cards.length) return;
+      const cRect = sc.getBoundingClientRect();
+      // ¿algún partido filtrado sigue intersectando el viewport actual? → no mover.
+      const anyVisible = Array.from(cards).some(el => { const r = el.getBoundingClientRect(); return r.bottom > cRect.top && r.top < cRect.bottom; });
+      if (anyVisible) return;
+      // Ninguno visible → subir hasta el primero (mismo patrón de scroll existente; no top absoluto).
+      const first = rootRef.current.querySelector('[data-match-card]');
+      if (!first) return;
+      const r = first.getBoundingClientRect();
+      sc.scrollTo({ top: Math.max(0, sc.scrollTop + (r.top - cRect.top) - 12), behavior: 'smooth' });
+    });
+  }, [filter?.id]); // eslint-disable-line
+
   return (
-    <div>
+    <div ref={rootRef}>
       {/* Filtro activo por equipo (chip compacto con ×) */}
       {filter && (
         <div style={{ marginBottom: 12 }}>
@@ -2439,7 +2541,20 @@ function PartidosMock({ matches, venueName, filter, onFilter, onOpenMatch }) {
       )}
 
       <div style={SEC_LABEL}>Próximos</div>
-      {upcoming.length ? upcoming.map(m => <MatchCard key={m.id} m={m} onFilter={onFilter} onOpenMatch={onOpenMatch} />) : <div style={{ fontSize: 12.5, color: SUB, marginBottom: 8 }}>Sin próximos partidos.</div>}
+      {upcoming.length ? (() => {
+        // Subtítulo de fecha por día: hoy → "Hoy", mañana → "Mañana", resto → "Sáb 18 May 2026". Misma lógica
+        // de fecha que el detalle de match (formatDateLabel); hoy/mañana se detectan por su prefijo.
+        const daySubtitle = (dk) => { const full = formatDateLabel(dk); if (full.startsWith('Hoy,')) return 'Hoy'; if (full.startsWith('Mañana,')) return 'Mañana'; return full; };
+        // Agrupar preservando el orden ya cronológico de la lista (backend: date_key → start_time → match_order).
+        const groups = [];
+        upcoming.forEach(m => { const k = m.date_key || ''; const last = groups[groups.length - 1]; if (last && last.k === k) last.items.push(m); else groups.push({ k, items: [m] }); });
+        return groups.map((g, gi) => (
+          <div key={g.k || `g${gi}`}>
+            {g.k && <div style={DATE_SUB}>{daySubtitle(g.k)}</div>}
+            {g.items.map(m => <MatchCard key={m.id} m={m} onFilter={onFilter} onOpenMatch={onOpenMatch} />)}
+          </div>
+        ));
+      })() : <div style={{ fontSize: 12.5, color: SUB, marginBottom: 8 }}>Sin próximos partidos.</div>}
 
       <div style={{ ...SEC_LABEL, marginTop: 14 }}>Pasados</div>
       {played.length ? played.map(m => <MatchCard key={m.id} m={m} onFilter={onFilter} onOpenMatch={onOpenMatch} />) : <div style={{ fontSize: 12.5, color: SUB }}>Sin partidos jugados.</div>}

@@ -200,9 +200,16 @@ function IntroGate({ children }) {
       }}
       onDone={() => {
         setIntroDone(true);
-        // MISMO onboarding para todos (orgánico y Shared Link). El destino final
-        // (GameDetail vs Games) se decide al terminar el tutorial en PickupGames.
-        setTimeout(() => navigate('/games', { state: { showCitySheet: true } }), 0);
+        // Origen /empresas (landing comercial de Campeonatos): la URL se mantuvo en /empresas
+        // durante el Intro (el gate no navega salvo desde '/'). Al terminar, vamos a la intro de
+        // Campeonatos (/championships/intro = experiencia que /empresas representa) con una señal
+        // LOCAL (empresaFirstVisit) para el selector de ciudad, SIN tutorial de Partidos. Cualquier
+        // otro origen mantiene el flujo normal a /games.
+        const toEmpresas = location.pathname === '/empresas';
+        setTimeout(() => {
+          if (toEmpresas) navigate('/championships/intro', { state: { empresaFirstVisit: true }, replace: true });
+          else navigate('/games', { state: { showCitySheet: true } });
+        }, 0);
       }}
     />
   );
@@ -268,7 +275,8 @@ function AppBody() {
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/championships" element={<Championships />} />
             <Route path="/championships/intro" element={<ChampionshipIntro />} />
-            {/* Entrada externa/comercial: MISMA intro que /championships/intro (mismo componente). */}
+            {/* Entrada externa/comercial: MISMA experiencia que /championships/intro (mismo componente).
+                La PRIMERA vez pasa por el Intro (gate) y va a /championships/intro con empresaFirstVisit. */}
             <Route path="/empresas" element={<ChampionshipIntro />} />
             <Route path="/championships/organize" element={<ChampionshipOrganize />} />
             <Route path="/championships/view" element={<ChampionshipView />} />

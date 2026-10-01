@@ -31,6 +31,8 @@ function tabFromPath(pathname, backPath, champOrigin) {
   // Solo el detalle /championships/view respeta el origen; la lista/organize siguen en Campeonatos.
   if (pathname.startsWith('/championships/view')) return champOrigin === 'profile' ? 'perfil' : 'campeonatos';
   if (pathname.startsWith('/championships')) return 'campeonatos';
+  // /empresas = landing comercial de Campeonatos (mismo contenido) → mismo tab activo.
+  if (pathname.startsWith('/empresas')) return 'campeonatos';
   if ((pathname.startsWith('/game/') || pathname.startsWith('/field/') || pathname.startsWith('/rental/')) && backPath === '/profile') return 'perfil';
   if (pathname.startsWith('/fields') || pathname.startsWith('/field/') || pathname.startsWith('/rental/')) return 'campos';
   return 'partidos';

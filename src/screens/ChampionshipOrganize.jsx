@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN } from '../constants';
 import { useSheetPull } from '../hooks/useSheetPull';
@@ -13,6 +13,8 @@ import {
   buildInsufficientPreview, championshipSlotForAnchor, championshipCombinationValid,
 } from '../services/championshipAvailabilityService';
 import ConfirmExitDialog from '../components/ConfirmExitDialog';
+import { getActiveCity, setActiveCity, fetchCities } from '../utils/profileData';
+import { useAuth } from '../context/AuthContext';
 
 // Mismo patrón de fechas que Partidos (DateCell): día abreviado + número, 30 días de horizonte.
 const DOW_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
@@ -56,8 +58,8 @@ function Chip({ active, onClick, children, style }) {
   return (
     <button onClick={onClick} className="pressable" style={{
       flexShrink: 0, height: 34, padding: '0 14px', borderRadius: 999,
-      border: active ? '1px solid transparent' : `1px solid ${HAIR}`,
-      background: active ? '#E8F1FF' : '#fff', color: active ? BLUE : TEXT,
+      border: `1px solid ${active ? BLUE : HAIR}`,
+      background: active ? BLUE : '#fff', color: active ? '#fff' : TEXT,
       fontSize: 13.5, fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
       WebkitTapHighlightColor: 'transparent', outline: 'none', ...style,
     }}>{children}</button>
@@ -143,6 +145,13 @@ function readOrgDraft() { try { return JSON.parse(sessionStorage.getItem(ORG_DRA
 export default function ChampionshipOrganize() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
+  // Ciudad ACTIVA (misma fuente que Partidos) = único scope de disponibilidad. Editable desde el filtro "Ciudad"
+  // (abajo), que persiste con el MISMO mecanismo (setActiveCity → localStorage + public.users).
+  const [userCity, setUserCity] = useState(getActiveCity);
+  const [citySheet, setCitySheet] = useState(false);
+  const [cities, setCities] = useState([]);
+  useEffect(() => { let alive = true; fetchCities().then(cs => { if (alive) setCities(cs); }); return () => { alive = false; }; }, []);
   // Estado restaurado: prioridad al state de navegación (volver desde "Ver mi campeonato"); si no, el
   // borrador de sessionStorage (atrás/re-montaje). "Crear nuevo campeonato" limpia el borrador → null.
   const restore = location.state?.organizeState || readOrgDraft();
@@ -196,13 +205,14 @@ export default function ChampionshipOrganize() {
   const invLoading = inv == null;
   useEffect(() => {
     let alive = true;
-    fetchChampionshipInventory().then(({ games: gs, error }) => {
+    // Inventario SOLO de la ciudad del perfil (users.city). Sin ciudad → vacío (el service lo acota en la fuente).
+    fetchChampionshipInventory(userCity).then(({ games: gs, error }) => {
       if (!alive) return;
       if (error) { console.warn('[ChampionshipOrganize] inventory:', error.message); setInv([]); return; }
       setInv(gs || []);
     });
     return () => { alive = false; };
-  }, []);
+  }, [userCity]);
   const gamesAll = inv || [];
 
   // Config de Championship por CIUDAD del inventario (asunción operativa: un inventario ≈ una ciudad).
@@ -458,13 +468,34 @@ export default function ChampionshipOrganize() {
   // cambia format/group → no rearma. Restore/back arranca DESARMADO → NO auto-selecciona (respeta la
   // selección restaurada). El guard didMount salta el disparo del montaje (declarado antes del didMount-effect).
   const autoDateArmedRef = useRef(!restore);
-  const autoSlotArmedRef = useRef(!restore);
-  useEffect(() => { if (didMount.current) { autoDateArmedRef.current = true; autoSlotArmedRef.current = true; } }, [format, groupId]); // eslint-disable-line
+  // SOLO scroll VISUAL de la grilla de horas al ingreso inicial tras elegir formato (ver effect abajo). NO
+  // selecciona nada. true = ya posicionada en este ciclo (restore arranca true → respeta el scroll restaurado).
+  const gridScrolledRef = useRef(!!restore);
+  useEffect(() => { if (didMount.current) { autoDateArmedRef.current = true; gridScrolledRef.current = false; } }, [format, groupId]); // eslint-disable-line
 
-  // Validación del restore (View → Back): al cargar el inventario, si el DÍA restaurado ya NO tiene
-  // disponibilidad (p.ej. cambió la fecha/el inventario), la selección restaurada quedó OBSOLETA → se limpia
-  // y se REARMA el auto-select como un ciclo nuevo (día válido más próximo + primer horario). Si el día sigue
-  // válido, no toca nada (respeta la selección). Corre UNA vez tras !invLoading.
+  // Cambiar CIUDAD desde el filtro: persiste con el mismo mecanismo que Partidos (setActiveCity), y trata el
+  // cambio como CONTEXTO NUEVO → limpia toda selección/filtros de la ciudad anterior (no conservar una reserva de
+  // otra ciudad ni auto-seleccionar horario). El inventario se recarga por [userCity]; fecha/grilla se reposicionan
+  // (día disponible más próximo + primera disponibilidad, visibles). Distritos de la nueva ciudad se derivan solos.
+  function changeCity(c) {
+    setCitySheet(false);
+    if (!c || c === userCity) return;
+    setActiveCity(c, user?.id);
+    setUserCity(c);
+    setDistricts(new Set()); setVenueFilter(new Set());        // filtros de la ciudad anterior ya no aplican
+    setVenueIdx(0); setSlotIdx(null); setManualGameIds(null); clearSelMeta();   // selección incompatible → limpiar
+    autoDateArmedRef.current = true; gridScrolledRef.current = false;           // recalcular fecha/grilla como ciclo nuevo
+  }
+
+  // Validación del restore (View → Back / Intro→Empezar / reload): al cargar el inventario se valida, UNA vez,
+  // la selección restaurada contra la disponibilidad ACTUAL — por IDENTIDAD ESTABLE (selMeta: gameIds+venue+
+  // startHour), NUNCA por índice (los slots pueden reordenarse). Misma autoridad que el effect de filtros.
+  //   CASO C (fecha restaurada ya no válida): limpiar + rearmar auto-fecha + rearmar grilla → salto VISIBLE a la
+  //           nueva fecha válida y su disponibilidad.
+  //   CASO B (fecha válida pero el slot/cancha ya no existe): limpiar selección (SIN auto-seleccionar otro),
+  //           primer venue + rearmar grilla → reposicionamiento VISIBLE a la primera disponibilidad válida.
+  //   CASO A (slot sigue disponible EXACTAMENTE): restore SILENCIOSO — re-resolver venueIdx/slotIdx por horario
+  //           (índice estable), conservar manualGameIds; sin scroll visible (lo posiciona el restore de scroll).
   const restoreCheckedRef = useRef(false);
   useEffect(() => {
     if (restoreCheckedRef.current || !restore || invLoading) return;
@@ -472,11 +503,37 @@ export default function ChampionshipOrganize() {
     restoreCheckedRef.current = true;
     // Día restaurado válido = tiene disponibilidad Y cumple la anticipación mínima (minAllowedKey).
     const dateOk = group && dateChecks.has(dateKey) && (!minAllowedKey || dateKey >= minAllowedKey);
-    if (group && dateChecks.size > 0 && !dateOk) {
+    if (group && dateChecks.size > 0 && !dateOk) {                 // CASO C
       setSlotIdx(null); setManualGameIds(null); clearSelMeta();
       autoDateArmedRef.current = true;
-      autoSlotArmedRef.current = true;
+      gridScrolledRef.current = false;                            // grilla → primera disponibilidad de la nueva fecha (visible)
+      return;
     }
+    // Fecha válida: validar la SELECCIÓN por identidad estable. selMetaRef puede estar null (un setState previo
+    // pudo limpiarla), así que se RECONSTRUYE desde el cache que ya llegó (selectedGameIds + venueId). startHour
+    // se deriva del grid actual (championshipSlotForAnchor); NO se persiste ni duplica.
+    const meta = (selMetaRef.current && selMetaRef.current.gameIds?.length)
+      ? selMetaRef.current
+      : (Array.isArray(restore.selectedGameIds) && restore.selectedGameIds.length
+          ? { gameIds: restore.selectedGameIds, venueId: restore.venueId ?? null, startHour: null }
+          : null);
+    if (!meta || !meta.gameIds?.length) return;                   // sin selección previa → nada que validar
+    const vIdx = candidates.findIndex(v => v.id === meta.venueId);
+    const g = vIdx >= 0 ? championshipVenueGrid(games, meta.venueId, dateKey, format) : null;
+    if (!g || !championshipCombinationValid(g, group, meta.gameIds)) {   // CASO B — el slot/cancha ya no existe
+      setSlotIdx(null); setManualGameIds(null); clearSelMeta(); setVenueIdx(0);
+      gridScrolledRef.current = false;                            // reposicionamiento vertical VISIBLE a la disponibilidad válida
+      return;
+    }
+    // CASO A — sigue disponible exactamente: restore silencioso. Re-resolver por horario (índice estable) y
+    // dejar selMetaRef reconstruida (identidad estable) para el resto del flujo (filtros, etc.).
+    setVenueIdx(vIdx);
+    const nslots = championshipSlots(g, group);
+    let sh = meta.startHour;
+    if (sh == null) { const v = championshipSlotForAnchor(g, group, meta.gameIds[0]); sh = v?.startHour ?? null; }
+    selMetaRef.current = { gameIds: meta.gameIds, venueId: meta.venueId, startHour: sh };
+    const nIdx = sh != null ? nslots.findIndex(s => s.startHour === sh) : -1;
+    if (nIdx >= 0) setSlotIdx(nIdx);                              // manualGameIds se conserva; NO se auto-selecciona nada nuevo
   }, [invLoading, champCfgResolved, dateChecks, minAllowedKey]); // eslint-disable-line
 
   // CASO A ↔ disponibilidad: si NO existe disponibilidad GLOBAL, forzar personalización de Cancha
@@ -493,16 +550,17 @@ export default function ChampionshipOrganize() {
   // el contenido (tabla/horarios) esté maquetado y el scroll pueda alcanzar la posición guardada; se aplica
   // UNA sola vez. Mientras tanto, restoringRef suprime los auto-scrolls (a Cancha / tira de fechas) para que
   // no "suban" la pantalla y peleen con el restore.
-  const restoringRef = useRef(!!restore?.scrollTop);
+  const restoringRef = useRef(!!(restore?.scrollTop || restore?.gridScrollTop));
   const scrollRestoredRef = useRef(false);
   // Velo de loading SOLO cuando hay scroll que restaurar (View → Back): el contenido se monta pero se oculta
   // (visibility:hidden → conserva layout/scrollHeight) hasta que el scroll se aplica → el usuario NO ve el
   // contenido arriba ni el salto. En nueva creación (sin restore.scrollTop) es false → comportamiento actual.
-  const [restoreVeil, setRestoreVeil] = useState(!!restore?.scrollTop);
+  const [restoreVeil, setRestoreVeil] = useState(!!(restore?.scrollTop || restore?.gridScrollTop));
   useEffect(() => {
     if (scrollRestoredRef.current) return;
-    const y = restore?.scrollTop;
-    if (!y) { scrollRestoredRef.current = true; restoringRef.current = false; setRestoreVeil(false); return; }
+    const y = restore?.scrollTop || 0;
+    const gy = restore?.gridScrollTop || 0;          // scroll interno de la grilla de horas (gridVRef) cacheado
+    if (!y && !gy) { scrollRestoredRef.current = true; restoringRef.current = false; setRestoreVeil(false); return; }
     if (invLoading || !scrollRef.current) return;   // esperar el contenido final (inventario cargado) → hay altura para el scroll
     if (invCity && !champCfgResolved) return;        // esperar a que resuelva champCfg → minAllowedKey (anticipación) y blocks finales
     // Esperar además a que el contenido esté ASENTADO: día VÁLIDO (con disponibilidad Y que cumpla la
@@ -514,23 +572,31 @@ export default function ChampionshipOrganize() {
     if (!settled) return;
     scrollRestoredRef.current = true;
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      scrollRef.current?.scrollTo({ top: y, behavior: 'instant' });
+      if (y) scrollRef.current?.scrollTo({ top: y, behavior: 'instant' });
+      if (gy && gridVRef.current) gridVRef.current.scrollTop = gy;   // restaurar posición EXACTA de la grilla (silencioso, bajo el veil)
       if (dateOk) centerActiveDate('instant');       // fecha válida marcada → dejarla visible en la tira ANTES de revelar (empty/no-fecha → no scroll)
       restoringRef.current = false;                 // liberar auto-scrolls tras restaurar
       setRestoreVeil(false);                         // scroll ya aplicado + contenido asentado → revelar (sin flash/salto)
+      updateGridThumb();
     }));
   }, [invLoading, champCfgResolved, mode, contactMe, group, courtCustom, dateChecks, dateKey, minAllowedKey]); // eslint-disable-line
 
   // Formato → Cancha: Cancha aparece solo cuando Formato está completo (Torneo con rango elegido).
   // Al pasar de incompleto→completo, auto-scroll suave UNA sola vez a la sección Cancha (progresión).
   const canchaRef = useRef(null);
-  const canchaScrolledRef = useRef(false);
+  // Restore/back (Intro→Empezar, View-return, reload) arranca CONSUMIDO (true) → un formato ya persistido NO se
+  // trata como selección nueva y NO auto-scrollea a Cancha; el restore de scroll manda. Mismo criterio que
+  // gridScrolledRef/autoDateArmedRef. Nueva creación (sin restore) → false → auto-scroll al elegir formato.
+  const canchaScrolledRef = useRef(!!restore);
   const canchaReady = showCanchaCard && !!group;   // Formato completo → revelar Cancha
   // Fecha elegida MANUALMENTE que no tiene disponibilidad (hay disponibilidad global en otras fechas, así
   // que no es EMPTY_FORMAT). Se usa para mostrar el aviso "No hay disponibilidad en esta fecha…".
   const dateNoAvail = canchaReady && !!group && !!format && globalHasAnyAvailability && !invLoading && !dateChecks.has(dateKey);
   useEffect(() => {
-    if (!canchaReady) { canchaScrolledRef.current = false; return; } // se resetea si vuelve a incompleto
+    // Se rearma SOLO si el FORMATO se limpió de verdad (group null). Ocultar Cancha por cambiar a Liga/Contacto
+    // (canchaReady false PERO group aún elegido) NO rearma → al volver a Torneo con la misma selección no se
+    // vuelve a auto-scrollear (el scroll automático es solo para una selección NUEVA).
+    if (!canchaReady) { if (!group) canchaScrolledRef.current = false; return; }
     if (restoringRef.current) { canchaScrolledRef.current = true; return; } // restaurando scroll → no auto-scrollear a Cancha
     if (canchaScrolledRef.current) return;          // ya hicimos el scroll una vez
     canchaScrolledRef.current = true;
@@ -542,6 +608,30 @@ export default function ChampionshipOrganize() {
     }));
   }, [canchaReady]); // eslint-disable-line
 
+  // Reaparición de Cancha en la MISMA instancia (Torneo→Liga→Torneo): cambiar a Liga NO borra la selección de
+  // Torneo (selMetaRef sobrevive: ningún clearSelMeta reacciona a `mode`). Al volver a Torneo, si la selección
+  // previa sigue disponible se RE-RESUELVE (mismo criterio que restore/filtros: por identidad estable, NO por
+  // índice; se conserva manualGameIds). Si dejó de existir → se limpia SIN auto-seleccionar otra. NO corre en
+  // restore (lo maneja su validación) ni sin selección previa. NO toca scroll.
+  useEffect(() => {
+    if (!canchaReady || restoringRef.current) return;
+    const meta = selMetaRef.current;
+    if (!meta || !meta.gameIds?.length) return;                 // sin selección previa → no auto-seleccionar nada
+    const vIdx = candidates.findIndex(v => v.id === meta.venueId);
+    const g = vIdx >= 0 ? championshipVenueGrid(games, meta.venueId, dateKey, format) : null;
+    if (!g || !championshipCombinationValid(g, group, meta.gameIds)) {   // ya no disponible → limpiar (sin auto-select)
+      clearSelMeta(); setManualGameIds(null); setSlotIdx(null);
+      return;
+    }
+    // Sigue disponible → re-resolver venue/slot por horario (idempotente si ya estaba); manualGameIds se conserva.
+    if (vIdx >= 0) setVenueIdx(vIdx);
+    const nslots = championshipSlots(g, group);
+    let sh = meta.startHour;
+    if (sh == null) { const v = championshipSlotForAnchor(g, group, meta.gameIds[0]); sh = v?.startHour ?? null; selMetaRef.current = { ...meta, startHour: sh }; }
+    const nIdx = sh != null ? nslots.findIndex(s => s.startHour === sh) : -1;
+    if (nIdx >= 0) setSlotIdx(nIdx);
+  }, [canchaReady]); // eslint-disable-line
+
   // Selección automática del día disponible más próximo. Se dispara al abrir Cancha (Formato completo) y
   // cuando un cambio de filtro/formato/inventario recalcula la disponibilidad (dateChecks). NO depende de
   // dateKey → NO salta si el usuario elige manualmente un día vacío (§7). Solo salta si el día actual NO
@@ -551,6 +641,11 @@ export default function ChampionshipOrganize() {
   // elegido por el usuario si mantiene disponibilidad. Usa la MISMA autoridad (dateChecks).
   useEffect(() => {
     if (!canchaReady) return;
+    // Esperar disponibilidad COMPLETA antes de decidir un salto: sin champCfg (minAllowedKey/booking lead) hoy
+    // parece válido y la fecha restaurada aún no está en dateChecks → un salto TRANSITORIO a hoy movería la fecha
+    // (y dispararía el clear de selección de la línea de reset). Con los datos ya resueltos, el día restaurado
+    // válido se respeta a la primera y NUNCA pasa por una fecha intermedia.
+    if (invLoading || (invCity && !champCfgResolved)) return;
     // Primer día con disponibilidad Y que cumpla la anticipación mínima (>= minAllowedKey).
     let target = null;
     for (const d of DATE_WINDOW) { const k = ymd(d); if (dateChecks.has(k) && (!minAllowedKey || k >= minAllowedKey)) { target = k; break; } }
@@ -558,30 +653,30 @@ export default function ChampionshipOrganize() {
     if (!autoDateArmedRef.current && dateChecks.has(dateKey) && (!minAllowedKey || dateKey >= minAllowedKey)) return; // desarmado + día válido → respetar
     autoDateArmedRef.current = false;
     if (dateKey !== target) setDateKey(target);                                       // ciclo nuevo O día actual inválido → día más próximo
-  }, [canchaReady, dateChecks, minAllowedKey]); // eslint-disable-line
+  }, [canchaReady, dateChecks, minAllowedKey, invLoading, champCfgResolved]); // eslint-disable-line
 
-  // Preselección del primer horario válido del día más próximo — UN ciclo por cada FORMATO+GRUPO (NO solo
-  // groupId, para que cambiar el formato de fútbol 7v7→6v6 rearme el ciclo aunque el groupId no cambie). La
-  // deselección/selección MANUAL del usuario NO lo rearma (el key del ciclo no cambia). Solo auto-selecciona
-  // cuando la fecha ya es la MÁS PRÓXIMA del ciclo (el date-effect ya la fijó) → evita consumir el ciclo en la
-  // fecha anterior antes de que salte. Restore: se inicializa con el key restaurado → NO auto-selecciona.
-  // NOTA: se ELIMINÓ la preselección automática del primer horario. El salto de FECHA (día disponible más
-  // próximo) y el scroll SIGUEN igual (effects de dateKey/centerActiveDate); solo ya no se auto-selecciona
-  // ningún horario: la selección ocurre únicamente por click explícito del usuario. autoSlotArmedRef queda
-  // sin uso a propósito (no rearmamos ninguna auto-selección de horario).
+  // NOTA: NO hay preselección automática de horario. El salto de FECHA (día disponible más próximo) y el scroll
+  // se mantienen (effects de dateKey/centerActiveDate); la selección de horario ocurre solo por click del usuario.
 
-  // Scroll horizontal automático: centra en la tira el día seleccionado (auto-seleccionado o manual),
-  // para que el día disponible más próximo quede a la vista sin que el usuario tenga que desplazar.
-  useEffect(() => {
-    if (!canchaReady || restoringRef.current) return;   // durante la restauración de scroll no mover la vista (el reveal del veil la centra)
-    centerActiveDate('smooth');
-  }, [dateKey, canchaReady]);
+  // Scroll horizontal automático de la tira de fechas. REGLA ÚNICA: 'smooth' (visible) SOLO cuando la fecha
+  // REALMENTE cambió respecto a la última centrada (elección del usuario o cambio de disponibilidad → feedback).
+  // Cualquier REAPARICIÓN del carrusel con la MISMA fecha (Liga↔Torneo, o restore) → 'instant' (sin movimiento
+  // visible; useLayoutEffect = antes del paint). Bajo veil (restore con scrollTop/gridScrollTop) lo centra el
+  // effect de restore. Se inicializa con la fecha restaurada para que un cambio real posterior sí sea 'smooth'.
+  const lastCenteredDateRef = useRef(restore?.dateKey ?? null);
+  useLayoutEffect(() => {
+    if (!canchaReady || restoringRef.current) return;   // scrollTop/gridScrollTop-restore ya centra instantáneo bajo el veil
+    const behavior = (lastCenteredDateRef.current != null && lastCenteredDateRef.current !== dateKey) ? 'smooth' : 'instant';
+    centerActiveDate(behavior);
+    lastCenteredDateRef.current = dateKey;
+  }, [dateKey, canchaReady]); // eslint-disable-line
 
   // Al elegir un horario, si el bloque recomendado cae fuera del área visible de la grilla,
   // hacer un scroll VERTICAL sutil (smooth) para revelarlo. `startHour` es el índice de fila (HORA).
   useEffect(() => {
     const el = gridVRef.current;
     if (!el || !activeSlot) return;
+    if (restoringRef.current) return;   // durante el restore la grilla se posiciona por gridScrollTop cacheado (silencioso)
     const ROW = 28; // celda 28px, filas SIN gap vertical (bloques continuos). startHour/endHour = segmentos → fila = seg/2.
     const firstTop = Math.floor(activeSlot.startHour / 2) * ROW;
     const lastBottom = Math.ceil((activeSlot.endHour ?? activeSlot.startHour + 2) / 2) * ROW;
@@ -590,6 +685,24 @@ export default function ChampionshipOrganize() {
     const target = Math.max(0, firstTop - 6);
     requestAnimationFrame(() => { el.scrollTo({ top: target, behavior: 'smooth' }); updateGridThumb(); });
   }, [slotIdx, activeSlot?.startHour, activeSlot?.endHour, venueIdx, dateKey]); // eslint-disable-line
+
+  // Ingreso INICIAL a disponibilidad tras elegir formato: posicionar el scroll VERTICAL de la grilla en la
+  // PRIMERA disponibilidad real del día (menor startHour de los slots), para que se vea sin buscarla. SOLO
+  // scroll visual: NO toca slotIdx/selección/disponibilidad. Reutiliza la misma geometría del reveal (fila=seg/2,
+  // 28px). Se dispara una vez por ciclo de formato (gridScrolledRef) y SOLO cuando la fecha ya se asentó
+  // (autoDateArmedRef consumido → día disponible más próximo fijado). Restore/back arranca "ya posicionada"
+  // (gridScrolledRef=true) → respeta el scroll restaurado. No corre durante la restauración (restoringRef).
+  useEffect(() => {
+    if (!canchaReady || restoringRef.current) return;   // grilla no visible o restaurando → no tocar
+    if (gridScrolledRef.current) return;                // ya posicionada en este ciclo (o restore)
+    if (autoDateArmedRef.current) return;               // esperar a que la fecha se asiente (día disponible más próximo)
+    if (!slots.length) return;                           // aún sin disponibilidad calculada → esperar
+    gridScrolledRef.current = true;
+    const startSeg = Math.min(...slots.map(s => s.startHour));   // primera disponibilidad real (segmento más temprano)
+    const ROW = 28;
+    const target = Math.max(0, Math.floor(startSeg / 2) * ROW - 6);
+    requestAnimationFrame(() => requestAnimationFrame(() => { gridVRef.current?.scrollTo({ top: target, behavior: 'instant' }); updateGridThumb(); }));
+  }, [canchaReady, slots, dateKey]); // eslint-disable-line
 
   // Snapshot COMPLETO del estado de Organize (selección + scroll) — fuente única para navegar a "Ver mi
   // campeonato" (location.state) y para persistir el borrador (sessionStorage) al salir/desmontar.
@@ -600,7 +713,10 @@ export default function ChampionshipOrganize() {
     venueId: resolvedVenue?.id ?? null,
     city: resolvedVenue?.city ?? null,     // ciudad REAL del venue (autoridad de config en checkout)
     selectedGameIds,                       // games.id REALES del horario elegido (para el hold)
-    scrollTop: scrollRef.current?.scrollTop ?? scrollTopRef.current ?? 0,
+    // scrollTop EXACTO: en unmount (Intro→back) scrollRef.current puede leer 0; scrollTopRef (vivo, onScroll) tiene
+    // el valor real. `||` (no `??`) para que un 0 espurio caiga al valor rastreado — mismo dato que usa View→Organize.
+    scrollTop: scrollRef.current?.scrollTop || scrollTopRef.current || 0,
+    gridScrollTop: gridVRef.current?.scrollTop || 0,   // scroll interno de la grilla de horas → restore EXACTO/silencioso (CASO A)
     introSource,                           // origen del intro → destino del "atrás" del form (sobrevive reload/round-trip)
   });
   // Persistir el borrador al desmontar (atrás, ir a Ver mi campeonato, /venue, etc.) con el estado más reciente.
@@ -627,8 +743,11 @@ export default function ChampionshipOrganize() {
       venueDistrict: resolvedVenue?.district ?? null,
       venueAddress: resolvedVenue?.address ?? null,
       slotLabel: activeSlot ? `${segLabel(activeSlot.startHour)} – ${segLabel(activeSlot.endHour)}` : null,
-      configLabel: complies ? configLabel : null,
-      complies,
+      // Liga se coordina SIEMPRE a medida → nunca "cumple" para checkout, aunque queden slots de un formato de
+      // Torneo elegido antes (complies = slots.length > 0, independiente del modo). El tipo ACTUAL manda: Liga →
+      // "Contactarme para organizarlo". Solo afecta a Liga; Torneo (oneday) queda idéntico.
+      configLabel: (mode !== 'liga' && complies) ? configLabel : null,
+      complies: mode !== 'liga' && complies,
       venueId: resolvedVenue?.id ?? null,
       city: resolvedVenue?.city ?? null,      // ciudad REAL del venue → checkout la usa para config/quote
       selectedGameIds,                        // se propaga hasta ChampionshipCheckout (hold real)
@@ -720,13 +839,13 @@ export default function ChampionshipOrganize() {
       {/* Header compacto 44px */}
       <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 8, paddingRight: 16, flexShrink: 0 }}>
         <div style={{ height: 26, display: 'flex', alignItems: 'center', position: 'relative' }}>
-          {/* Atrás del FORM → al ORIGEN del intro (/championships/intro o /empresas). View-return (restore sin
-              introSource) → lista, como antes. Fallback seguro a /championships/intro. NO navigate(-1). */}
+          {/* Atrás del FORM → SIEMPRE al ORIGEN del intro (/championships/intro o /empresas). Se reutiliza el
+              `introSource` ya resuelto (location.state ?? restore/draft/organizeState) → sobrevive al round-trip
+              por "Ver mi campeonato" (View re-pasa organizeState CON introSource). Jerarquía: Menú→Intro→Organize→View.
+              Fallback seguro a /championships/intro. NO navigate(-1) (no depende de la pila de history). */}
           <button onClick={() => {
-            // Entrada por intro/venue-return → origen del intro. View-return (organizeState) → lista (como antes).
-            // Reload (solo draft) → origen guardado. Fallback → /championships/intro.
-            const src = location.state?.introSource ?? (location.state?.organizeState ? null : restore?.introSource);
-            if (src) navigate(src); else if (restore) navigate('/championships'); else navigate('/championships/intro');
+            // El draft lo persiste el cleanup de desmontaje (buildOrganizeState) al navegar; no se duplica aquí.
+            if (introSource) navigate(introSource); else if (restore) navigate('/championships'); else navigate('/championships/intro');
           }} style={{ position: 'absolute', left: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
@@ -788,7 +907,7 @@ export default function ChampionshipOrganize() {
           {mode === 'liga' ? (
             <>
               <div style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>¿Cuántos participan?</div>
-              <div style={{ fontSize: 12.5, color: SUB, marginTop: 3, marginBottom: 10 }}>Indica una cantidad aproximada y si te refieres a equipos o personas.</div>
+              <div style={{ fontSize: 12.5, color: SUB, marginTop: 3, marginBottom: 10 }}>Indica una cantidad aproximada de equipos o jugadores y ve a "Ver mi campeonato" para solicitar que lo personalicemos.</div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <input value={leagueQty} onChange={e => setLeagueQty(e.target.value.replace(/\D/g, '').slice(0, 3))} inputMode="numeric" placeholder="Ej. 8" style={{ ...inputStyle, flex: 1 }} />
                 <select value={leagueUnit} onChange={e => setLeagueUnit(e.target.value)} style={{ ...inputStyle, flex: '0 0 132px', appearance: 'none', WebkitAppearance: 'none', paddingRight: 30, background: `#fff url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 10px center` }}>
@@ -804,7 +923,7 @@ export default function ChampionshipOrganize() {
           ) : (
             <>
               <div style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>¿Cuántos equipos participan?</div>
-              <div style={{ fontSize: 12.5, color: SUB, marginTop: 3, marginBottom: 10 }}>Elige el tamaño del campeonato. Te sugerimos cuántas horas y canchas reservar; la cantidad exacta se ajusta después.</div>
+              <div style={{ fontSize: 12.5, color: SUB, marginTop: 3, marginBottom: 10 }}>Elige el tamaño del campeonato. Te sugerimos cuántas horas y canchas reservar.</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
                 {RECOMMENDATION_GROUPS.map(g => {
                   const ppt = PLAYERS_PER_TEAM[format];
@@ -863,6 +982,8 @@ export default function ChampionshipOrganize() {
             <div style={{ background: '#ECEDF1', borderRadius: 14, padding: 10, marginBottom: 12 }}>
 
             <div className="no-sb" style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4, marginBottom: 10 }}>
+              {/* Ciudad primero (Ciudad → Distritos → Cancha → resto). Cambia la ciudad activa global. */}
+              <Chip active onClick={() => setCitySheet(true)}>{userCity || 'Ciudad'}</Chip>
               <Chip active={districts.size > 0} onClick={() => setDistrictSheet(true)}>{districts.size > 0 ? `Distrito · ${districts.size}` : 'Distrito'}</Chip>
               <Chip active={venueFilter.size > 0} onClick={() => setVenueSheet(true)}>{venueFilter.size > 0 ? `Cancha · ${venueFilter.size}` : 'Cancha'}</Chip>
               {AMENITIES.map(a => <Chip key={a.key} active={amenities.has(a.key)} onClick={() => toggleSet(setAmenities, a.key)}>{a.label}</Chip>)}
@@ -1080,6 +1201,13 @@ export default function ChampionshipOrganize() {
       </div>
 
 
+      {citySheet && (
+        // Selector de CIUDAD (single): reutiliza PickSheet con un solo elemento seleccionado; tocar otra ciudad
+        // la cambia y cierra. Misma lista/persistencia que Partidos (fetchCities/setActiveCity).
+        <PickSheet title="Elige ciudad" onClose={() => setCitySheet(false)}
+          items={cities.map(c => ({ value: c, label: c }))}
+          selected={new Set(userCity ? [userCity] : [])} onToggle={(c) => changeCity(c)} />
+      )}
       {districtSheet && (
         <PickSheet title="Elige distritos" onClose={() => setDistrictSheet(false)}
           items={championshipDistricts(games).map(d => ({ value: d, label: d }))}

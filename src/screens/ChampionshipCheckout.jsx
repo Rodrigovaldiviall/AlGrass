@@ -7,6 +7,7 @@ import { CHAMPIONSHIP_BANK, soles, computeRegistrationClose } from '../data/cham
 import { uuidv4 } from '../lib/uuid';
 import { useAuth } from '../context/AuthContext';
 import { uploadChampionshipProof } from '../utils/championshipProof';
+import { formatDateLabel } from '../utils/format';
 import { supabase } from '../lib/supabase';
 import { createTransferHold, confirmTransfer as confirmTransferRpc, releaseTransferHold, quoteChampionship, getChampionshipConfig, createGatewayOrder, confirmGatewayPayment, failGateway } from '../services/championshipService';
 
@@ -142,8 +143,15 @@ export default function ChampionshipCheckout() {
   const [qty, setQty] = useState({});                          // { [code]: n }
   const getQty = (code) => qty[code] ?? 0;
   const setQtyFor = (code, next, max) => setQty(q => ({ ...q, [code]: Math.min(max, Math.max(0, next)) }));
-  // Payload para quote/hold: SOLO qty>0, únicamente {code, quantity} (nunca precio).
-  const extrasPayload = catalog.filter(e => getQty(e.code) > 0).map(e => ({ code: e.code, quantity: getQty(e.code) }));
+  // Árbitro = extra ESPECIAL (precio por HORAS en backend, no por unit_price × quantity → NO va en el catálogo
+  // genérico). Se envía como {code:'referee', quantity:1} en p_extras cuando está activo. Default incluido.
+  const [refereeOn, setRefereeOn] = useState(false);   // por defecto SIN árbitro; el usuario lo añade desde Extras
+  const refereeAvailable = !!groupId && selectedGameIds.length > 0;   // flujo REAL de campeonato (hay servicio de árbitro)
+  // Payload para quote/hold: SOLO qty>0, únicamente {code, quantity} (nunca precio) + árbitro si está activo.
+  const extrasPayload = [
+    ...catalog.filter(e => getQty(e.code) > 0).map(e => ({ code: e.code, quantity: getQty(e.code) })),
+    ...(refereeAvailable && refereeOn ? [{ code: 'referee', quantity: 1 }] : []),
+  ];
   const extrasKey = JSON.stringify(extrasPayload);
 
   // ── QUOTE REAL = autoridad del precio (court/referee/fee/extras/total). Async con guard de carrera. ──
@@ -334,7 +342,9 @@ export default function ChampionshipCheckout() {
     resetGateway();
   };
 
-  const back = () => navigate(-1);
+  // Volver a "Ver mi campeonato" reutilizando el return-state existente (cvReturn) → restaura scroll+estado
+  // desde championship_view_state (persistCV lo guardó al salir). navigate(-1) no llevaba cvReturn → saltaba arriba.
+  const back = () => navigate('/championships/view', { state: { cvReturn: true } });
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
@@ -347,17 +357,30 @@ export default function ChampionshipCheckout() {
           <div style={sectionTitle}>Resumen</div>
           <div style={{ fontSize: 16, fontWeight: 800, color: TEXT, letterSpacing: -0.3, margin: '8px 0 4px' }}>{championshipName}</div>
           <SummaryRow label="Formato" value={`${summary.formatLabel || '7v7'}${summary.group ? ` · ${summary.group.min}–${summary.group.max} equipos` : ''}`} />
-          <SummaryRow label="Fecha" value={summary.dateLabel} />
+          <SummaryRow label="Fecha" value={organizeState?.dateKey ? formatDateLabel(organizeState.dateKey).replace(/^(Hoy|Mañana),\s*/, '') : summary.dateLabel} />
           <SummaryRow label="Sede" value={summary.venueName} />
           <SummaryRow label="Horario" value={summary.slotLabel} />
-          <SummaryRow label="Canchas" value={summary.configLabel} />
+          <SummaryRow label="Canchas" value={(() => { const n = quote?.rental_count ?? summary.courtNames?.length ?? 0; const h = quote?.service_court_hours; if (n > 0 && h != null) return `${n} ${n === 1 ? 'cancha' : 'canchas'} - ${h} ${h === 1 ? 'hora' : 'horas'}`; return n > 0 ? `${n} ${n === 1 ? 'cancha' : 'canchas'}` : summary.configLabel; })()} />
         </div>
 
-        {/* ── Agregar extras (catálogo REAL de config; active=true, ordenados por sort_order) ── */}
-        {catalog.length > 0 && (
+        {/* ── Agregar extras (catálogo REAL de config; active=true, ordenados por sort_order) + Árbitro especial ── */}
+        {(catalog.length > 0 || refereeAvailable) && (
         <div style={{ padding: '14px 16px', borderTop: `1px solid ${HAIR}` }}>
           <div style={sectionTitle}>Agregar extras</div>
           <div style={{ marginTop: 4 }}>
+            {/* Árbitro — extra ESPECIAL por horas (precio lo pone el backend: service_court_hours × referee_hourly_rate). */}
+            {refereeAvailable && (
+              <div onClick={() => setRefereeOn(v => !v)} className="pressable" role="button" tabIndex={0} style={{ width: '100%', textAlign: 'left', padding: '11px 0', background: 'transparent', display: 'flex', alignItems: 'center', gap: 12, borderTop: 'none', cursor: 'pointer', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                <span style={{ width: 42, height: 42, borderRadius: '50%', background: '#F2F2F4', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 21, flexShrink: 0 }}>🧑‍⚖️</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 15.5, fontWeight: 700, color: TEXT }}>Árbitro</div>
+                  <div style={{ fontSize: 12.5, color: SUB, marginTop: 1 }}>{quote?.referee_hourly_rate != null ? `+ ${soles(quote.referee_hourly_rate)} / hora` : 'Árbitro para tus partidos'}</div>
+                </div>
+                <span style={{ width: 24, height: 24, borderRadius: 7, flexShrink: 0, border: `1.6px solid ${refereeOn ? ORANGE : '#C7C7CC'}`, background: refereeOn ? ORANGE : '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {refereeOn && <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7.2l3 3L11.5 4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                </span>
+              </div>
+            )}
             {catalog.map((e, i) => {
               const q = getQty(e.code);
               const withQty = e.max_quantity > 1;                                       // stepper (0..max)
@@ -365,7 +388,7 @@ export default function ChampionshipCheckout() {
               const label = e.units_per_item > 1 ? `${e.name} (${e.units_per_item})` : e.name;
               const rowStyle = {
                 width: '100%', textAlign: 'left', padding: '11px 0', background: 'transparent',
-                display: 'flex', alignItems: 'center', gap: 12, borderTop: i === 0 ? 'none' : `1px solid ${HAIR}`,
+                display: 'flex', alignItems: 'center', gap: 12, borderTop: (i === 0 && !refereeAvailable) ? 'none' : `1px solid ${HAIR}`,
                 WebkitTapHighlightColor: 'transparent', outline: 'none',
               };
               const emojiCircle = <span style={{ width: 42, height: 42, borderRadius: '50%', background: '#F2F2F4', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 21, flexShrink: 0 }}>{EXTRA_EMOJI[e.code] || '🎟️'}</span>;
@@ -443,11 +466,13 @@ export default function ChampionshipCheckout() {
           {quote ? (
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
-                <span>Canchas</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(quote.court_amount)}</span>
+                <span>Alquiler Canchas</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(quote.court_amount)}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
-                <span>Árbitros</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(quote.referee_amount)}</span>
-              </div>
+              {Number(quote.referee_amount) > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
+                  <span>{`Árbitro × ${quote.service_court_hours} ${quote.service_court_hours === 1 ? 'hora' : 'horas'}`}</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(quote.referee_amount)}</span>
+                </div>
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
                 <span>Organización AlGrass</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(quote.algrass_fee_amount)}</span>
               </div>

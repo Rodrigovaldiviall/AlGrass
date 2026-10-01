@@ -27,6 +27,7 @@ import { fetchPendingSlotExpiry, markSlotReservationNotified, getPendingRewards,
 import { saveRating, fetchMyRatings, upsertRatingRows, markPopupShown, getLocalRatings, setLocalRatings } from '../services/ratingService';
 import { getMyWaitlistGamesFull } from '../services/waitlistService';
 import { listMyChampionships } from '../services/championshipService';
+import { listMyChampionshipRequests } from '../services/championshipRequestService';
 import { coverColor } from '../data/championshipCover';
 import { useForegroundTick } from '../hooks/useForegroundTick';
 import { uploadAvatar, getAvatarUrl } from '../utils/avatar';
@@ -2888,10 +2889,28 @@ export default function Profile() {
     || myPlayerRows.some(r => r.user_id === user?.id && r.status === 'confirmed')
     || isGameHost;
 
-  // Campeonatos/solicitudes mock (sessionStorage). MOCK: 1 campeonato + 1 solicitud (se reemplazan; no arrays).
+  // Solicitudes de campeonato — FUENTE DE VERDAD = Supabase (list_my_championship_requests), NO el snapshot local.
+  // Se relee al montar y al VOLVER a la pantalla (focus/visibilitychange) para reflejar cambios de status hechos
+  // en Admin (p.ej. closed→pending/contacted) sin logout, sin limpiar caché ni cerrar la pestaña.
+  const [champRequests, setChampRequests] = useState(null);
+  useEffect(() => {
+    if (!user?.id) { setChampRequests([]); return; }
+    let alive = true;
+    const load = () => listMyChampionshipRequests().then(({ data }) => { if (alive) setChampRequests(data || []); });
+    load();
+    const onFocus = () => load();
+    const onVis = () => { if (document.visibilityState === 'visible') load(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVis);
+    return () => { alive = false; window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onVis); };
+  }, [user?.id]);
+
+  // Snapshot local (sessionStorage) SOLO para UX transitoria del formulario de edición (campos de la solicitud).
+  // NO es fuente de verdad del status ni de los datos personales.
   const _champCv = (() => { try { return JSON.parse(sessionStorage.getItem('championship_view_state')); } catch { return null; } })();
-  const champReq = _champCv?.contactRequest || null;            // { status:'pending', ... } (solicitud)
-  const champName = _champCv?.name || champReq?.championshipName || 'Campeonato';
+  const champReqSnap = _champCv?.contactRequest || null;        // snapshot (prefill de edición); NO decide visibilidad
+  const champReq = (champRequests || []).find(r => r.status === 'pending' || r.status === 'contacted') || null; // activa (pending/contacted)
+  const champName = _champCv?.name || champReq?.championship_name || 'Campeonato';
   const champTheme = _champCv?.coverTheme || '#E24A4A';
   const _champSum = _champCv?.summary || {};
   const _champStart = (_champSum.slotLabel || '').split('–')[0].trim(); // "3:00 pm"
@@ -2910,7 +2929,7 @@ export default function Profile() {
     if (g?.id) navigate('/championships/view/' + g.id, { state: { statusHint: g.status, from: 'profile', championshipOrigin: 'profile' } });
     else navigate('/championships/view', { state: { summary: _champCv?.summary, organizeState: _champCv?.organizeState, cvReturn: false, from: 'profile' } });
   };
-  const openChampRequest = () => navigate('/championships/contact', { state: { summary: champReq?.originalSummary, organizeState: champReq?.originalOrganizeState, championshipName: champReq?.championshipName, existingRequest: true } });
+  const openChampRequest = () => navigate('/championships/contact', { state: { summary: champReqSnap?.originalSummary, organizeState: champReqSnap?.originalOrganizeState, championshipName: champReqSnap?.championshipName || champReq?.championship_name, existingRequest: true } });
 
   // ── Campeonatos REALES del usuario (FUENTE DE VERDAD del listado = DB, 0..N) ──────────────────
   // Cada campeonato es un evento independiente con SU championship.id como identidad/key. Ya NO se
@@ -3486,12 +3505,13 @@ export default function Profile() {
 
           <SectionHeader title="Próximos eventos" count={upcomingAll.length} />
 
-          {/* Solicitud de campeonato (pending) — objeto independiente, SIN fecha/hora */}
-          {champReq?.status === 'pending' && (
+          {/* Solicitud de campeonato (pending/contacted, según Supabase) — objeto independiente, SIN fecha/hora.
+              'closed' no la devuelve la RPC → no se muestra; al reabrirse (contacted/pending) reaparece. */}
+          {champReq && (
             <button ref={highlightedId === '__champreq' ? highlightedRef : null} onClick={openChampRequest} className={`pressable${highlightedId === '__champreq' ? ' game-row-highlighted' : ''}`} style={champRowStyle}>
               <div style={{ ...champCrest, background: champTheme }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M7 4h10v5a5 5 0 0 1-10 0V4z" stroke="#fff" strokeWidth="1.7" strokeLinejoin="round"/><path d="M7 6H4.5v1.5A2.5 2.5 0 0 0 7 10M17 6h2.5v1.5A2.5 2.5 0 0 1 17 10" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/><path d="M12 14v3M9 20.5h6M9.5 20.5c0-1.4.8-2.3 2.5-2.3s2.5.9 2.5 2.3" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg></div>
               <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{champReq.championshipName || 'Campeonato'}</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{champReq.championship_name || 'Campeonato'}</div>
                 <div style={{ fontSize: 12.5, color: SUB, fontWeight: 600, marginTop: 1 }}>Solicitud de contacto enviada</div>
               </div>
               <ChevIcon />

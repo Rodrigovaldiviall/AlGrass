@@ -1,13 +1,12 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { createChampionshipRequest } from '../services/championshipRequestService';
+import { createChampionshipRequest, getMyProfilePhone } from '../services/championshipRequestService';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, DANGER } from '../constants';
-import { CURRENT_USER_NAME } from '../data/championshipTeamsMock';
 // Catálogo de formatos + tramos de equipos (los distritos ya NO salen de aquí: se derivan de venues reales).
 import { FORMATS, RECOMMENDATION_GROUPS } from '../data/championshipFormats';
 // Mismo patrón de prefijo telefónico + etiquetas de mes de Perfil (reutilizados sin tocarlos).
-import { detectPrefix, MONTH_LABELS } from '../utils/profileData';
+import { detectPrefix, MONTH_LABELS, getActiveCity } from '../utils/profileData';
 // Selector de distritos (multiselección) reutilizado de Partidos.
 import DistrictSheet from '../components/DistrictSheet';
 // Inventario REAL de Campeonatos (fuente de ciudades/distritos) + config por ciudad (antelación mínima).
@@ -128,9 +127,10 @@ export default function ChampionshipContact() {
   const invLoading = inv == null;
   useEffect(() => {
     let alive = true;
-    fetchChampionshipInventory().then(({ games, error }) => { if (alive) setInv(error ? [] : (games || [])); });
+    // Inventario SOLO de la ciudad ACTIVA (misma fuente que Partidos) → sin selección independiente de ciudad.
+    fetchChampionshipInventory(getActiveCity()).then(({ games, error }) => { if (alive) setInv(error ? [] : (games || [])); });
     return () => { alive = false; };
-  }, []);
+  }, []); // eslint-disable-line
   const cities = useMemo(() => [...new Set((inv || []).map(g => g.city).filter(Boolean))].sort(), [inv]);
   const profileCity = readCity();
   // Prioridad: existing.city (si válida) → ciudad de perfil (si en cities) → primera del inventario → '' mientras carga.
@@ -217,9 +217,10 @@ export default function ChampionshipContact() {
   const [estimateQty, setEstimateQty] = useState(initQty);
   const [estimateType, setEstimateType] = useState(initType);
 
-  // ── Datos de contacto ──
-  const [name, setName] = useState(existing?.contactName || CURRENT_USER_NAME);
-  const [email, setEmail] = useState(existing?.email || user?.email || '');
+  // ── Datos de contacto ── Datos PERSONALES = fuente de verdad ACTUAL del usuario autenticado (NO el snapshot de
+  // una solicitud antigua): full_name/email desde useAuth (public.users vía AuthContext), phone desde public.users.
+  const [name, setName] = useState(user?.name || '');
+  const [email, setEmail] = useState(user?.email || '');
   const [prefixInput, setPrefixInput] = useState(existing?.phoneCountryCode ? existing.phoneCountryCode.replace(/^\+/, '') : '51');
   const [phone, setPhone] = useState(existing?.contactPhone || '');
   const [company, setCompany] = useState(existing?.company || '');
@@ -230,6 +231,21 @@ export default function ChampionshipContact() {
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Precarga de datos PERSONALES ACTUALES (fuente de verdad). name/email desde el usuario autenticado; phone desde
+  // public.users. Solo rellena si el campo sigue vacío → nunca pisa lo que el usuario escriba, ni al llegar async.
+  const profilePhoneRef = useRef('');
+  useEffect(() => {
+    let alive = true;
+    if (user?.name) setName(prev => prev || user.name);
+    if (user?.email) setEmail(prev => prev || user.email);
+    if (user?.id) getMyProfilePhone(user.id).then(({ phone: p }) => {
+      if (!alive) return;
+      profilePhoneRef.current = p || '';
+      if (p) setPhone(prev => prev || p);
+    });
+    return () => { alive = false; };
+  }, [user?.id, user?.name, user?.email]); // eslint-disable-line
 
   const onPhone = (v) => { const digits = v.replace(/\D/g, ''); const p = detectPrefix(prefixInput); setPhone(digits.slice(0, p?.exact ?? 15)); };
 
@@ -308,10 +324,10 @@ export default function ChampionshipContact() {
   // Cancelar edición → restaurar campos desde lo guardado y recoger el formulario (permanece en pantalla).
   const cancelEdit = () => {
     const req = readCV()?.contactRequest || {};
-    setName(req.contactName || CURRENT_USER_NAME);
-    setEmail(req.email || user?.email || '');
+    setName(user?.name || '');                                    // personal = fuente actual, no el snapshot
+    setEmail(user?.email || '');
     setPrefixInput(req.phoneCountryCode ? req.phoneCountryCode.replace(/^\+/, '') : '51');
-    setPhone(req.contactPhone || '');
+    setPhone(profilePhoneRef.current || req.contactPhone || '');
     setCompany(req.company || '');
     setJobTitle(req.jobTitle || '');
     setMessage(req.message || '');
@@ -453,7 +469,7 @@ export default function ChampionshipContact() {
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: SOFT, overflow: 'hidden' }}>
       <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 8, paddingRight: 12, flexShrink: 0 }}>
         <div style={{ height: 26, display: 'flex', alignItems: 'center', position: 'relative' }}>
-          <button onClick={() => navigate(-1)} style={{ position: 'absolute', left: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+          <button onClick={() => navigate('/championships/view', { state: { cvReturn: true } })} style={{ position: 'absolute', left: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
           <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>Solicitud de campeonato</div>

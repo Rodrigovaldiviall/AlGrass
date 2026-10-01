@@ -27,16 +27,19 @@ export function clockFromMin(min) {
 
 // Trae TODO el inventario rental disponible del horizonte (una sola query) y lo aplana a un modelo
 // mínimo por game. duration_min real (game → field → 60 fallback). Devuelve { games, error }.
-export async function fetchChampionshipInventory() {
+export async function fetchChampionshipInventory(city) {
+  // Scope por CIUDAD del perfil (users.city): SOLO se carga inventario de esa ciudad — el filtro va en la FUENTE
+  // (embedded !inner sobre venues.city), no visualmente. Sin ciudad → inventario vacío (no se cargan todas las ciudades).
+  if (!city) return { games: [], error: null };
   const from = ymd(DATE_WINDOW[0]);
   const to = ymd(DATE_WINDOW[DATE_WINDOW.length - 1]);
   const { data, error } = await supabase
     .from('games')
     .select(`
       id, date_key, time, duration_min, format,
-      fields:field_id (
+      fields:field_id!inner (
         id, name, format, duration_min,
-        venues:venue_id ( id, name, district, address, city, lat, lng, cover_image_path, cover_updated_at, venue_amenities:amenities )
+        venues:venue_id!inner ( id, name, district, address, city, lat, lng, cover_image_path, cover_updated_at, venue_amenities:amenities )
       )
     `)
     .eq('type', 'rental')
@@ -44,7 +47,8 @@ export async function fetchChampionshipInventory() {
     .is('booked_by_user_id', null)
     .is('championship_id', null)
     .gte('date_key', from)
-    .lte('date_key', to);
+    .lte('date_key', to)
+    .eq('fields.venues.city', city);   // ciudad del venue (fuente), no filtro visual
   if (error) return { games: [], error };
   const games = (data || []).map(g => {
     const field = g.fields;

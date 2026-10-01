@@ -3,20 +3,86 @@
 //    · /empresas             (entrada externa/comercial)
 // Misma intro visual/CSS; la única diferencia es el ORIGEN, que se propaga al form como introSource
 // para que el back del form vuelva al lugar correcto. "Empezar" → /championships/organize (form real).
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { BLUE, SOFT, ORANGE } from '../constants';
+import { BLUE, SOFT, ORANGE, TEXT, SUB, HAIR } from '../constants';
+import { getActiveCity, setActiveCity, fetchCities } from '../utils/profileData';
+import { useAuth } from '../context/AuthContext';
 import './ChampionshipIntroContent.css';
 import cimg01 from '../assets/championship-intro/01-app.webp';
 import cimg02 from '../assets/championship-intro/02-arbitro.webp';
 import cimg03 from '../assets/championship-intro/03-organizador.webp';
 import cimg04 from '../assets/championship-intro/04-celebracion.webp';
 
+// Selector de ciudad MÍNIMO y LOCAL a la intro de Campeonatos (landing /empresas, primera entrada). NO extrae ni
+// toca el CitySheet de Partidos. Reutiliza fetchCities/setActiveCity (misma persistencia que Partidos). No dismissible.
+function CityOnboardSheet({ cities, current, onPick }) {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => { const r = requestAnimationFrame(() => setVisible(true)); return () => cancelAnimationFrame(r); }, []);
+  return (
+    <>
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200 }} />
+      <div style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 201,
+        background: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20,
+        transform: visible ? 'translateY(0)' : 'translateY(100%)',
+        transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)',
+        maxHeight: '70%', display: 'flex', flexDirection: 'column',
+        boxShadow: '0 -8px 32px rgba(0,0,0,0.12)',
+      }}>
+        <div style={{ padding: '10px 16px 0', flexShrink: 0 }}>
+          <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 12px' }} />
+          <div style={{ paddingBottom: 12, borderBottom: `1px solid ${HAIR}` }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, letterSpacing: -0.2 }}>Elige tu ciudad</div>
+            <div style={{ fontSize: 12.5, color: SUB, marginTop: 2 }}>Verás los campeonatos disponibles en tu ciudad.</div>
+          </div>
+        </div>
+        <div className="no-sb" style={{ overflowY: 'auto', flex: 1, padding: '4px 16px calc(16px + env(safe-area-inset-bottom))' }}>
+          {cities.map(c => {
+            const on = c === current;
+            return (
+              <button key={c} onClick={() => onPick(c)} style={{
+                display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '13px 0',
+                background: 'transparent', border: 'none', borderBottom: `1px solid ${HAIR}`,
+                cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none',
+              }}>
+                <div style={{
+                  width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
+                  border: on ? 'none' : `1.6px solid ${HAIR}`, background: on ? BLUE : '#fff',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  {on && <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2.5 6.5l2.5 2.5 4.5-5" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                </div>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 14.5, color: TEXT, fontWeight: 500 }}>{c}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function ChampionshipIntro() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
   // Origen: en la app la X sale a /championships. En /empresas la salida está por definir → sin X (pendiente).
   const isApp = location.pathname === '/championships/intro';
   const empezar = () => navigate('/championships/organize', { state: { introSource: location.pathname } });
+
+  // ── Primera entrada por /empresas: selector de ciudad SOBRE esta intro (solo aquí) ──
+  // Depende EXCLUSIVAMENTE de la señal de navegación empresaFirstVisit (NO de !ciudad): es la excepción de la
+  // primera llegada desde el Intro general. Al elegir, se persiste igual que Partidos (setActiveCity) y se limpia
+  // el state (replace) → refresh/back no reabre el selector. NO marca pichanga_coach_seen (tutorial normal intacto).
+  const [cityOnboard, setCityOnboard] = useState(() => location.state?.empresaFirstVisit === true);
+  const [onboardCities, setOnboardCities] = useState([]);
+  useEffect(() => { if (!cityOnboard) return; let alive = true; fetchCities().then(cs => { if (alive) setOnboardCities(cs); }); return () => { alive = false; }; }, [cityOnboard]);
+  const pickOnboardCity = (c) => {
+    setActiveCity(c, user?.id);
+    setCityOnboard(false);
+    navigate(location.pathname, { replace: true, state: null });   // consumir empresaFirstVisit → no reabre; queda en la intro
+  };
 
   return (
     <div className="screen-shell championship-intro-shell" style={{ display: 'flex', flexDirection: 'column', background: SOFT, overflow: 'hidden' }}>
@@ -151,6 +217,11 @@ export default function ChampionshipIntro() {
           fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, WebkitTapHighlightColor: 'transparent', outline: 'none',
         }}>Empezar</button>
       </div>
+
+      {/* Selector de ciudad SOLO en la primera llegada por /empresas (empresaFirstVisit). No dismissible. */}
+      {cityOnboard && onboardCities.length > 0 && (
+        <CityOnboardSheet cities={onboardCities} current={getActiveCity()} onPick={pickOnboardCity} />
+      )}
     </div>
   );
 }

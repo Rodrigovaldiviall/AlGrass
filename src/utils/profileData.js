@@ -1,8 +1,31 @@
 // Constantes/helpers compartidos de datos de perfil, extraídos de Profile.jsx SIN cambiar
 // su lógica. Viven aquí (no en Profile) para poder importarse desde otras pantallas sin
 // activar react-refresh/only-export-components (Profile así solo exporta componentes).
+import { supabase } from '../lib/supabase';
 
 export const POSITIONS = ['DEL', 'MED', 'DEF', 'ARQ'];
+
+// Ciudad ACTIVA del usuario = fuente ÚNICA persistente (localStorage 'pichanga_profile'.city), la MISMA que usan
+// Partidos/Rentals. Se actualiza al cambiar de ciudad (junto con public.users.city). null si aún no hay ciudad.
+// NO usar user.city de AuthContext para scope de ciudad: ese objeto no se re-hidrata al cambiar de ciudad en sesión.
+export function getActiveCity() {
+  try { return JSON.parse(localStorage.getItem('pichanga_profile'))?.city || null; } catch { return null; }
+}
+
+// Cambia la ciudad ACTIVA con el MISMO mecanismo que el selector de Partidos (PickupGames.handleCityChange):
+// persiste en localStorage 'pichanga_profile' + actualiza public.users.city (supabase-js es lazy → .then()
+// obligatorio para que la query se envíe). No crea otro estado/contexto. Devuelve nada; el caller refresca su UI.
+export function setActiveCity(city, userId) {
+  if (!city) return;
+  try { const p = JSON.parse(localStorage.getItem('pichanga_profile')) || {}; localStorage.setItem('pichanga_profile', JSON.stringify({ ...p, city })); } catch {}
+  if (userId) supabase.from('users').update({ city }).eq('id', userId).then(({ error }) => { if (error) console.warn('[city] users.update failed:', error); });
+}
+
+// Lista de ciudades soportadas = MISMA fuente que Partidos/Settings (distintas venues.city, ordenadas es).
+export async function fetchCities() {
+  const { data } = await supabase.from('venues').select('city').not('city', 'is', null);
+  return [...new Set((data ?? []).map(r => r.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+}
 
 const PREFIX_DATA = [
   { code: '+51',  digits: '51',  label: 'Perú',          exact: 9 },

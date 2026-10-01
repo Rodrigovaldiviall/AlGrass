@@ -33,6 +33,7 @@ function tabFromPath(pathname) {
   if (pathname.startsWith('/email-changed')) return 'perfil'; // cierre del cambio de correo → Continuar lleva a Perfil
   if (pathname.startsWith('/notifications')) return 'notificaciones';
   if (pathname.startsWith('/championships')) return 'campeonatos';
+  if (pathname.startsWith('/empresas'))      return 'campeonatos'; // landing comercial = experiencia Campeonatos
   if (pathname.startsWith('/fields'))        return 'campos';
   if (pathname.startsWith('/games'))         return 'partidos';
   // All other sub-screens (/settings, /game/:id, /checkout, …): preserve last root context

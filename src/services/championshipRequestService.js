@@ -63,3 +63,20 @@ export async function createChampionshipRequest(userId, fields) {
 
   return { data: null, error: error ?? null };
 }
+
+// Lee las solicitudes PROPIAS del usuario (RPC segura list_my_championship_requests): solo columnas seguras y
+// solo estados activos (pending/contacted). 'closed' NO se devuelve. Es la FUENTE DE VERDAD del Perfil para
+// mostrar/ocultar la tarjeta de solicitud según el status REAL actual de Supabase (reversible).
+export async function listMyChampionshipRequests() {
+  if (!supabase) return { data: [], error: null };
+  const { data, error } = await supabase.rpc('list_my_championship_requests');
+  return { data: Array.isArray(data) ? data : [], error: error ?? null };
+}
+
+// Teléfono LOCAL del perfil actual (public.users.phone) del usuario autenticado. Para precargar el formulario
+// de solicitud con el dato ACTUAL (no un snapshot antiguo). RLS: el usuario ya puede leer su propia fila.
+export async function getMyProfilePhone(userId) {
+  if (!supabase || !userId) return { phone: null, error: null };
+  const { data, error } = await supabase.from('users').select('phone').eq('id', userId).maybeSingle();
+  return { phone: data?.phone ?? null, error: error ?? null };
+}
