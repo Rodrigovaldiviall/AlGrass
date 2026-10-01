@@ -22,9 +22,12 @@ export default function VenueMiniMap({ lat, lng, cityLabel = '' }) {
     if (lat == null || lng == null) return;
 
     const map = L.map(containerRef.current, {
-      zoomControl: false, attributionControl: false,
+      zoomControl: false,   // atribución OSM obligatoria → se deja el attributionControl por defecto (crédito mínimo)
     }).setView([lat, lng], 15);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
+    // Tiles OpenStreetMap estándar (sin API key; CARTO pasó a exigir key). Atribución OSM obligatoria.
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 19,
+    }).addTo(map);
 
     L.marker([lat, lng], { icon: venueIcon() }).addTo(map);
     mapRef.current = map;

@@ -8,7 +8,7 @@
 //   type='rental', status='published', booked_by_user_id IS NULL, championship_id IS NULL.
 
 import { supabase } from '../lib/supabase';
-import { DATE_WINDOW, ymd } from '../data/games';
+import { CHAMP_DATE_WINDOW, ymd } from '../data/games';
 
 // Etiqueta de reloj a partir de una HORA absoluta del día (0–23). Mantiene el estilo del grid ("6:00 pm").
 export function hourLabel(h) {
@@ -31,8 +31,8 @@ export async function fetchChampionshipInventory(city) {
   // Scope por CIUDAD del perfil (users.city): SOLO se carga inventario de esa ciudad — el filtro va en la FUENTE
   // (embedded !inner sobre venues.city), no visualmente. Sin ciudad → inventario vacío (no se cargan todas las ciudades).
   if (!city) return { games: [], error: null };
-  const from = ymd(DATE_WINDOW[0]);
-  const to = ymd(DATE_WINDOW[DATE_WINDOW.length - 1]);
+  const from = ymd(CHAMP_DATE_WINDOW[0]);
+  const to = ymd(CHAMP_DATE_WINDOW[CHAMP_DATE_WINDOW.length - 1]);
   const { data, error } = await supabase
     .from('games')
     .select(`

@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN } from '../constants';
 import { useSheetPull } from '../hooks/useSheetPull';
-import { DATE_WINDOW, TODAY, TODAY_KEY, ymd } from '../data/games';
+import { CHAMP_DATE_WINDOW, TODAY, TODAY_KEY, ymd } from '../data/games';
 import { getChampionshipConfig } from '../services/championshipService';
 import {
   FORMATS, DEFAULT_FORMAT, PLAYERS_PER_TEAM, RECOMMENDATION_GROUPS, AMENITIES, playersRange,
@@ -230,7 +230,12 @@ export default function ChampionshipOrganize() {
     let alive = true;
     getChampionshipConfig({ city: invCity }).then(({ data, error }) => { if (alive) { setChampCfg(error ? null : data); setChampCfgResolved(true); } });
     return () => { alive = false; };
-  }, [invCity]);
+    // Depende también de user?.id: get_championship_config exige sesión (grant solo a authenticated). En un
+    // refresh/carga directa, invCity puede resolver ANTES de que la sesión Supabase se restaure → el fetch
+    // falla y champCfg queda null (sin antelación mínima). Al quedar lista la sesión, user?.id cambia y se
+    // reintenta con auth → champCfg carga → minAllowedKey bloquea las fechas < anticipación. NO cambia el
+    // horizonte ni la regla; solo recupera la config cuando la auth está disponible.
+  }, [invCity, user?.id]);
   const availabilityBlocks = Array.isArray(champCfg?.availability_blocks) ? champCfg.availability_blocks : [];
 
   // Inventario UTILIZABLE por Championship = inventario real − rentals que se solapan con un availability_block
@@ -255,7 +260,7 @@ export default function ChampionshipOrganize() {
   const dateChecks = useMemo(() => {
     const s = new Set();
     if (!group) return s;
-    for (const d of DATE_WINDOW) { const k = ymd(d); if (baseVenues.some(v => venueComplies(v, k))) s.add(k); }
+    for (const d of CHAMP_DATE_WINDOW) { const k = ymd(d); if (baseVenues.some(v => venueComplies(v, k))) s.add(k); }
     return s;
   }, [group, baseVenues, games, format]); // eslint-disable-line
 
@@ -292,7 +297,7 @@ export default function ChampionshipOrganize() {
   const globalVenues = useMemo(() => championshipVenues(games, format, new Set(), new Set()), [games, format]);
   const globalHasAnyAvailability = useMemo(() => {
     if (!group) return false;
-    for (const d of DATE_WINDOW) { const k = ymd(d); if ((!minAllowedKey || k >= minAllowedKey) && globalVenues.some(v => venueComplies(v, k))) return true; }
+    for (const d of CHAMP_DATE_WINDOW) { const k = ymd(d); if ((!minAllowedKey || k >= minAllowedKey) && globalVenues.some(v => venueComplies(v, k))) return true; }
     return false;
   }, [globalVenues, group, games, format, minAllowedKey]); // eslint-disable-line
 
@@ -300,7 +305,7 @@ export default function ChampionshipOrganize() {
 
   // EMPTY_FORMAT = el formato NO tiene NINGUNA disponibilidad real utilizable en ningún venue ni fecha del
   // inventario Championship, ANTES de aplicar filtros del usuario. Autoridad = globalHasAnyAvailability
-  // (recorre TODAS las fechas de DATE_WINDOW y TODOS los globalVenues —sin distrito/amenities/venueFilter—
+  // (recorre TODAS las fechas de CHAMP_DATE_WINDOW y TODOS los globalVenues —sin distrito/amenities/venueFilter—
   // comprobando venueComplies = existe ≥1 slot válido). NO es globalVenues.length (eso es compatibilidad
   // ESTRUCTURAL, no disponibilidad). Cuando es true → se oculta TODA la UI de selección de cancha.
   const isEmptyFormat = !!group && !!format && !globalHasAnyAvailability;
@@ -648,7 +653,7 @@ export default function ChampionshipOrganize() {
     if (invLoading || (invCity && !champCfgResolved)) return;
     // Primer día con disponibilidad Y que cumpla la anticipación mínima (>= minAllowedKey).
     let target = null;
-    for (const d of DATE_WINDOW) { const k = ymd(d); if (dateChecks.has(k) && (!minAllowedKey || k >= minAllowedKey)) { target = k; break; } }
+    for (const d of CHAMP_DATE_WINDOW) { const k = ymd(d); if (dateChecks.has(k) && (!minAllowedKey || k >= minAllowedKey)) { target = k; break; } }
     if (!target) return;                                                              // ningún día permitido con slot → sin salto
     if (!autoDateArmedRef.current && dateChecks.has(dateKey) && (!minAllowedKey || dateKey >= minAllowedKey)) return; // desarmado + día válido → respetar
     autoDateArmedRef.current = false;
@@ -730,7 +735,7 @@ export default function ChampionshipOrganize() {
   function goToView() {
     const organizeState = buildOrganizeState();
     try { sessionStorage.setItem(ORG_DRAFT_KEY, JSON.stringify(organizeState)); } catch {}
-    const dsel = DATE_WINDOW.find(d => ymd(d) === dateKey);
+    const dsel = CHAMP_DATE_WINDOW.find(d => ymd(d) === dateKey);
     const lab = dsel ? dateChip(dsel) : null;
     const summary = {
       mode, contactMe, courtCustom,
@@ -990,7 +995,7 @@ export default function ChampionshipOrganize() {
             </div>
 
             <div className="no-sb" style={{ display: 'flex', gap: 8, overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 8, marginBottom: 6 }}>
-              {DATE_WINDOW.map(d => {
+              {CHAMP_DATE_WINDOW.map(d => {
                 const k = ymd(d); const lab = dateChip(d);
                 const blocked = !!minAllowedKey && k < minAllowedKey;   // anticipación mínima no cumplida (sigue deshabilitado)
                 // Día sin disponibilidad: YA NO se deshabilita → clickable para mostrar el aviso de fecha vacía.
