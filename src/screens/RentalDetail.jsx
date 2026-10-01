@@ -172,11 +172,33 @@ function CTA({ price, onPress }) {
   );
 }
 
+// Holder de aviso de cancelación: misma jerarquía (título destacado + texto secundario) en los 3 tramos.
+// success=100% (verde) · warning=parcial (ámbar) · danger=0% (rojo). Misma estética que el holder de Match.
+const HOLDER_TONES = {
+  success: { bg: '#ECFBF1', border: `${GREEN}40`,  accent: GREEN },
+  warning: { bg: '#FFF7E8', border: `${ORANGE}66`, accent: '#B45309' },
+  danger:  { bg: '#FDF1F1', border: `${DANGER}40`, accent: DANGER },
+};
+function AlertHolder({ tone, title, secondary }) {
+  const t = HOLDER_TONES[tone] || HOLDER_TONES.danger;
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '13px 14px', borderRadius: 12, background: t.bg, border: `1px solid ${t.border}` }}>
+      <svg width="17" height="17" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={t.accent} strokeWidth="1.5"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={t.accent} strokeWidth="1.6" strokeLinecap="round"/></svg>
+      <span style={{ fontSize: 12.5, color: SUB, fontWeight: 500, lineHeight: 1.5 }}>
+        <span style={{ display: 'block', fontSize: 13.5, fontWeight: 800, color: t.accent, letterSpacing: 0.1, marginBottom: 3 }}>{title}</span>
+        {secondary}
+      </span>
+    </div>
+  );
+}
+
 // ── Cancel sheet
 function CancelSheet({ userName, gameId, baseAmount = 0, onClose, onConfirm, onDone }) {
   const [open, setOpen]               = useState(false);
   const [step, setStep]               = useState('select');
   const [pct, setPct]                 = useState(null);   // preview del servidor: 100 | 50 | 0 | null (cargando)
+  const [fullH, setFullH]             = useState(null);   // corte 100%→parcial (horas, de config/servidor)
+  const [partH, setPartH]             = useState(null);   // corte parcial→0% (horas, de config/servidor)
   const [captured, setCaptured]       = useState({ amount: 0, pct: 0 });
   const fmt = n => `S/. ${Number(n).toFixed(2)}`;
 
@@ -187,7 +209,13 @@ function CancelSheet({ userName, gameId, baseAmount = 0, onClose, onConfirm, onD
   useEffect(() => {
     let alive = true;
     getRentalCancellationWindow(gameId).then(({ data }) => {
-      if (alive && data && typeof data.refund_pct === 'number') setPct(data.refund_pct);
+      if (!alive || !data || typeof data.refund_pct !== 'number') return;
+      setPct(data.refund_pct);
+      // Horas de corte DERIVADAS de los timestamps del servidor (config real, nunca hardcode):
+      // cutoff_72h = start − corte_total → fullH (100%→parcial) · cutoff_24h = start − corte_parcial → partH (parcial→0%).
+      const hb = (a, b) => Math.max(0, Math.round((new Date(a) - new Date(b)) / 3600000));
+      setFullH(hb(data.game_start_at, data.cutoff_72h));
+      setPartH(hb(data.game_start_at, data.cutoff_24h));
     });
     return () => { alive = false; };
   }, [gameId]);
@@ -239,21 +267,32 @@ function CancelSheet({ userName, gameId, baseAmount = 0, onClose, onConfirm, onD
             <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, letterSpacing: -0.2 }}>Cancelar reserva</div>
             <div style={{ fontSize: 14.5, fontWeight: 600, color: BLUE, marginTop: 10, marginBottom: 4 }}>{userName} (Tú)</div>
           </div>
-          <div ref={scrollRef} className="no-sb" style={{ overflowY: 'auto', overscrollBehavior: 'contain', flex: 1, padding: '0 16px' }}>
+          <div ref={scrollRef} className="no-sb" style={{ overflowY: 'auto', overscrollBehavior: 'contain', flex: 1, padding: '0 16px 12px' }}>
             {pct === null ? (
               <div style={{ fontSize: 13, color: SUB, padding: '10px 0 4px' }}>Calculando condiciones de cancelación…</div>
             ) : pct === 0 ? (
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px', borderRadius: 10, background: '#F6F7F9', marginTop: 6 }}>
-                <svg width="15" height="15" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={SUB} strokeWidth="1.4"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={SUB} strokeWidth="1.5" strokeLinecap="round"/></svg>
-                <span style={{ fontSize: 12.5, color: SUB, fontWeight: 500, lineHeight: 1.45 }}>Esta cancelación no genera reembolso.</span>
+              <div style={{ marginTop: 10 }}>
+                <AlertHolder tone="danger" title="Esta cancelación NO GENERA DEVOLUCIÓN."
+                  secondary={typeof partH === 'number'
+                    ? <>El plazo de devolución finaliza <strong style={{ fontWeight: 700, color: TEXT }}>{partH} horas</strong> antes del alquiler.</>
+                    : 'El plazo de devolución ya finalizó para este alquiler.'} />
               </div>
             ) : (
               <>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '9px 12px', borderRadius: 10, background: '#F0FFF4', marginTop: 6 }}>
-                  <svg width="15" height="15" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={GREEN} strokeWidth="1.4"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={GREEN} strokeWidth="1.5" strokeLinecap="round"/></svg>
-                  <span style={{ fontSize: 12.5, color: GREEN, fontWeight: 500, lineHeight: 1.45 }}>Recibirás el {pct}% como crédito aplicable a tu próxima reserva.</span>
+                <div style={{ marginTop: 10 }}>
+                  {pct >= 100 ? (
+                    <AlertHolder tone="success" title="Recibirás el 100 % como crédito para tu próxima reserva."
+                      secondary={(typeof fullH === 'number' && typeof partH === 'number')
+                        ? <>La devolución baja al 50 % a menos de <strong style={{ fontWeight: 700, color: TEXT }}>{fullH} horas</strong> y al 0 % a menos de <strong style={{ fontWeight: 700, color: TEXT }}>{partH} horas</strong> del alquiler.</>
+                        : null} />
+                  ) : (
+                    <AlertHolder tone="warning" title={`Recibirás el ${pct}% como crédito para tu próxima reserva`}
+                      secondary={(typeof fullH === 'number' && typeof partH === 'number')
+                        ? <>ya que quedan menos de <strong style={{ fontWeight: 700, color: TEXT }}>{fullH} horas</strong> del alquiler. A menos de <strong style={{ fontWeight: 700, color: TEXT }}>{partH} horas</strong> no hay devolución.</>
+                        : null} />
+                  )}
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 2px 2px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 2px 2px' }}>
                   <span style={{ fontSize: 14, color: SUB }}>Crédito estimado</span>
                   <span style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{fmt(estRefund)}</span>
                 </div>

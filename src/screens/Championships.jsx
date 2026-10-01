@@ -186,9 +186,12 @@ export default function Championships() {
     const fc = row.format_config || {};
     const sum = fc.summary || {};
     const le = sum.leagueEstimate;
+    // Capacidad AUTORITATIVA (team_capacity de la RPC) como respaldo cuando falta summary.group (campeonatos Admin).
+    const cap = Number.isFinite(row.team_capacity) ? row.team_capacity : null;
     const teamsLabel = sum.mode === 'liga'
       ? (le?.quantity ? `${le.quantity} ${le.type === 'people' ? 'personas' : 'equipos'}` : 'Liga')
-      : (sum.group ? (sum.group.min === sum.group.max ? `${sum.group.min} equipos` : `${sum.group.min}–${sum.group.max} equipos`) : '');
+      : (sum.group ? (sum.group.min === sum.group.max ? `${sum.group.min} equipos` : `${sum.group.min}–${sum.group.max} equipos`)
+         : (cap ? `${cap} equipos` : ''));
     const dateKey = row.event_date || fc.organizeState?.dateKey || null;
     // Rango REAL del fixture (Fase 39): first_date/last_date derivados de championship_matches. Multi-día →
     // "PRIMERA a ÚLTIMA" (solo extremos); un día o sin fixture → formato actual con event_date. Misma regla que el detalle.
@@ -213,7 +216,7 @@ export default function Championships() {
       daysAgo: null,
       coverTheme: row.cover_theme || '#E24A4A',   // mismo default que la vista/Profile (COVER_THEMES[0]) — evita azul incoherente
       dateLabel,
-      venueName: sum.venueName || '',
+      venueName: sum.venueName || row.venue_name || '',
     };
   });
 

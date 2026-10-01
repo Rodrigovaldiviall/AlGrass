@@ -2968,9 +2968,12 @@ export default function Profile() {
       time = st.split(' ')[0] || ''; ampm = st.split(' ')[1] || ''; time24 = champTo24(st);
     }
     const le = sum.leagueEstimate;
+    // Capacidad AUTORITATIVA (team_capacity de la RPC) como respaldo cuando falta summary.group (campeonatos Admin).
+    const cap = Number.isFinite(row.team_capacity) ? row.team_capacity : null;
     const teamsLabel = sum.mode === 'liga'
       ? (le?.quantity ? `${le.quantity} ${le.type === 'people' ? 'personas' : 'equipos'}` : '')
-      : (sum.group ? (sum.group.min === sum.group.max ? `${sum.group.min} equipos` : `${sum.group.min}–${sum.group.max} equipos`) : '');
+      : (sum.group ? (sum.group.min === sum.group.max ? `${sum.group.min} equipos` : `${sum.group.min}–${sum.group.max} equipos`)
+         : (cap ? `${cap} equipos` : ''));
     // Badge por status (mapeo explícito, sin fallback engañoso). is_participant viene de list_my_championships
     // (Fase 18) → "Inscrito" solo si el usuario está inscrito como jugador, nunca por ser owner/pagador.
     // HOST (Fase 27): host_user_id === yo → SIEMPRE "Organiza" en línea 1 (rol operativo, no cambia por estado);
@@ -2989,7 +2992,7 @@ export default function Profile() {
       __champ: true, id: row.id, status: row.status, dateKey, time24, isHost,
       date: dateKey ? formatDateLabel(dateKey) : '', time, ampm,
       name: row.name || 'Campeonato', theme: row.cover_theme || '#E24A4A',
-      venueName: sum.venueName || null, teamsLabel, badgeLines, live,
+      venueName: sum.venueName || row.venue_name || null, teamsLabel, badgeLines, live,
       summary: fc.summary || null, organizeState: fc.organizeState || null,
     };
   }).filter(e => e.dateKey && e.time24);
