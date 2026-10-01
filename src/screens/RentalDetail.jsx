@@ -286,9 +286,9 @@ function CancelSheet({ userName, gameId, baseAmount = 0, onClose, onConfirm, onD
                         ? <>La devolución baja al 50 % a menos de <strong style={{ fontWeight: 700, color: TEXT }}>{fullH} horas</strong> y al 0 % a menos de <strong style={{ fontWeight: 700, color: TEXT }}>{partH} horas</strong> del alquiler.</>
                         : null} />
                   ) : (
-                    <AlertHolder tone="warning" title={`Recibirás el ${pct}% como crédito para tu próxima reserva.`}
-                      secondary={typeof partH === 'number'
-                        ? <>A menos de <strong style={{ fontWeight: 700, color: TEXT }}>{partH} horas</strong> del alquiler ya no se genera devolución.</>
+                    <AlertHolder tone="warning" title={`Recibirás el ${pct}% como crédito para tu próxima reserva`}
+                      secondary={(typeof fullH === 'number' && typeof partH === 'number')
+                        ? <>ya que quedan menos de <strong style={{ fontWeight: 700, color: TEXT }}>{fullH} horas</strong> del alquiler. A menos de <strong style={{ fontWeight: 700, color: TEXT }}>{partH} horas</strong> no hay devolución.</>
                         : null} />
                   )}
                 </div>

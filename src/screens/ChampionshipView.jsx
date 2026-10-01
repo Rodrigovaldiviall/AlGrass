@@ -279,6 +279,9 @@ export default function ChampionshipView() {
   const venuesReal = isRealMode ? (Array.isArray(realRow?.venues) ? realRow.venues : []) : [];
   const isMultiVenue = venuesReal.length > 1;
   const selectedVenue = isMultiVenue ? (venuesReal[selectedVenueIdx] || venuesReal[0]) : null;
+  // Venue FÍSICO a mostrar (single o multi), derivado de la reserva real (get_championship_public.venues[]).
+  // Fuente autoritativa común a App y Admin: existe aunque format_config.summary esté mínimo (Admin).
+  const displayVenue = venuesReal[selectedVenueIdx] || venuesReal[0] || null;
   const [selectedPlayer, setSelectedPlayer] = useState(null);   // fila del roster → PlayerModal (perfil público de Match)
   // Asignar equipo a un slot VACÍO de la llave (Fase 31). { matchId, side, otherTeamId } | null.
   const [bracketAssign, setBracketAssign] = useState(null);     // { matchId, side, otherTeamId, uat }
@@ -314,7 +317,7 @@ export default function ChampionshipView() {
     // anónimo puede MIRAR inscripciones/equipos/jugadores en RO/RC/PRE/LIVE sin login (login solo en acciones).
     const canLoad = st === 'registration_open' || st === 'registration_closed'
       || st === 'in_progress' || st === 'completed'
-      || (st === 'pending_publish' && (amOwner || amAlgrassRole));
+      || ((st === 'pending_publish' || st === 'payment_validation') && (amOwner || amAlgrassRole));
     if (!isRealMode || !canLoad) return;
     // NO se resetea regState a null: se mantiene el último estado conocido visible mientras llega el fresco
     // (evita flash/salto del roster). Solo se reemplaza con los datos nuevos cuando responde el backend.
@@ -329,7 +332,7 @@ export default function ChampionshipView() {
   const canLoadRegState = isRealMode && (
     realRow?.status === 'registration_open' || realRow?.status === 'registration_closed'
     || realRow?.status === 'in_progress' || realRow?.status === 'completed'
-    || (realRow?.status === 'pending_publish' && (amOwner || amAlgrassRole))
+    || ((realRow?.status === 'pending_publish' || realRow?.status === 'payment_validation') && (amOwner || amAlgrassRole))
   );
   useEffect(() => { loadRegState(); }, [isRealMode, realId, user?.id, realRow?.status, canLoadRegState]); // eslint-disable-line
   // Lectura PÚBLICA (sin clave) SOLO en fase COMPETITIVA/histórica (in_progress pre-live+live, completed) cuando
@@ -475,6 +478,19 @@ export default function ChampionshipView() {
   function approvePaymentMock() { if (champ?.status === 'payment_validation') writeChamp({ ...champ, status: 'pending_publish' }); }
   const paymentValidating = isCreated && champ?.status === 'payment_validation'; // "Validando pago"
   const isPendingPublish = isCreated && champ?.status === 'pending_publish';      // → CTA inferior "Publicar"
+  // TabBar visible en estados publicados (browsable); pre-publicación (validando/pendiente) usa CTA inferior.
+  const tabBarVisible = isCreated && !paymentValidating && !isPendingPublish;
+  // "Gestionar mi reserva" (patrón Match) SOLO para el OWNER REAL (campo autoritativo owner_user_id, vía amOwner).
+  // Aparece en validando/pendiente (encima del CTA existente) y en publicado (único botón, flotando sobre TabBar).
+  const showManageCTA = isRealMode && amOwner && isCreated;
+  const [manageOpen, setManageOpen] = useState(false);   // hoja "Gestionar mi reserva" (menú → detalles/cancelar)
+  // Botón "Gestionar mi reserva" (mismo look que el CTA secundario de Match). stacked=true → margen inferior
+  // porque va ENCIMA del botón de estado (validando/publicar); stacked=false → único (publicado).
+  const manageCTAButton = (stacked) => (
+    <button onClick={() => setManageOpen(true)} className="pressable" style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 54, background: '#fff', color: TEXT, border: `1.5px solid ${HAIR}`, borderRadius: 18, boxShadow: '0 6px 18px rgba(0,0,0,0.10)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, WebkitTapHighlightColor: 'transparent', marginBottom: stacked ? 10 : 0 }}>
+      Gestionar mi reserva
+    </button>
+  );
 
   const flashToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 1800); };
   const flashCopied = () => flashToast('Copiado');
@@ -630,17 +646,23 @@ export default function ChampionshipView() {
   const isLive = isRealMode && champ?.status === 'in_progress' && realRow?.live_started_at != null;
   // Inscripciones deshabilitadas mientras el campeonato aún no está publicado (pending_publish).
   const inscriptionsDisabled = isRealMode && champ?.status === 'pending_publish';
+  // payment_validation (Validando pago): se reutiliza TODA la UX de inscripción (escudos/holder/organizador/
+  // botones) pero con "Crear equipo" y "Unirme sin equipo" SIEMPRE deshabilitados (incl. owner). Al aprobarse
+  // el pago el estado real cambia y la fase recupera su comportamiento normal (no se toca ningún otro estado).
+  const pvReal = isRealMode && champ?.status === 'payment_validation';
   // Permisos por estado (Fase 10): crear/sin-equipo solo en open; unirse a equipo y salir en open/closed.
   const canCreate = isRealMode && champ?.status === 'registration_open';
   // Roster CONGELADO (Fase 17): el jugador normal solo muta membership en registration_open. Desde
   // registration_closed en adelante, Inscripciones queda en modo LECTURA (espejo del gate del backend).
   const canJoinTeam = isRealMode && champ?.status === 'registration_open';
   const canLeave = canJoinTeam;
-  // Área de crear/sin-equipo: visible+activa en registration_open; visible+deshabilitada en pending_publish.
-  const showCreateArea = canCreate || inscriptionsDisabled;
+  // Área de crear/sin-equipo: visible+activa en registration_open; visible+deshabilitada en pending_publish y
+  // payment_validation (misma UX de inscripción, botones inertes).
+  const showCreateArea = canCreate || inscriptionsDisabled || pvReal;
   // PAGADOR y AlGrass pueden crear equipos ya en pending_publish (sin membership). Bloqueado para el resto.
   const amAlgrass = !!regState?.is_algrass;
-  const createLocked = inscriptionsDisabled && !(amOwner || amAlgrass);
+  // pvReal → bloqueado para TODOS (incl. owner/AlGrass): aún no hay pago aprobado.
+  const createLocked = (inscriptionsDisabled && !(amOwner || amAlgrass)) || pvReal;
   // ── Gestión Owner/Host/AlGrass (Fase 23). amHost: el actor es el host del campeonato (organizers.host del
   //    estado real). amManager = quien puede gestionar roster. Fase efectiva (in_progress desdoblado por
   //    live_started_at, Fase 21) para reflejar en la UI las MISMAS ventanas del backend (que igual valida). ──
@@ -697,6 +719,9 @@ export default function ChampionshipView() {
     : [];
   const _resFirst = _resGames[0] || null;
   const _resLast = _resGames[_resGames.length - 1] || null;
+  // Señal de datos FÍSICOS reales (reserva/venue) — fuente autoritativa común a App y Admin. Permite mostrar
+  // fecha/sede/canchas aunque falte summary.complies (Admin escribe un format_config.summary mínimo).
+  const hasPhysicalReservation = !!_resFirst;
   const dateRangeFull = _resFirst
     ? (_resFirst.date_key !== _resLast.date_key ? `${_fmtDK(_resFirst.date_key)} a ${_fmtDK(_resLast.date_key)}` : _fmtDK(_resFirst.date_key))
     : dateFull;
@@ -929,6 +954,7 @@ export default function ChampionshipView() {
     // REAL: Crear equipo exige login (anon → /auth → vuelve). Autenticado → builder REAL (nombre+diseño)
     // que persiste con save_championship_team (teamId null → CREATE). No inscribe al creador. No usa CV.
     if (isRealMode) {
+      if (champ?.status === 'payment_validation') return;   // Validando pago: crear equipo bloqueado para todos
       if (champ?.status === 'pending_publish' && !amOwner && !amAlgrass) return;   // pre-publicación: crear solo owner/AlGrass
       if (!requireAuth('newTeam')) return;
       // Estar inscrito NO bloquea crear equipos (crear ≠ membership). Solo limita la capacidad global.
@@ -936,7 +962,7 @@ export default function ChampionshipView() {
       persistCV();   // guarda scroll + caché (realRow/regState) para volver ya renderizado
       // champStatus + regSnapshot → tras crear, ChampionshipTeam evalúa canJoin/canDeleteTeam con el estado y
       // owner/is_algrass reales (sin quedar en null), y muestra CTA/Eliminar de forma estable.
-      navigate('/championships/team', { state: { teamMode: 'new', realChampionship: true, champId: realId, summary, organizeState, champStatus: champ?.status, regSnapshot: regState } });
+      navigate('/championships/team', { state: { teamMode: 'new', realChampionship: true, champId: realId, summary, organizeState, champStatus: champ?.status, regSnapshot: regState, champTeamCapacity: realTeamCap } });
       return;
     }
     if (!canCreateTeam) return;
@@ -947,6 +973,7 @@ export default function ChampionshipView() {
   // SET membership a "sin equipo" (insert o cambio desde un team → NULL). Confirmación en la UI antes.
   async function joinNoTeamReal() {
     if (regBusy) return;
+    if (champ?.status === 'payment_validation') return;                 // Validando pago: inscribirse bloqueado
     if (champ?.status === 'pending_publish' && !amOwner) return;        // pending: solo el owner puede inscribirse
     if (!requireAuth('join')) return;                                   // anon → login → vuelve
     setRegBusy(true);
@@ -1415,8 +1442,8 @@ export default function ChampionshipView() {
                 (OrganizerContactButton global) se OCULTA SOLO en esta vista; intacto en GameDetail/RentalDetail. */}
             <ResumenRow
               icon="cal"
-              value={complies ? (dateRangeFull || 'Pendiente por confirmar') : 'Pendiente por confirmar'}
-              sub={complies ? (timeRange || null) : null}
+              value={(complies || hasPhysicalReservation) ? (dateRangeFull || 'Pendiente por confirmar') : 'Pendiente por confirmar'}
+              sub={(complies || hasPhysicalReservation) ? (timeRange || null) : null}
               action={amOwner ? <OrganizerContactButton phone={organizerPhone} /> : undefined}
             />
             <div style={{ height: 1, background: HAIR, margin: '10px 0' }} />
@@ -1440,7 +1467,22 @@ export default function ChampionshipView() {
                   />
                 );
               }
-              // SINGLE-VENUE: comportamiento INTACTO. Nombre + dirección clickeables → detalle del venue (/venue).
+              // SINGLE-VENUE FÍSICO (App y Admin): datos reales de venues[0] (nombre/dirección/ciudad). Nombre y
+              // dirección → ficha /venue con el shape ya disponible (venueStateFromEntry), sin consulta extra.
+              if (displayVenue) {
+                const vAddr = `${displayVenue.venue_address ?? ''}${displayVenue.district ? (displayVenue.venue_address ? ' · ' : '') + displayVenue.district : ''}`;
+                const open = () => goVenueState(venueStateFromEntry(displayVenue));
+                const linkStyle = { textDecoration: 'underline', textUnderlineOffset: 2, cursor: 'pointer', WebkitTapHighlightColor: 'transparent' };
+                return (
+                  <ResumenRow
+                    icon="pin"
+                    value={<span role="button" onClick={open} style={linkStyle}>{displayVenue.venue_name || 'Sede'}</span>}
+                    sub={vAddr ? <span role="button" onClick={open} style={linkStyle}>{vAddr}</span> : undefined}
+                    action={<MapsLinkButton lat={displayVenue.lat ?? null} lng={displayVenue.lng ?? null} address={[displayVenue.venue_name, displayVenue.venue_address, displayVenue.district]} down />}
+                  />
+                );
+              }
+              // FALLBACK HISTÓRICO (sin datos físicos): summary. Comportamiento INTACTO.
               const venueClickable = checkoutReady && (summary.venueName || summary.venueAddress);
               const addrText = `${summary.venueAddress ?? ''}${summary.venueDistrict ? ' · ' + summary.venueDistrict : ''}`;
               const linkStyle = { textDecoration: 'underline', textUnderlineOffset: 2, cursor: venueBusy ? 'default' : 'pointer', opacity: venueBusy ? 0.55 : 1, WebkitTapHighlightColor: 'transparent' };
@@ -1459,9 +1501,9 @@ export default function ChampionshipView() {
             })()}
             <div style={{ height: 1, background: HAIR, margin: '10px 0' }} />
             {/* BLOQUE 3 — SOLO "X canchas · X horas" (sin segunda línea) */}
-            {isMultiVenue ? (() => {
-              // MULTI-VENUE: canchas del venue SELECCIONADO (fields de esa sede en la reserva física).
-              const names = (selectedVenue.fields || []).map(f => f.field_name).filter(Boolean);
+            {displayVenue ? (() => {
+              // FÍSICO (single o multi): canchas del venue mostrado (fields de esa sede en la reserva física).
+              const names = (displayVenue.fields || []).map(f => f.field_name).filter(Boolean);
               return <ResumenRow icon="grid" value={names.length ? `Canchas: ${names.join(', ')}` : 'Cancha por confirmar'} />;
             })() : (
               <ResumenRow icon="grid" value={complies ? (summary.courtNames?.length ? `Canchas: ${summary.courtNames.join(', ')}` : (summary.configLabel || 'Cancha por confirmar')) : 'Cancha por confirmar'} />
@@ -1487,7 +1529,11 @@ export default function ChampionshipView() {
 
           {/* ── ZONA DE CARDS ── (más espacio inferior en pending sin clave: el aviso amarillo + CTA no debe
               cubrir el holder de jugadores) */}
-          <div style={{ padding: `10px 16px calc(${isPendingPublish && (isRealMode ? !savedPrivacy.key : !accessCode.trim()) ? 118 : 84}px + env(safe-area-inset-bottom))` }}>
+          <div style={{ padding: `10px 16px calc(${
+            paymentValidating ? (showManageCTA ? 140 : 84)
+            : isPendingPublish ? ((isRealMode ? !savedPrivacy.key : !accessCode.trim()) ? (showManageCTA ? 174 : 118) : (showManageCTA ? 140 : 84))
+            : 84
+          }px + env(safe-area-inset-bottom))` }}>
             {/* "Validando pago" — transferencia enviada, esperando validación de AlGrass. Publicar bloqueado. */}
             {isOwner && paymentValidating && (
               <div style={{ ...CARD, background: '#FFF7EA', border: `1px solid ${ORANGE}55` }}>
@@ -1686,7 +1732,7 @@ export default function ChampionshipView() {
                     {/* Unirme sin equipo — TOGGLE (solo registration_open). En lista → "Estás en la lista" (check)
                         → tocar de nuevo sale directo (sin confirmación). En un equipo → tocar pide confirmación
                         de cambio (requestNoTeam). Salir del equipo se hace desde la pantalla del equipo. */}
-                    {(canCreate || inscriptionsDisabled) && !hostBlocksSelf && (() => { const inList = !!myMembership && !myMembership.team_id; const joinDisabled = regBusy || (inscriptionsDisabled && !amOwner); return (
+                    {(canCreate || inscriptionsDisabled || pvReal) && !hostBlocksSelf && (() => { const inList = !!myMembership && !myMembership.team_id; const joinDisabled = regBusy || (inscriptionsDisabled && !amOwner) || pvReal; return (
                       <>
                         <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginBottom: 8 }}>¿No tienes equipo todavía? Únete a la lista general y luego te acomodamos.</div>
                         <button onClick={joinDisabled ? undefined : (inList ? leaveReal : requestNoTeam)} disabled={joinDisabled} className={joinDisabled ? undefined : 'pressable'} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, width: '100%', height: 46, borderRadius: 14, border: 'none', cursor: joinDisabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, background: inList ? '#D7F0DD' : '#fff', color: inList ? '#1F6B36' : (joinDisabled ? '#9A9AA0' : TEXT), opacity: regBusy ? 0.7 : 1, boxShadow: inList ? 'none' : `inset 0 0 0 1px ${HAIR}`, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
@@ -1781,11 +1827,15 @@ export default function ChampionshipView() {
 
         {/* CTA flotante (sin TabBar; respeta safe-area inferior). Tres estados:
             solicitud enviada (pending) · precio→checkout · contáctame→contacto. */}
-        <div style={{ position: 'absolute', left: 16, right: 16, bottom: 'calc(env(safe-area-inset-bottom) + 12px)', pointerEvents: 'none' }}>
+        <div style={{ position: 'absolute', left: 16, right: 16, bottom: tabBarVisible ? '12px' : 'calc(env(safe-area-inset-bottom) + 12px)', pointerEvents: 'none' }}>
           {/* CTA inferior por estado. Creado: Validando pago (disabled) · Publicar (según clave) ·
-              publicado/cerrado → sin CTA (solo TabBar). Preview: solicitud enviada · Crear/Contactarme. */}
+              publicado/cerrado → solo "Gestionar mi reserva" (owner). Preview: solicitud enviada · Crear/Contactarme.
+              OWNER: "Gestionar mi reserva" (patrón Match) ENCIMA del CTA de estado; publicado → único botón. */}
           {paymentValidating ? (
-            <button disabled style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: 54, background: '#E4E4EA', color: '#9A9AA2', border: 'none', borderRadius: 18, cursor: 'not-allowed', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2 }}>Validando pago</button>
+            <>
+              {showManageCTA && manageCTAButton(true)}
+              <button disabled style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: 54, background: '#E4E4EA', color: '#9A9AA2', border: 'none', borderRadius: 18, cursor: 'not-allowed', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2 }}>Validando pago</button>
+            </>
           ) : isPendingPublish ? (() => {
             const canPublish = publishEnabled;
             // Ayuda contextual: falta clave guardada vs cambios sin guardar (REAL). Demo: solo clave local.
@@ -1798,6 +1848,7 @@ export default function ChampionshipView() {
             // Al pulsar, publishChampionship llama publish_championship (owner + pending_publish → registration_open).
             return (
               <>
+                {showManageCTA && manageCTAButton(true)}
                 {hint && <div style={{ pointerEvents: 'none', textAlign: 'center', marginBottom: 8, fontSize: 12, fontWeight: 700, color: TEXT, background: '#FFF7EA', border: `1px solid ${ORANGE}66`, borderRadius: 8, padding: '7px 10px' }}>{hint}</div>}
                 <button onClick={publishChampionship} disabled={!canPublish || publishing} className={(canPublish && !publishing) ? 'pressable' : undefined} style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 54, background: canPublish ? ORANGE : '#E4E4EA', color: canPublish ? '#1B1B1F' : '#9A9AA2', border: 'none', borderRadius: 18, boxShadow: canPublish ? '0 6px 18px rgba(245,165,36,0.40)' : 'none', cursor: (canPublish && !publishing) ? 'pointer' : 'not-allowed', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, WebkitTapHighlightColor: 'transparent' }}>
                   {publishing && <span style={{ width: 16, height: 16, borderRadius: '50%', border: '2.5px solid rgba(27,27,31,0.2)', borderTop: '2.5px solid #1B1B1F', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />}
@@ -1805,7 +1856,7 @@ export default function ChampionshipView() {
                 </button>
               </>
             );
-          })() : champ ? null : contactRequest?.status === 'pending' ? (
+          })() : champ ? (showManageCTA ? manageCTAButton(false) : null) : contactRequest?.status === 'pending' ? (
             <div style={{ pointerEvents: 'auto', background: '#fff', border: `1px solid ${HAIR}`, borderRadius: 16, padding: '12px 14px', boxShadow: '0 6px 18px rgba(0,0,0,0.10)', display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ width: 26, height: 26, borderRadius: '50%', background: '#EAF8EF', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke={GREEN} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -1873,6 +1924,8 @@ export default function ChampionshipView() {
       )}
       {/* Perfil público del jugador — MISMO PlayerModal que el roster de Match (privacidad/avatar iguales). */}
       {selectedPlayer && <PlayerModal player={selectedPlayer} onClose={() => setSelectedPlayer(null)} />}
+      {/* "Gestionar mi reserva" (owner) — patrón Match: menú → Ver detalles del pago / Cancelar reserva. */}
+      {manageOpen && <OwnerManageSheet onClose={() => setManageOpen(false)} />}
       {/* Selector de equipo para un slot VACÍO de la llave (host/AlGrass en in_progress). Excluye el equipo del
           otro lado del mismo partido. Guardar → set_championship_match_team → refresca la llave. */}
       <TeamPickerSheet
@@ -1975,6 +2028,76 @@ function OrganizerRow({ person, role, first, onSelect }) {
       <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
       <span style={{ fontSize: 12, color: SUB, flexShrink: 0 }}>{role}</span>
     </button>
+  );
+}
+
+// ── "Gestionar mi reserva" (owner) — hoja inferior con el MISMO patrón que Match: un menú de acciones
+//    (filas con chevron) que al tocar morfa al sub-paso dentro del mismo contenedor.
+//    · "Ver detalles del pago": el desglose CONGELADO de la compra NO está en las lecturas actuales de la App
+//      (get_championship_public no expone importes; no hay RPC de orden/pago) → placeholder, sin inventar cifras.
+//    · "Cancelar reserva": SIN CONECTAR — no ejecuta RPC, no cambia estado, no libera canchas ni devuelve.
+function OwnerManageSheet({ onClose }) {
+  const [open, setOpen] = useState(false);
+  const [step, setStep] = useState('menu');   // 'menu' | 'payment' | 'cancel'
+  useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
+  const dismiss = () => { setOpen(false); setTimeout(onClose, 220); };
+  const chevron = (c) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}><path d="M9 6l6 6-6 6" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>;
+  const rowStyle = { display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '14px 4px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' };
+  return (
+    <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease' }}>
+      <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ padding: '14px 16px 0', flexShrink: 0 }}>
+          <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 14px' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 12, borderBottom: `1px solid ${HAIR}` }}>
+            {step !== 'menu' && (
+              <button onClick={() => setStep('menu')} aria-label="Atrás" style={{ width: 24, height: 22, marginLeft: -4, display: 'flex', alignItems: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, outline: 'none' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke={TEXT} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </button>
+            )}
+            <span style={{ fontSize: 16, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>
+              {step === 'payment' ? 'Detalles del pago' : step === 'cancel' ? 'Cancelar reserva' : 'Gestionar mi reserva'}
+            </span>
+          </div>
+        </div>
+        <div className="no-sb" style={{ overflowY: 'auto', padding: '4px 16px calc(16px + env(safe-area-inset-bottom))' }}>
+          {step === 'menu' && (
+            <>
+              <button onClick={() => setStep('payment')} className="pressable" style={{ ...rowStyle, borderBottom: `1px solid ${HAIR}` }}>
+                <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: TEXT }}>Ver detalles del pago</span>
+                {chevron('#C7C7CC')}
+              </button>
+              <button onClick={() => setStep('cancel')} className="pressable" style={rowStyle}>
+                <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: RED }}>Cancelar reserva</span>
+                {chevron(RED + '80')}
+              </button>
+            </>
+          )}
+          {step === 'payment' && (
+            <div style={{ padding: '14px 0 6px' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '13px 14px', borderRadius: 12, background: '#F6F7F9', border: `1px solid ${HAIR}` }}>
+                <svg width="17" height="17" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={SUB} strokeWidth="1.4"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={SUB} strokeWidth="1.5" strokeLinecap="round"/></svg>
+                <span style={{ fontSize: 12.5, color: SUB, fontWeight: 500, lineHeight: 1.5 }}>
+                  <span style={{ display: 'block', fontSize: 13.5, fontWeight: 800, color: TEXT, marginBottom: 3 }}>Desglose aún no disponible</span>
+                  El detalle congelado de la compra (canchas, árbitro, extras, organización y total) todavía no se expone en la app. Se conectará cuando el backend lo incluya en la lectura del campeonato.
+                </span>
+              </div>
+            </div>
+          )}
+          {step === 'cancel' && (
+            <div style={{ padding: '14px 0 6px' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '13px 14px', borderRadius: 12, background: '#FDF1F1', border: `1px solid ${RED}33` }}>
+                <svg width="17" height="17" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={RED} strokeWidth="1.5"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={RED} strokeWidth="1.6" strokeLinecap="round"/></svg>
+                <span style={{ fontSize: 12.5, color: SUB, fontWeight: 500, lineHeight: 1.5 }}>
+                  <span style={{ display: 'block', fontSize: 13.5, fontWeight: 800, color: RED, marginBottom: 3 }}>Acción no disponible todavía</span>
+                  La cancelación de la reserva del campeonato aún no está implementada. Por ahora esta opción no ejecuta ninguna acción.
+                </span>
+              </div>
+              <button disabled style={{ marginTop: 14, width: '100%', height: 50, borderRadius: 14, background: '#E8E8EC', color: '#9A9AA0', border: 'none', cursor: 'not-allowed', fontSize: 15, fontWeight: 700, fontFamily: 'inherit' }}>Cancelar reserva (no disponible)</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

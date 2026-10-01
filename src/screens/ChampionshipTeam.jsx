@@ -39,7 +39,9 @@ export default function ChampionshipTeam() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
   // Tope de equipos para crear (NEW): override opcional del nav (Liga usa uno alto, sin límite real).
-  const maxTeams = nav.maxTeams ?? (summary.group ? summary.group.max : 8);
+  // Capacidad: override explícito (demo) → team_capacity REAL del campeonato (App/Admin) → summary.group → 8.
+  // No asumir 8 cuando existe capacidad real (Admin no escribe summary.group).
+  const maxTeams = nav.maxTeams ?? (Number.isFinite(nav.champTeamCapacity) ? nav.champTeamCapacity : (summary.group ? summary.group.max : 8));
 
   // Campeonato REAL: los equipos viven en cv.championship.teams (no en cv.teams demo). Encapsulado.
   const champTeams = !!nav.champTeams;
@@ -70,6 +72,10 @@ export default function ChampionshipTeam() {
   const teamId = nav.teamId || null;
   const realExisting = !!nav.realChampionship && !!champId && !!teamId && mode === 'existing';
   const champStatus = nav.champStatus || null;
+  // Validando pago: crear equipo NO está permitido (ni por navegación directa/back). Se vuelve al detalle.
+  useEffect(() => {
+    if (realNew && champStatus === 'payment_validation') navigate(viewPath, { replace: true });
+  }, [realNew, champStatus]); // eslint-disable-line
   const champLive = nav.champLive ?? null;   // live_started_at del campeonato (Fase 21) para la fase efectiva
   // Snapshot ya conocido desde ChampionshipView (teams/roster/membership/owner/is_algrass): estado INICIAL de
   // rState para pintar la estructura real en el primer render (sin flash). loadRState lo refresca en background.
