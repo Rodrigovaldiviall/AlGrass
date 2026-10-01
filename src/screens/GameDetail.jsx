@@ -753,7 +753,7 @@ function ModifySheet({ canAddGuests, openSpots, onAddGuests, onCancel, onPayment
         ) : (
           <button onClick={onCancel} style={{ ...rowStyle, marginBottom: 0 }}>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 15, fontWeight: 600, color: DANGER }}>{within24h ? 'Gestionar asistencia' : 'Cancelar reserva'}</div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: DANGER }}>Cancelar reserva</div>
             </div>
             {chevron(DANGER + '80')}
           </button>
@@ -849,6 +849,26 @@ function HostCancelInvitedSheet({ gameId, invitedPlayers, unitPrice = 0, onClose
 }
 
 // ── CancelSheet
+// Holder de aviso de cancelación: misma jerarquía (título destacado + texto secundario) en los 3 tramos.
+// success=100% (verde) · warning=50% (ámbar) · danger=0% (rojo). Reutilizado por Match y Rental (misma estética).
+const HOLDER_TONES = {
+  success: { bg: '#ECFBF1', border: `${GREEN}40`,  accent: GREEN },
+  warning: { bg: '#FFF7E8', border: `${ORANGE}66`, accent: '#B45309' },
+  danger:  { bg: '#FDF1F1', border: `${DANGER}40`, accent: DANGER },
+};
+function AlertHolder({ tone, title, secondary }) {
+  const t = HOLDER_TONES[tone] || HOLDER_TONES.danger;
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '13px 14px', borderRadius: 12, background: t.bg, border: `1px solid ${t.border}`, marginBottom: 16 }}>
+      <svg width="17" height="17" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={t.accent} strokeWidth="1.5"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={t.accent} strokeWidth="1.6" strokeLinecap="round"/></svg>
+      <span style={{ fontSize: 12.5, color: SUB, fontWeight: 500, lineHeight: 1.5 }}>
+        <span style={{ display: 'block', fontSize: 13.5, fontWeight: 800, color: t.accent, letterSpacing: 0.1, marginBottom: 3 }}>{title}</span>
+        {secondary}
+      </span>
+    </div>
+  );
+}
+
 // Vista CANCELAR RESERVA (embebida en MorphSheet). ← Atrás vuelve al menú en el mismo
 // contenedor; el backdrop (cerrar todo) lo maneja el contenedor, salvo durante
 // 'processing' (onBusyChange bloquea el cierre). scrollRef lo provee el contenedor
@@ -1002,34 +1022,36 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
       <path d="M2 5l2.5 2.5L8 2.5" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   );
+  // Importe por jugador: within24h (sin reembolso) → S/. 0.00 (con el original tachado si lo hubo);
+  // con reembolso → importe real. Antes se ocultaba la cifra within24h; ahora se muestra S/. 0.00.
+  const refundCell = (amount) => within24h ? (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+      {amount > 0 && <span style={{ fontSize: 13, color: SUB, textDecoration: 'line-through' }}>{fmt(amount)}</span>}
+      <span style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>S/. 0.00</span>
+    </div>
+  ) : (
+    <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(amount)}</div>
+  );
 
   return (
       <>
         {step === 'select' && (<>
-          <div style={{ padding: '4px 16px 0', flexShrink: 0 }}>
+          <div style={{ padding: '8px 16px 0', flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <button onClick={back} aria-label="Atrás" style={{ width: 22, height: 20, marginLeft: -4, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-start', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{I.back(TEXT)}</button>
-              <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, letterSpacing: -0.2 }}>{within24h ? 'Gestionar asistencia' : 'Cancelar reserva'}</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, letterSpacing: -0.2 }}>Cancelar reserva</div>
             </div>
             <div style={{ fontSize: 13, color: SUB, marginTop: 4, marginBottom: 10 }}>Selecciona</div>
             {within24h ? (
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '9px 12px', borderRadius: 10, background: '#F6F7F9', marginBottom: 14 }}>
-                <svg width="15" height="15" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={SUB} strokeWidth="1.4"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={SUB} strokeWidth="1.5" strokeLinecap="round"/></svg>
-                <span style={{ fontSize: 12.5, color: SUB, fontWeight: 500, lineHeight: 1.45 }}>
-                  <span style={{ display: 'block', fontWeight: 700, marginBottom: 4 }}>¿No podrás asistir?</span>
-                  {typeof matchRefundCutoffHours === 'number' ? (
-                    <>Ya no es posible cancelar con devolución porque faltan menos de <strong style={{ fontWeight: 700, color: TEXT }}>{matchRefundCutoffHours} horas</strong> para el partido.</>
-                  ) : (
-                    'Ya no es posible cancelar con devolución por el tiempo restante para el partido.'
-                  )}
-                  <span style={{ display: 'block', marginTop: 6 }}>Si tú o alguno de tus invitados no podrá asistir, te agradecemos que lo indiques para que podamos intentar completar el lugar.</span>
-                </span>
-              </div>
+              <AlertHolder tone="danger" title="Esta cancelación NO GENERA DEVOLUCIÓN."
+                secondary={typeof matchRefundCutoffHours === 'number'
+                  ? <>El plazo de devolución finaliza <strong style={{ fontWeight: 700, color: TEXT }}>{matchRefundCutoffHours} horas</strong> antes del partido.</>
+                  : 'El plazo de devolución ya finalizó para este partido.'} />
             ) : (
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '9px 12px', borderRadius: 10, background: '#F0FFF4', marginBottom: 14 }}>
-                <svg width="15" height="15" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={GREEN} strokeWidth="1.4"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={GREEN} strokeWidth="1.5" strokeLinecap="round"/></svg>
-                <span style={{ fontSize: 12.5, color: GREEN, fontWeight: 500, lineHeight: 1.45 }}>Las cancelaciones generan un crédito aplicable a tu próxima reserva.</span>
-              </div>
+              <AlertHolder tone="success" title="Recibirás el 100 % como crédito para tu próxima reserva."
+                secondary={typeof matchRefundCutoffHours === 'number'
+                  ? <>Puedes cancelar con devolución hasta <strong style={{ fontWeight: 700, color: TEXT }}>{matchRefundCutoffHours} horas</strong> antes del partido.</>
+                  : null} />
             )}
           </div>
           <div ref={scrollRef} className="no-sb" style={{ overflowY: 'auto', overscrollBehavior: 'contain', maxHeight: 'max(120px, 84vh - 300px)' }}>
@@ -1042,14 +1064,12 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                     <span style={{ fontSize: 14.5, fontWeight: 600, color: BLUE }}>{guestSelfName} (Tú)</span>
                     {payerName && <div style={{ fontSize: 11.5, color: SUB, marginTop: 2, lineHeight: 1.3 }}>El reembolso se acreditará a {payerName}</div>}
                   </div>
-                  {!within24h && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                      {(histSelf ?? breakdown?.unitPrice) > 0 && (
-                        <span style={{ fontSize: 13, color: SUB, textDecoration: 'line-through' }}>{fmt(histSelf ?? breakdown.unitPrice)}</span>
-                      )}
-                      <span style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>S/. 0.00</span>
-                    </div>
-                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                    {(histSelf ?? breakdown?.unitPrice) > 0 && (
+                      <span style={{ fontSize: 13, color: SUB, textDecoration: 'line-through' }}>{fmt(histSelf ?? breakdown.unitPrice)}</span>
+                    )}
+                    <span style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>S/. 0.00</span>
+                  </div>
                 </button>
                 {/* Guest user's own guests (those they paid for) */}
                 {guestList.map(guest => {
@@ -1060,7 +1080,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 14.5, fontWeight: 600, color: TEXT }}>{guest.name}</div>
                       </div>
-                      {!within24h && <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(guestRefundFor(guest.id))}</div>}
+                      {refundCell(guestRefundFor(guest.id))}
                     </button>
                   );
                 })}
@@ -1094,7 +1114,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                   <div style={{ flex: 1 }}>
                     <span style={{ fontSize: 14.5, fontWeight: 600, color: BLUE }}>{userName} (Tú)</span>
                   </div>
-                  {!within24h && <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(titularRefund)}</div>}
+                  {refundCell(titularRefund)}
                 </div>
               ) : (
                 <button onClick={() => setTitularChecked(v => !v)} style={{ width: '100%', padding: '12px 16px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, borderBottom: `1px solid ${HAIR}`, fontFamily: 'inherit', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
@@ -1102,7 +1122,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                   <div style={{ flex: 1 }}>
                     <span style={{ fontSize: 14.5, fontWeight: 600, color: BLUE }}>{userName} (Titular)</span>
                   </div>
-                  {!within24h && <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(titularRefund)}</div>}
+                  {refundCell(titularRefund)}
                 </button>
               )}
               {guestList.map(guest => {
@@ -1113,7 +1133,7 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 14.5, fontWeight: 600, color: TEXT }}>{guest.name}</div>
                     </div>
-                    {!within24h && <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, flexShrink: 0 }}>{fmt(guestRefundFor(guest.id))}</div>}
+                    {refundCell(guestRefundFor(guest.id))}
                   </button>
                 );
               })}
