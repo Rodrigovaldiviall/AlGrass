@@ -1587,6 +1587,7 @@ export default function PickupGames() {
       )}
       {/* FAB único Lista ↔ Mapa (sobre la TabBar, respetando safe-area) */}
       <button
+        className="pg-view-fab"
         onClick={() => { setView(v => v === 'list' ? 'map' : 'list'); resetSheet(); }}
         style={{
           position: 'fixed', left: '50%', transform: 'translateX(-50%)',

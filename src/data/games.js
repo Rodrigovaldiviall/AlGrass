@@ -25,6 +25,18 @@ export const DATE_WINDOW = (() => {
   return out;
 })();
 
+// Horizonte EXCLUSIVO de Campeonatos (60 días). Match/Rental NO lo usan: siguen con HORIZON_DAYS (30) vía
+// DATE_WINDOW. Misma construcción y referencia horaria (TODAY = hoy en America/Lima) que DATE_WINDOW.
+export const CHAMP_HORIZON_DAYS = 60;
+export const CHAMP_DATE_WINDOW = (() => {
+  const out = [];
+  for (let i = 0; i < CHAMP_HORIZON_DAYS; i++) {
+    const d = new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate() + i);
+    out.push(d);
+  }
+  return out;
+})();
+
 // g11 y g12 (3 mayo, 6:20 PM) liberan 1 cupo exactamente a las 6:22 PM
 const MAY3_RELEASE = new Date(2026, 4, 3, 18, 22, 0);
 

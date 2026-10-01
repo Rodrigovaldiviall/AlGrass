@@ -49,8 +49,10 @@ export default function MapView({ city, games = [], selectedVenueId = null, shee
     if (mapRef.current || !containerRef.current) return;
     const map = L.map(containerRef.current, { zoomControl: false })
       .setView(validRestore ? initialCenter : AREQUIPA, validRestore ? initialZoom : 13);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 19,
+    // Tiles OpenStreetMap estándar (sin API key; CARTO pasó a exigir key). Política de uso OSM: atribución
+    // obligatoria + volumen razonable (app móvil) + sin subdominios deprecados. https://operations.osmfoundation.org/policies/tiles/
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 19,
     }).addTo(map);
     map.on('click', () => onClearRef.current?.());
     map.on('moveend', () => { const c = map.getCenter(); onViewRef.current?.([c.lat, c.lng], map.getZoom()); });

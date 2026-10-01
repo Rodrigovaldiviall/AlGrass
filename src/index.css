@@ -219,6 +219,21 @@ input:-webkit-autofill:hover {
   /* !important overrides the inline style={{ display:'flex' }} in TabBar */
   .tab-bar { display: none !important; }
 
+  /* Selector Lista/Mapa (FAB) en desktop: en móvil es position:fixed centrado al viewport; en desktop se
+     ancla a .screen-shell (position:relative, contenedor REAL de resultados, max-width 1026 centrado en
+     .app-main con margin-left del sidebar) → queda centrado respecto al contenido, no al viewport, sin
+     offsets ni márgenes mágicos. Se conserva el left:50% + translateX(-50%) inline (ahora relativo a
+     .screen-shell). Botón más grande (altura/padding/iconos/área de clic). Móvil intacto. */
+  .pg-view-fab {
+    position: absolute !important;
+    bottom: 24px !important;
+    height: 48px !important;
+    padding: 0 24px !important;
+    gap: 9px !important;
+    font-size: 15px !important;
+  }
+  .pg-view-fab svg { width: 18px !important; height: 18px !important; }
+
   /* Game status pills: same width regardless of label */
   .game-status-pill { width: 96px !important; min-width: 96px !important; }
 
