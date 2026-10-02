@@ -12,6 +12,8 @@ import { setNotifBadge } from './utils/notifBadge';
 import { setWaitlistBadge } from './utils/waitlistBadge';
 import { hasAvailableWaitlistSpot } from './services/waitlistService';
 import { useForegroundTick } from './hooks/useForegroundTick';
+import { peruTodayParts } from './lib/peruTime';
+import { TODAY_KEY } from './data/games';
 
 const INTRO_KEY = 'algrass_intro_seen';
 
@@ -48,6 +50,23 @@ function AppLifecycle() {
 
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
+      // TODAY_KEY se congela al importar data/games.js. En un resume cruzando medianoche Perú el módulo
+      // NO se re-evalúa → chips/selección Hoy/Mañana quedan un día atrasados. Al volver a primer plano se
+      // compara el día REAL de Lima (America/Lima, independiente del dispositivo) con el congelado; si cambió,
+      // se recarga UNA vez (mismo patrón de reload controlado del SW) para re-evaluar el módulo. Anti-loop:
+      // tras recargar el módulo trae el día correcto → ya no coincide la condición; guard extra por 10s.
+      try {
+        const p = peruTodayParts();
+        const todayNow = `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
+        if (todayNow !== TODAY_KEY) {
+          const last = Number(sessionStorage.getItem('day_reloaded_at') || 0);
+          if (Date.now() - last > 10000) {
+            sessionStorage.setItem('day_reloaded_at', String(Date.now()));
+            window.location.reload();
+            return;
+          }
+        }
+      } catch { /* sessionStorage/Intl no disponible → no bloquear */ }
       window.dispatchEvent(new CustomEvent('app-foreground'));
       if (hasSW) {
         navigator.serviceWorker.getRegistration().then((r) => { if (r) r.update().catch(() => {}); }).catch(() => {});

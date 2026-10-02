@@ -1008,11 +1008,17 @@ export default function PickupGames() {
   const fgTick = useForegroundTick();
   const [games, setGames]     = useState(() => _gamesCache);
   const [loading, setLoading] = useState(_gamesCache.length === 0);
+  const [loadError, setLoadError] = useState(false);   // ERROR ≠ EMPTY: fallo de la consulta (no "sin partidos")
+  const [retryTick, setRetryTick] = useState(0);       // reintento manual
   useEffect(() => {
-    getGames({ isCaptain }).then(data => {
-      _gamesCache = data; setGames(data); setLoading(false);
+    let alive = true;   // guardia de orden: una respuesta obsoleta no pisa una posterior
+    getGames({ isCaptain }).then(({ data, error }) => {
+      if (!alive) return;
+      if (error) { setLoadError(true); setLoading(false); return; }   // NO sobrescribe games/_gamesCache válidos con []
+      _gamesCache = data; setGames(data); setLoadError(false); setLoading(false);
     });
-  }, [fgTick, isCaptain]);
+    return () => { alive = false; };
+  }, [fgTick, isCaptain, retryTick]);
 
   const _pr0 = user?.id ? _readPRCache(user.id) : null;
   const _wl0 = user?.id ? _readWLCache(user.id) : null;
@@ -1532,6 +1538,12 @@ export default function PickupGames() {
         style={{ flex: 1, overflowY: 'auto', paddingBottom: 8, scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch', overscrollBehavior: 'contain', background: '#fff' }}>
         {!listReady ? (
           <SkeletonRows />
+        ) : (loadError && games.length === 0) ? (
+          // La consulta FALLÓ y no hay datos previos: no presentar "sin partidos" como un hecho.
+          <div style={{ padding: '40px 24px', textAlign: 'center', color: SUB, fontSize: 14 }}>
+            No pudimos cargar los partidos.
+            <div><button onClick={() => { setLoading(true); setLoadError(false); setRetryTick(t => t + 1); }} className="pressable" style={{ marginTop: 12, height: 40, padding: '0 18px', borderRadius: 12, border: 'none', background: ORANGE, color: '#1B1B1F', fontFamily: 'inherit', fontWeight: 800, fontSize: 14, cursor: 'pointer' }}>Reintentar</button></div>
+          </div>
         ) : filteredGames.length === 0 ? (
           <div style={{ padding: '40px 24px', textAlign: 'center', color: SUB, fontSize: 14 }}>
             No hay partidos con esos filtros.
