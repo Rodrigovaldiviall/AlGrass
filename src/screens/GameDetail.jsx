@@ -387,7 +387,10 @@ function PaymentDetailSheet({ price, breakdown, paidBy, userName, titularCancele
 
 // ── Avatar
 function Avatar({ name, size = 36, hue = null, avatarPath = null, avatarVersion = null }) {
-  const src = avatarPath ? getAvatarUrl(supabase, avatarPath, avatarVersion) : null;
+  // Regla visual: SOLO usuarios autenticados ven fotos reales. Anónimo (y mientras Auth se hidrata, user=null)
+  // → iniciales (fallback con avatar_hue). No bloquea la consulta del roster; solo decide foto vs iniciales.
+  const { user } = useAuth();
+  const src = (user && avatarPath) ? getAvatarUrl(supabase, avatarPath, avatarVersion) : null;
   const initials = (name || '').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
   const derivedHue = hue ?? ([...(name || '·')].reduce((a, c) => a + c.charCodeAt(0), 0) % 360);
   if (src) {
@@ -500,6 +503,7 @@ function deterministicCode(fullName) {
 }
 
 export function PlayerModal({ player, onClose, isHost = false }) {
+  const { user } = useAuth();   // regla visual: anónimo (user=null) → iniciales, nunca foto real
   const [open, setOpen]           = useState(false);
   const [profile, setProfile]     = useState(null);
   const [isVerified, setVerified] = useState(false);
@@ -620,7 +624,7 @@ export function PlayerModal({ player, onClose, isHost = false }) {
         <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 96, flexShrink: 0 }}>
             <div style={{ position: 'relative', marginBottom: 8 }}>
-              {profile?.avatar_path ? (
+              {user && profile?.avatar_path ? (
                 <div style={{
                   width: 68, height: 68, borderRadius: '50%', overflow: 'hidden', flexShrink: 0,
                   boxShadow: isHost ? `0 0 0 2.5px #fff, 0 0 0 5px ${ORANGE}` : undefined,
@@ -1310,6 +1314,8 @@ export default function GameDetail() {
   const _cachedRoster = readRosterCache(id, user?.id);
   const [sbRoster, setSbRoster] = useState(_cachedRoster ?? []);
   const [rosterReady, setRosterReady] = useState(_cachedRoster != null);
+  const [rosterError, setRosterError] = useState(false);   // ERROR ≠ EMPTY (distinto de "sin inscritos")
+  const rosterReqRef = useRef(0);                           // guardia de orden: ignora respuestas obsoletas
   const [spotsVerified, setSpotsVerified] = useState(false);
   const [reserveBlock, setReserveBlock]   = useState(null);   // null | 'CAPACITY' | 'UNAVAILABLE'
 
@@ -1693,20 +1699,39 @@ export default function GameDetail() {
 
   function fetchRoster() {
     if (!supabase || !gameId) return;
+    const reqId = ++rosterReqRef.current;   // esta ejecución; si llega otra después, esta queda obsoleta
     supabase
       .from('game_players')
       .select('id, user_id, payer_id, status, joined_at, checked_in_at, reservation_type, invited_by_user_id, referred_by_user_id, reservation_id, game_slot_reservation_id, counts_reserved_slot')
       .eq('game_id', gameId)
       .then(async ({ data, error }) => {
-        if (error) { console.error('[GameDetail] game_players fetch error:', error); return; }
+        if (reqId !== rosterReqRef.current) return;   // respuesta obsoleta → no pisa una posterior
+        if (error) {
+          console.error('[GameDetail] game_players fetch error:', error);
+          // ERROR ≠ EMPTY: no cachear, NO pisar el roster válido previo; salir de loading para no quedar
+          // colgado y permitir reintento (fgTick/retry). Si no había roster, se señaliza el error.
+          setRosterError(true);
+          setRosterReady(true);
+          return;
+        }
         const players = data ?? [];
         const ids = [...new Set(players.map(p => p.user_id).filter(Boolean))];
         const usersById = {};
         if (ids.length) {
-          const { data: us } = await supabase
+          const { data: us, error: usErr } = await supabase
             .from('users_public')
             .select('id, full_name, user_code, avatar_hue, avatar_path, avatar_updated_at, preferred_position, age')
             .in('id', ids);
+          if (reqId !== rosterReqRef.current) return;   // respuesta obsoleta → no pisa una posterior
+          if (usErr) {
+            // ERROR REAL de users_public (≠ respuesta válida sin campos opcionales): el roster quedaría con
+            // nombres vacíos. Se trata como FALLO: no cachear, NO pisar el roster válido previo, permitir
+            // reintento. No cambia privacidad ni el fallback legítimo de jugadores sin foto.
+            console.error('[GameDetail] users_public fetch error:', usErr);
+            setRosterError(true);
+            setRosterReady(true);
+            return;
+          }
           (us || []).forEach(u => { usersById[u.id] = u; });
         }
         const rows = players.map(p => {
@@ -1724,8 +1749,10 @@ export default function GameDetail() {
             invited_by_user_id: p.invited_by_user_id ?? null,
           };
         });
+        if (reqId !== rosterReqRef.current) return;   // re-chequeo tras el await de users_public (orden)
         setSbRoster(rows);
         setRosterReady(true);
+        setRosterError(false);
         setSpotsVerified(true);
         writeRosterCache(gameId, user?.id, rows);
       });
@@ -2216,6 +2243,13 @@ export default function GameDetail() {
               <span style={{ color: TEXT, fontSize: 'var(--gd-is, 13.5px)', fontWeight: 600 }}>Cupos libres: {availabilityResolved ? openSpots : '—'}</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {rosterError && liveRoster.length === 0 && (
+                // La consulta del roster FALLÓ y no hay datos previos: no presentar "sin inscritos" como un hecho.
+                <div style={{ padding: '14px 12px', textAlign: 'center', color: SUB, fontSize: 13.5 }}>
+                  No se pudo cargar la lista de jugadores.
+                  <div><button onClick={() => { setRosterError(false); setRosterReady(false); fetchRoster(); }} className="pressable" style={{ marginTop: 10, height: 38, padding: '0 16px', borderRadius: 11, border: 'none', background: ORANGE, color: '#1B1B1F', fontFamily: 'inherit', fontWeight: 800, fontSize: 13.5, cursor: 'pointer' }}>Reintentar</button></div>
+                </div>
+              )}
               {liveRoster.map((p) => {
                 const showAtt      = attendanceOpen || isPastGame;
                 const isRosterHost = p.user_id === g.hostUserId;

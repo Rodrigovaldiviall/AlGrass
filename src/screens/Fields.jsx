@@ -650,22 +650,29 @@ export default function Fields() {
   const [myBookedIds, setMyBookedIds]     = useState(() => _myBookedCache);
   const [rentalGames, setRentalGames]     = useState(() => _rentalCache);
   const [loading, setLoading]             = useState(_rentalCache.length === 0);
+  const [loadError, setLoadError]         = useState(false);   // ERROR ≠ EMPTY
+  const [retryTick, setRetryTick]         = useState(0);
   const hasFieldsCache = useRef(_rentalCache.length > 0).current;
   const listReady = cityReady && (hasFieldsCache || (!loading && myBookedFresh));
   useEffect(() => {
-    getRentalGames({ isCaptain }).then(data => {
+    let alive = true;   // guardia de orden
+    getRentalGames({ isCaptain }).then(({ data, error }) => {
+      if (!alive) return;
+      if (error) { setLoadError(true); setLoading(false); return; }   // NO sobrescribe rentalGames/_rentalCache válidos
       _rentalCache = data;
       setRentalGames(data);
+      setLoadError(false);
       setLoading(false);
       if (user?.id && data.length) {
         getMyBookedGameIds(data.map(f => f.id))
-          .then(ids => { _myBookedCache = ids; setMyBookedIds(ids); })
-          .finally(() => setMyBookedFresh(true));
+          .then(ids => { if (alive) { _myBookedCache = ids; setMyBookedIds(ids); } })
+          .finally(() => { if (alive) setMyBookedFresh(true); });
       } else {
         setMyBookedFresh(true);
       }
     });
-  }, [fgTick, isCaptain]); // eslint-disable-line
+    return () => { alive = false; };
+  }, [fgTick, isCaptain, retryTick]); // eslint-disable-line
 
   const hasHostedInFeed = useMemo(
     () => !!user?.id && rentalGames.some(f => f.hostUserId === user.id),
@@ -967,6 +974,12 @@ export default function Fields() {
           style={{ flex: 1, overflowY: 'auto', paddingBottom: 8, overscrollBehavior: 'contain' }}>
           {!listReady ? (
             <SkeletonFieldRows />
+          ) : (loadError && rentalGames.length === 0) ? (
+            // La consulta FALLÓ y no hay datos previos: no presentar "sin canchas" como un hecho.
+            <div style={{ padding: '40px 24px', textAlign: 'center', color: SUB, fontSize: 14 }}>
+              No pudimos cargar las canchas.
+              <div><button onClick={() => { setLoading(true); setLoadError(false); setRetryTick(t => t + 1); }} className="pressable" style={{ marginTop: 12, height: 40, padding: '0 18px', borderRadius: 12, border: 'none', background: ORANGE, color: '#1B1B1F', fontFamily: 'inherit', fontWeight: 800, fontSize: 14, cursor: 'pointer' }}>Reintentar</button></div>
+            </div>
           ) : filteredFields.length === 0 ? (
             <div style={{ padding: '40px 24px', textAlign: 'center', color: SUB, fontSize: 14 }}>
               No hay campos con esos filtros.

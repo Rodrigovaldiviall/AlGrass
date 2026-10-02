@@ -150,8 +150,10 @@ export async function getGames({ isCaptain = false } = {}) {
     .lte('date_key', to);
   if (!isCaptain) q = q.or('status.eq.reserved,published_audience.eq.public');
   const { data, error } = await q;
-  if (error) { console.error('getGames:', error); return []; }
-  return data.map(mapGame);
+  // ERROR ≠ EMPTY: ante error NO se devuelve [] (el caller preservaría su lista/caché válida y no mostraría
+  // "no hay partidos" como un hecho). { data:null, error } = fallo; { data:[...], error:null } = éxito (incl. 0).
+  if (error) { console.error('getGames:', error); return { data: null, error }; }
+  return { data: data.map(mapGame), error: null };
 }
 
 function mapRentalGame(g) {
@@ -177,8 +179,9 @@ export async function getRentalGames({ isCaptain = false } = {}) {
     .lte('date_key', to);
   if (!isCaptain) q = q.or('status.eq.reserved,published_audience.eq.public');
   const { data, error } = await q;
-  if (error) { console.error('getRentalGames:', error); return []; }
-  return data.map(mapRentalGame);
+  // ERROR ≠ EMPTY (ver getGames).
+  if (error) { console.error('getRentalGames:', error); return { data: null, error }; }
+  return { data: data.map(mapRentalGame), error: null };
 }
 
 function readRosters() {
