@@ -70,6 +70,14 @@ export function getChampionshipConfig({ city }) {
   return supabase.rpc('get_championship_config', { p_city: city });
 }
 
+// get_championship_availability_restrictions(RPC): lectura PÚBLICA (anon + authenticated) de las restricciones
+// de disponibilidad por ciudad — SOLO { booking_lead_rules, availability_blocks } (bloqueos sin metadatos
+// internos). Permite aplicar antelación mínima y bloqueos operativos ANTES del login. NO es autoridad final
+// (el hold backend revalida). SOLO lectura.
+export function getChampionshipRestrictions({ city }) {
+  return supabase.rpc('get_championship_availability_restrictions', { p_city: city });
+}
+
 // confirm_championship_transfer(RPC): usuario confirmó la transferencia + adjuntó comprobante.
 // ATÓMICO: order pending→validation (sin TTL) + championship transfer_hold→payment_validation.
 // Los games SIGUEN reserved (no se liberan). NO spend. Espera validación de AlGrass.

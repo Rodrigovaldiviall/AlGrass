@@ -730,6 +730,18 @@ export default function ChampionshipView() {
   const timeRange = (_resFirst && _resLast)
     ? `${_resFirst.time} a ${_addMin(_resLast.time, _resLast.duration_min)}`
     : (summary.slotLabel ? summary.slotLabel.replace(/\s*–\s*/, ' a ').replace(/\b([ap])m\b/gi, s => s.toUpperCase()) : null);
+  // Cierre de inscripciones (INFORMATIVO): realRow.registration_closes_at (timestamptz UTC) → día-calendario en
+  // America/Lima (en-CA, independiente del navegador) → formato estándar "Jue 29 Oct 2026". NO impone bloqueo:
+  // el cierre efectivo depende del ESTADO (registration_closed), no del reloj. NULL → sin etiqueta → sin franja.
+  const regClosesLabel = (() => {
+    const ts = isRealMode ? realRow?.registration_closes_at : null;
+    if (!ts) return null;
+    try {
+      const dk = new Date(ts).toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dk)) return null;
+      return formatDateLabel(dk).replace(/^(Hoy|Mañana),\s*/, '');
+    } catch { return null; }
+  })();
 
   // Partidos del campeonato REAL: desde el fixture PERSISTIDO (cv.championship.fixture), no mock.
   // Sin marcador/ganador/goles. Participantes de fases dependientes (semis/final/3.º) → "Por definir".
@@ -910,9 +922,9 @@ export default function ChampionshipView() {
   const organizerContactPhone = CONTACT_MODE === 'algrass' ? ALGRASS_OPERATIONAL_PHONE : principalPhone;
 
   // Fecha concreta de cierre — SOLO campeonato real ya publicado; usa el dato ya calculado (no recalcula).
-  const closeLine = (isCreated && champ?.status === 'registration_open')
-    ? (champ.registrationClosesAt?.label ? `Cierre de inscripciones: ${champ.registrationClosesAt.label}` : 'Cierre de inscripciones por definir')
-    : null;
+  // Aviso anterior de "Cierre de inscripciones" eliminado: lo sustituye la franja amarilla informativa bajo la
+  // portada (regClosesLabel, con registration_closes_at real). Se mantiene null para no duplicar el mensaje.
+  const closeLine = null;
 
   // Scroll del contenedor propio: entrada principal (desde Perfil/Campeonatos/Crear) → arriba.
   // Volver desde ChampionshipTeam (cvReturn sin `from`) O desde /auth (authResuming) → restaura la posición
@@ -1412,6 +1424,29 @@ export default function ChampionshipView() {
               )
             )}
           </div>
+
+          {/* Franja amarilla ÚNICA bajo la portada (los dos mensajes son mutuamente excluyentes, mismo contenedor):
+              · registration_open + hay fecha prevista → "Cierre de inscripciones de equipos: {fecha}" (informativo).
+              · registration_closed → "Puedes inscribirte pero ya no crear equipos" (SIEMPRE, incluso con fecha NULL;
+                a todos los jugadores, sin depender de inscripción/equipo/rol). Otras etapas → nada.
+              Coherencia: en RC unirse a un equipo existente está permitido (ChampionshipTeam.selfJoinOk incluye
+              registration_closed, espejo del backend join_championship_team) y crear equipos está bloqueado. */}
+          {isRealMode && (() => {
+            const msg =
+              champ?.status === 'registration_open'
+                ? (regClosesLabel
+                    ? <>Cierre de inscripciones de equipos: <span style={{ fontWeight: 800 }}>{regClosesLabel}</span></>
+                    : null)
+                : champ?.status === 'registration_closed'
+                ? 'Puedes inscribirte pero ya no crear equipos'
+                : null;
+            if (!msg) return null;
+            return (
+              <div style={{ background: '#FFF7EA', borderBottom: `1px solid ${ORANGE}66`, padding: '10px 16px', fontSize: 13, fontWeight: 700, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {msg}
+              </div>
+            );
+          })()}
 
           {/* Paleta — solo en edición; sin input de nombre separado (el nombre se edita EN la portada) */}
           {coverEditMode && (

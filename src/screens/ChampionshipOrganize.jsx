@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN } from '../constants';
 import { useSheetPull } from '../hooks/useSheetPull';
 import { CHAMP_DATE_WINDOW, TODAY, TODAY_KEY, ymd } from '../data/games';
-import { getChampionshipConfig } from '../services/championshipService';
+import { getChampionshipRestrictions } from '../services/championshipService';
 import {
   FORMATS, DEFAULT_FORMAT, PLAYERS_PER_TEAM, RECOMMENDATION_GROUPS, AMENITIES, playersRange,
 } from '../data/championshipFormats';
@@ -226,17 +226,24 @@ export default function ChampionshipOrganize() {
   const [champCfgResolved, setChampCfgResolved] = useState(false);   // fetch de config terminado (éxito o error)
   useEffect(() => {
     if (!invCity) { setChampCfg(null); setChampCfgResolved(true); return; }
+    setChampCfg(null);               // NUNCA reutilizar la config de otra ciudad: se descarta antes de recargar
     setChampCfgResolved(false);
     let alive = true;
-    getChampionshipConfig({ city: invCity }).then(({ data, error }) => { if (alive) { setChampCfg(error ? null : data); setChampCfgResolved(true); } });
+    // Restricciones (antelación mínima + bloqueos operativos) por lectura PÚBLICA: funciona SIN sesión (anon)
+    // y con sesión. FAIL-CLOSED: mientras carga o si la lectura falla, champCfg queda null → restrictionsReady
+    // false → no se puede seleccionar fecha/cancha (se muestra "Cargando disponibilidad…"); NUNCA se presenta
+    // como libre. El hold backend sigue siendo la autoridad final. Horas en America/Lima (las fija el grid).
+    getChampionshipRestrictions({ city: invCity }).then(({ data, error }) => {
+      if (!alive) return;
+      if (error || !data) { setChampCfg(null); setChampCfgResolved(true); return; }   // error → sin config → gate
+      setChampCfg(data); setChampCfgResolved(true);
+    });
     return () => { alive = false; };
-    // Depende también de user?.id: get_championship_config exige sesión (grant solo a authenticated). En un
-    // refresh/carga directa, invCity puede resolver ANTES de que la sesión Supabase se restaure → el fetch
-    // falla y champCfg queda null (sin antelación mínima). Al quedar lista la sesión, user?.id cambia y se
-    // reintenta con auth → champCfg carga → minAllowedKey bloquea las fechas < anticipación. NO cambia el
-    // horizonte ni la regla; solo recupera la config cuando la auth está disponible.
-  }, [invCity, user?.id]);
+  }, [invCity]);
   const availabilityBlocks = Array.isArray(champCfg?.availability_blocks) ? champCfg.availability_blocks : [];
+  // Restricciones listas = hay ciudad y su config cargó VÁLIDA (champCfg no null tras resolver). Mientras carga
+  // o si falló la lectura → false → se impide seleccionar fecha/cancha (fail-closed, nunca "libre por defecto").
+  const restrictionsReady = !invCity || (champCfgResolved && !!champCfg);
 
   // Inventario UTILIZABLE por Championship = inventario real − rentals que se solapan con un availability_block
   // de SU ciudad. NO se muta el rental (sigue disponible en Rental/Match); solo se excluye como candidato.
@@ -999,12 +1006,14 @@ export default function ChampionshipOrganize() {
                 const k = ymd(d); const lab = dateChip(d);
                 const blocked = !!minAllowedKey && k < minAllowedKey;   // anticipación mínima no cumplida (sigue deshabilitado)
                 // Día sin disponibilidad: YA NO se deshabilita → clickable para mostrar el aviso de fecha vacía.
-                return <DateCell key={k} refEl={dateKey === k ? activeDateRef : null} top={lab.top} bottom={lab.bottom} isToday={k === TODAY_KEY} active={dateKey === k} check={dateChecks.has(k) && !blocked} disabled={blocked} onClick={() => setDateKey(k)} />;
+                return <DateCell key={k} refEl={dateKey === k ? activeDateRef : null} top={lab.top} bottom={lab.bottom} isToday={k === TODAY_KEY} active={dateKey === k} check={restrictionsReady && dateChecks.has(k) && !blocked} disabled={!restrictionsReady || blocked} onClick={() => setDateKey(k)} />;
               })}
             </div>
 
-            {invLoading ? (
+            {(invLoading || !restrictionsReady) ? (
               // minHeight reserva el alto del bloque de horarios+grilla → la pantalla no salta al cargar.
+              // !restrictionsReady: config de restricciones aún cargando o fallida → no se muestra la grilla de
+              // canchas (fail-closed: no se puede seleccionar cancha hasta tener la config válida de la ciudad).
               <div style={{ fontSize: 13, color: SUB, padding: '8px 0', minHeight: 300 }}>Cargando disponibilidad…</div>
             ) : (isEmptyFormat || dateNoAvail || !resolvedVenue) ? (
               // EMPTY_FORMAT y EMPTY_FILTERS sustituyen EXACTAMENTE la MISMA zona (selector de venue + tabla +
