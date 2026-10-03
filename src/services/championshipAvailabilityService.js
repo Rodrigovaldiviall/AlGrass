@@ -9,6 +9,7 @@
 
 import { supabase } from '../lib/supabase';
 import { CHAMP_DATE_WINDOW, ymd } from '../data/games';
+import { parsePeruDateTime } from '../lib/peruTime';
 
 // Etiqueta de reloj a partir de una HORA absoluta del día (0–23). Mantiene el estilo del grid ("6:00 pm").
 export function hourLabel(h) {
@@ -86,10 +87,15 @@ export async function fetchChampionshipInventory(city) {
 
 // ── Bloqueos de disponibilidad Championship (por ciudad) — espejo de la regla del backend ──────────
 // Un game queda EXCLUIDO del inventario utilizable por Championship si se solapa con ALGÚN availability_block.
-// Solapamiento por intervalo semiabierto: start < block_end AND end > block_start (los límites que solo se
-// tocan NO solapan). all_day=true → todo el día de esa fecha. DEFENSIVO: un bloqueo con date que coincide
-// pero from/to malformados se trata como all_day (sobre-bloquea, nunca sub-bloquea); la autoridad final es
-// el hold (_championship_assert_not_blocked). NO muta el game; solo decide si es candidato.
+// Solapamiento por intervalo SEMIABIERTO [inicio, fin): start < block_end AND end > block_start (los límites
+// que solo se tocan NO solapan). Soporta DOS formatos de bloqueo, sin duplicar la lógica:
+//   · ANTERIOR: { date, all_day } ó { date, from, to } — fecha/hora en America/Lima (date_key + HH:MM).
+//   · NUEVO:    { id, starts_at, ends_at, reason, created_by, created_at } — instantes UTC; el intervalo
+//     puede cruzar medianoche y abarcar varias fechas. Solo se leen starts_at/ends_at (reason/created_by y
+//     demás metadatos NO se exponen ni se usan).
+// Toda hora Lima se interpreta con offset fijo -05:00 (parsePeruDateTime), NUNCA con el huso del dispositivo.
+// DEFENSIVO: bloqueo malformado → conservador (sobre-bloquea, nunca sub-bloquea); la autoridad final es el
+// hold (_championship_assert_not_blocked). NO muta el game; solo decide si es candidato.
 function hhmmToMin(s) {
   if (typeof s !== 'string') return null;
   const m = /^(\d{2}):(\d{2})(?::\d{2})?$/.exec(s);
@@ -100,13 +106,28 @@ function hhmmToMin(s) {
 }
 export function gameBlockedByChampionship(game, blocks) {
   if (!Array.isArray(blocks) || !blocks.length) return false;
-  const gs = game.startMin, ge = game.startMin + game.durationMin;
+  const gsMin = game.startMin, geMin = game.startMin + game.durationMin;   // minutos del día (Lima)
+  // Instantes UTC REALES del game: medianoche Lima de su date_key (offset fijo -05:00) + minutos. Device-independiente.
+  const base = parsePeruDateTime(game.dateKey, '00:00');
+  const baseTs = base && !Number.isNaN(base.getTime()) ? base.getTime() : null;
+  const gStartTs = baseTs != null ? baseTs + gsMin * 60000 : null;
+  const gEndTs   = baseTs != null ? baseTs + geMin * 60000 : null;
   for (const b of blocks) {
-    if (!b || typeof b !== 'object' || b.date !== game.dateKey) continue;   // otra fecha / bloque inválido
+    if (!b || typeof b !== 'object') continue;
+    // NUEVO formato (instantes UTC): se detecta por starts_at/ends_at. Intervalo semiabierto [starts_at, ends_at).
+    if (b.starts_at != null || b.ends_at != null) {
+      const bStart = Date.parse(b.starts_at), bEnd = Date.parse(b.ends_at);
+      if (Number.isNaN(bStart) || Number.isNaN(bEnd) || bEnd <= bStart) return true;  // malformado → conservador
+      if (gStartTs == null) return true;                                              // game no ubicable → conservador
+      if (gStartTs < bEnd && gEndTs > bStart) return true;                            // solape semiabierto (epoch UTC)
+      continue;
+    }
+    // ANTERIOR formato (fecha/hora Lima): { date, all_day } / { date, from, to }.
+    if (b.date !== game.dateKey) continue;                                  // otra fecha
     if (b.all_day === true) return true;                                    // todo el día
     const fm = hhmmToMin(b.from), tm = hhmmToMin(b.to);
     if (fm == null || tm == null || tm <= fm) return true;                  // horas malformadas → conservador (todo el día)
-    if (gs < tm && ge > fm) return true;                                    // solapamiento semiabierto
+    if (gsMin < tm && geMin > fm) return true;                              // solapamiento semiabierto (minutos Lima)
   }
   return false;
 }
