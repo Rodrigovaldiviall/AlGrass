@@ -1,6 +1,8 @@
 import { useState, useMemo, useRef, useEffect, lazy, Suspense } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { BLUE, TEXT, SUB, HAIR, ORANGE } from '../constants';
+import { BLUE, TEXT, SUB, HAIR, ORANGE, RED } from '../constants';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';
 import { useAuth } from '../context/AuthContext';
 import I from '../icons';
 import { DATE_WINDOW, TODAY_KEY, TOMORROW_KEY, ymd } from '../data/games';
@@ -22,7 +24,7 @@ import { useForegroundTick } from '../hooks/useForegroundTick';
 import { useSheetPull } from '../hooks/useSheetPull';
 import { getMyBookedGameIds } from '../services/reservationService';
 import { GameMetaLine } from '../components/GameMetaLine';
-import { isGamePast } from '../utils/deriveGameState';
+import { isGamePast, isGameStarted } from '../utils/deriveGameState';
 
 const DOW_ES   = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const MONTH_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -465,7 +467,7 @@ function SkeletonFieldRows() {
 }
 
 // ── Field row
-function FieldThumbnail({ price, reserved, userBooked, isHost, badgeReady = true }) {
+function FieldThumbnail({ price, reserved, userBooked, isHost, live = false, badgeReady = true }) {
   const unavailable = reserved && !userBooked && !isHost;
   const bgStyle     = (asset) => ({ position: 'absolute', inset: 0, backgroundImage: `url(${asset})`, backgroundSize: '120%', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', display: 'flex', alignItems: 'center', justifyContent: 'center' });
   return (
@@ -474,7 +476,16 @@ function FieldThumbnail({ price, reserved, userBooked, isHost, badgeReady = true
     // primer render; solo cambia el contenido encima. 'No disponible' superpone su propio asset.
     <div style={{ position: 'relative', width: 88, height: 56, borderRadius: 10, overflow: 'hidden', flexShrink: 0, backgroundImage: `url(${fieldPriceBg})`, backgroundSize: '120%', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }}>
 
-      {isHost ? (
+      {live ? (
+        // EN VIVO (iniciado y no finalizado, hora Perú): misma familia roja que Match. Prioridad
+        // máxima → oculta precio/Reservado/No disponible: una cancha en vivo no se contrata.
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: RED, color: '#fff', fontFamily: 'inherit', padding: '4px 10px', borderRadius: 999, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <FontAwesomeIcon icon={faTowerBroadcast} style={{ fontSize: 11 }} />
+            <span style={{ fontSize: 11, fontWeight: 700, lineHeight: 1.2 }}>Ahora</span>
+          </div>
+        </div>
+      ) : isHost ? (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ background: ORANGE, color: '#1B1B1F', fontFamily: 'inherit', padding: '4px 10px', borderRadius: 999, display: 'inline-flex', flexDirection: 'column', alignItems: 'center' }}>
             <span style={{ fontSize: 11, fontWeight: 700, lineHeight: 1.2 }}>Organiza</span>
@@ -506,6 +517,8 @@ function FieldThumbnail({ price, reserved, userBooked, isHost, badgeReady = true
 
 function FieldRow({ f, last, onPress, userBooked, isHost, badgeReady = true }) {
   const [pressed, setPressed] = useState(false);
+  // EN VIVO = iniciada y no finalizada, hora Perú (America/Lima vía deriveGameState). SOLO UX.
+  const live = isGameStarted(f.dateKey, f.time24) && !isGamePast(f.dateKey, f.time24, f.durationMin);
   return (
     <div
       role="button"
@@ -542,7 +555,7 @@ function FieldRow({ f, last, onPress, userBooked, isHost, badgeReady = true }) {
         {f.status === 'published' && f.publishedAudience === 'captain' && (
           <span style={{ position: 'absolute', bottom: '100%', right: 0, marginBottom: 2, fontSize: 10.5, fontWeight: 700, color: '#8A6D00', background: '#FFF3C4', borderRadius: 6, padding: '1px 6px', whiteSpace: 'nowrap', lineHeight: 1.2, pointerEvents: 'none' }}>No publicado</span>
         )}
-        <FieldThumbnail price={isHost ? null : f.price} reserved={f.reserved} userBooked={userBooked} isHost={isHost} badgeReady={badgeReady} />
+        <FieldThumbnail price={isHost ? null : f.price} reserved={f.reserved} userBooked={userBooked} isHost={isHost} live={live} badgeReady={badgeReady} />
       </div>
       <div style={{ pointerEvents: 'none', marginLeft: 6 }}>{I.chev()}</div>
     </div>
@@ -673,6 +686,14 @@ export default function Fields() {
     });
     return () => { alive = false; };
   }, [fgTick, isCaptain, retryTick]); // eslint-disable-line
+
+  // Re-render periódico (30s) para que el badge EN VIVO aparezca/desaparezca al cruzar el inicio y el
+  // fin aunque la lista esté abierta. SOLO fuerza render (no refetch: no toca las deps del efecto).
+  const [, setLiveTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setLiveTick(x => x + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   const hasHostedInFeed = useMemo(
     () => !!user?.id && rentalGames.some(f => f.hostUserId === user.id),

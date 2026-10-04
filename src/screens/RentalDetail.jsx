@@ -7,8 +7,10 @@ import MapsLinkButton from '../components/MapsLinkButton';
 import OrganizerContactButton from '../components/OrganizerContactButton';
 import AttendanceBadge from '../components/AttendanceBadge';
 import Pressable from '../components/Pressable';
-import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, gameUnavailableCopy } from '../constants';
+import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, RED, gameUnavailableCopy } from '../constants';
 import I from '../icons';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';
 import TabBar from '../components/TabBar';
 import { useForegroundTick } from '../hooks/useForegroundTick';
 import { supabase } from '../lib/supabase';
@@ -43,7 +45,7 @@ function formatDuration(min) {
 }
 
 // ── Header
-function Header({ title, onBack, onShare }) {
+function Header({ title, onBack, onShare, live = false }) {
   return (
     <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 16, paddingRight: 16 }}>
       <div style={{ height: 26, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -55,6 +57,13 @@ function Header({ title, onBack, onShare }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
         </div>
+        {live && (
+          // EN VIVO — mismo pill rojo que Match (GameDetail Header): icono broadcast + "Ahora".
+          <div style={{ height: 26, padding: '0 10px', borderRadius: 999, background: RED, color: '#fff', fontSize: 12, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+            <FontAwesomeIcon icon={faTowerBroadcast} style={{ fontSize: 12 }} />
+            Ahora
+          </div>
+        )}
         {onShare && (
           <button
             className="pressable"
@@ -567,6 +576,9 @@ export default function RentalDetail() {
   // SOLO UX: un rental ya iniciado (now >= inicio, hora Perú) no debe permitir entrar al flujo
   // de cancelación (autoridad económica y guard RENTAL_ALREADY_STARTED siguen en cancel_rental_self).
   const alreadyStarted = isGameStarted(game.dateKey, game.time24);
+  // EN VIVO = iniciada y aún no finalizada (hora Perú). Se recomputa en cada render; el tick `now`
+  // (30s) garantiza que aparezca/desaparezca al cruzar inicio y fin con la pantalla abierta.
+  const liveRental = alreadyStarted && !isPastRental;
 
   // Validación UX anticipada al pulsar "Reservar cancha": reconsulta el rental REAL con
   // getGameById (la MISMA carga del montaje) antes de navegar. Disponibilidad Rental =
@@ -643,7 +655,7 @@ export default function RentalDetail() {
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: BLUE, overflow: 'hidden' }}>
-      <Header title={title} onBack={goBack}
+      <Header title={title} onBack={goBack} live={liveRental}
         onShare={() => shareOrCopy({ url: `${window.location.origin}/rental/${game.id}`, title, text: [date, timeRow].filter(Boolean).join(' · ') })} />
 
 
@@ -782,7 +794,7 @@ export default function RentalDetail() {
             Gestionar mi reserva
           </button>
         </div>
-      ) : statusReady && statusVerified && !isHost && priceDisplay && !isReserved ? (
+      ) : statusReady && statusVerified && !isHost && priceDisplay && !isReserved && !alreadyStarted ? (
         <CTA
           price={priceDisplay}
           onPress={handleReservePress}
