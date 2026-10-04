@@ -1735,13 +1735,13 @@ export default function ConfirmReservation() {
           usingReward ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', marginBottom: 8, background: '#EEEBFB', border: '1px solid #D6CEF7', borderRadius: 10 }}>
               <svg width="16" height="16" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="8" fill="#6D5AE6"/><path d="M5 9.2l2.6 2.6L13 6.4" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              <div style={{ flex: 1, fontSize: 13, color: '#4B3BAF', fontWeight: 600 }}>Rewards aplicado (−{fmt(rewardApplied)})</div>
+              <div style={{ flex: 1, fontSize: 13, color: '#4B3BAF', fontWeight: 600 }}>Recompensas aplicadas (−{fmt(rewardApplied)})</div>
               <button onClick={() => setUsingReward(false)} style={{ padding: '2px 6px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700, color: '#4B3BAF', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Quitar</button>
             </div>
           ) : (
             <button onClick={() => { setUsingReward(true); setPromoOpen(false); setPromoApplied(null); setPromoInput(''); setPromoError(''); }} style={{ padding: '6px 4px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: 600, color: '#6D5AE6', letterSpacing: -0.1, display: 'inline-flex', alignItems: 'center', gap: 6, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1.6l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.9 4.3 13.4l.7-4.3-3.1-3 4.3-.6z" stroke="#6D5AE6" strokeWidth="1.2" strokeLinejoin="round"/></svg>
-              Usar mis Rewards ({fmt(rewardBalance)})
+              Usar mis recompensas ({fmt(rewardBalance)})
             </button>
           )
         )}
@@ -1822,7 +1822,7 @@ export default function ConfirmReservation() {
           {/* Rewards: línea separada del Credit; solo se muestra si rewardApplied>0. */}
           {!invitedMode && !addGuestsMode && rewardApplied > 0 && (
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: '#6D5AE6' }}>
-              <span>Rewards</span>
+              <span>Recompensas</span>
               <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>−{fmt(rewardApplied)}</span>
             </div>
           )}
