@@ -474,7 +474,7 @@ function FieldThumbnail({ price, reserved, userBooked, isHost, live = false, bad
     // Fondo SIEMPRE el asset local fieldPriceBg (nunca cover remoto de field/venue): todos los
     // estados (cargando, precio, Reservado, Organiza) comparten el mismo background desde el
     // primer render; solo cambia el contenido encima. 'No disponible' superpone su propio asset.
-    <div style={{ position: 'relative', width: 88, height: 56, borderRadius: 10, overflow: 'hidden', flexShrink: 0, backgroundImage: `url(${fieldPriceBg})`, backgroundSize: '120%', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }}>
+    <div style={{ position: 'relative', width: 88, height: 56, borderRadius: 10, overflow: 'hidden', flexShrink: 0, ...(live ? {} : { backgroundImage: `url(${fieldPriceBg})`, backgroundSize: '120%', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }) }}>
 
       {live ? (
         // EN VIVO (iniciado y no finalizado, hora Perú): misma familia roja que Match. Prioridad
