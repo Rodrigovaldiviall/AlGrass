@@ -9,7 +9,7 @@ export function effPhaseOf(status, liveStartedAt) {
 }
 
 // Ventanas por acción para owner/host/AlGrass. Devuelve booleanos. Nunca payment_validation ni canceled.
-export function rosterWindows(effPhase, { amOwner = false, amHost = false, amAlgrass = false } = {}) {
+export function rosterWindows(effPhase, { amOwner = false, amHost = false, amAlgrass = false, isPrivate = false } = {}) {
   const alg = amAlgrass && ['pending_publish', 'registration_open', 'registration_closed', 'in_progress_prelive', 'in_progress_live', 'completed'].includes(effPhase);
   const oh = (arr) => (amOwner || amHost) && arr.includes(effPhase);
   return {
@@ -17,8 +17,9 @@ export function rosterWindows(effPhase, { amOwner = false, amHost = false, amAlg
     canAdminMove:   alg || oh(['registration_open', 'registration_closed', 'in_progress_prelive', 'in_progress_live']),
     canAdminEdit:   alg || oh(['pending_publish', 'registration_open', 'registration_closed', 'in_progress_prelive', 'in_progress_live']),
     canAdminCreate: alg || oh(['pending_publish', 'registration_open', 'registration_closed']),
-    // Agregar tercero NUEVO (Fase 29): host o AlGrass, ventana ESTRICTA RO/RC/PRE/LIVE (NO pending_publish, NO
-    // completed). owner NUNCA. Espejo del helper backend _champ_can_manage_roster('add_player').
-    canAdminAddNew: (amAlgrass || amHost) && ['registration_open', 'registration_closed', 'in_progress_prelive', 'in_progress_live'].includes(effPhase),
+    // Agregar tercero NUEVO (Fase 29): host o AlGrass, y además el OWNER en campeonatos PRIVADos (mismo rango
+    // que host: RO/RC/PRE/LIVE, NO pending_publish, NO completed). Espejo del helper backend
+    // _champ_can_manage_roster('add_player'). En campeonatos públicos el owner NO entra (solo host/AlGrass).
+    canAdminAddNew: (amAlgrass || amHost || (amOwner && isPrivate)) && ['registration_open', 'registration_closed', 'in_progress_prelive', 'in_progress_live'].includes(effPhase),
   };
 }

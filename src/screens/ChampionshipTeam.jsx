@@ -324,7 +324,8 @@ export default function ChampionshipTeam() {
     const amAdmin = amOwner || amAlgrass;
     // Gestión de roster (Fase 23): host desde organizers; canAdminMove = MISMA lógica compartida (championshipRoster).
     const amHost = !!rState?.organizers?.host && rState.organizers.host.user_id === user?.id;
-    const { canAdminMove, canAdminEdit, canAdminAddNew } = rosterWindows(effPhaseOf(st, champLive), { amOwner, amHost, amAlgrass });
+    const isPrivate = (rState?.privacy || 'private') === 'private';
+    const { canAdminMove, canAdminEdit, canAdminAddNew } = rosterWindows(effPhaseOf(st, champLive), { amOwner, amHost, amAlgrass, isPrivate });
     const joinedHere = myMem?.team_id === teamId;
     // SELF (Fase 35): Host puro NUNCA se inscribe. Owner: join/cambiar en RO/RC/PRE/LIVE; salir solo RO.
     // Player: join/cambiar en RO/RC/PRE (no LIVE); salir solo RO. Espejo del backend (join_championship_team/leave).

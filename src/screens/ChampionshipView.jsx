@@ -693,7 +693,8 @@ export default function ChampionshipView() {
   const canEditCover = amOwner || amHost || amAlgrass;
   // Ventanas de gestión de roster: MISMA lógica compartida que ChampionshipTeam (util championshipRoster).
   const effPhase = effPhaseOf(champ?.status, realRow?.live_started_at);
-  const { canAdminMove, canAdminEdit, canAdminCreate, canAdminAddNew } = rosterWindows(effPhase, { amOwner, amHost, amAlgrass }); // eslint-disable-line no-unused-vars
+  const champIsPrivate = ((realRow?.privacy ?? champ?.privacy) || 'private') === 'private';
+  const { canAdminMove, canAdminEdit, canAdminCreate, canAdminAddNew } = rosterWindows(effPhase, { amOwner, amHost, amAlgrass, isPrivate: champIsPrivate }); // eslint-disable-line no-unused-vars
   // Edición de RESULTADOS (Fase 24, helper separado): host en in_progress; AlGrass en in_progress+completed.
   // Owner/player NUNCA. Espejo de _champ_can_manage_results; el backend valida igual.
   const canManageResults = (amAlgrass && (champ?.status === 'in_progress' || champ?.status === 'completed'))
