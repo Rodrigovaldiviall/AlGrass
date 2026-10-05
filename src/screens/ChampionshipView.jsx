@@ -1892,8 +1892,10 @@ export default function ChampionshipView() {
             // Al pulsar, publishChampionship llama publish_championship (owner + pending_publish → registration_open).
             return (
               <>
-                {showManageCTA && manageCTAButton(true)}
+                {/* El aviso va ENCIMA de los dos botones: entre ellos dejaba un hueco y
+                    separaba «Gestionar mi reserva» de «Publicar campeonato». */}
                 {hint && <div style={{ pointerEvents: 'none', textAlign: 'center', marginBottom: 8, fontSize: 12, fontWeight: 700, color: TEXT, background: '#FFF7EA', border: `1px solid ${ORANGE}66`, borderRadius: 8, padding: '7px 10px' }}>{hint}</div>}
+                {showManageCTA && manageCTAButton(true)}
                 <button onClick={publishChampionship} disabled={!canPublish || publishing} className={(canPublish && !publishing) ? 'pressable' : undefined} style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 54, background: canPublish ? ORANGE : '#E4E4EA', color: canPublish ? '#1B1B1F' : '#9A9AA2', border: 'none', borderRadius: 18, boxShadow: canPublish ? '0 6px 18px rgba(245,165,36,0.40)' : 'none', cursor: (canPublish && !publishing) ? 'pointer' : 'not-allowed', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, WebkitTapHighlightColor: 'transparent' }}>
                   {publishing && <span style={{ width: 16, height: 16, borderRadius: '50%', border: '2.5px solid rgba(27,27,31,0.2)', borderTop: '2.5px solid #1B1B1F', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />}
                   {publishing ? 'Publicando…' : 'Publicar campeonato'}
