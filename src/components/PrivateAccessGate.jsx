@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { BLUE, TEXT, SUB, ORANGE, GREEN } from '../constants';
-import { PRIVATE_MODE, PRIVATE_ACCESS_KEY, hasPrivateAccess } from '../lib/privateAccess';
+import { PRIVATE_MODE, PRIVATE_ACCESS_KEY, PRIVATE_ACCESS_VERSION, hasPrivateAccess } from '../lib/privateAccess';
 
 // ── Acceso privado TEMPORAL (hasta el lanzamiento) ──────────────────────────
 // La config (PRIVATE_MODE, clave de desbloqueo) vive en ../lib/privateAccess y la
@@ -38,7 +38,7 @@ export default function PrivateAccessGate({ children }) {
       : { data: false, error: new Error('no supabase') };
     setLoading(false);
     if (rpcErr || data !== true) { setError(true); return; }
-    try { localStorage.setItem(PRIVATE_ACCESS_KEY, 'true'); } catch {}
+    try { localStorage.setItem(PRIVATE_ACCESS_KEY, PRIVATE_ACCESS_VERSION); } catch {}   // guarda la versión, no la clave
     setUnlocked(true); // cierra la pantalla; App se monta desde su estado inicial normal
   }
 
