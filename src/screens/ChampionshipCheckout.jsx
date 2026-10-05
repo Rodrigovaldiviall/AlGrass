@@ -511,14 +511,14 @@ export default function ChampionshipCheckout() {
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
                 <span>Alquiler Canchas</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(quote.court_amount)}</span>
               </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
+                <span>Organización AlGrass</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(quote.algrass_fee_amount)}</span>
+              </div>
               {Number(quote.referee_amount) > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
                   <span>{`Árbitro × ${quote.service_court_hours} ${quote.service_court_hours === 1 ? 'hora' : 'horas'}`}</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(quote.referee_amount)}</span>
                 </div>
               )}
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
-                <span>Organización AlGrass</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(quote.algrass_fee_amount)}</span>
-              </div>
               {(quote.extras || []).map(x => (
                 <div key={x.code} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
                   <span>{x.name}{x.quantity > 1 ? ` ×${x.quantity}` : ''}</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(x.amount)}</span>
