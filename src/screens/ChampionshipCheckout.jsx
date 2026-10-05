@@ -10,6 +10,7 @@ import { uploadChampionshipProof } from '../utils/championshipProof';
 import { formatDateLabel } from '../utils/format';
 import { supabase } from '../lib/supabase';
 import { createTransferHold, confirmTransfer as confirmTransferRpc, releaseTransferHold, quoteChampionship, getChampionshipConfig, createGatewayOrder, confirmGatewayPayment, failGateway } from '../services/championshipService';
+import { getWalletBalance } from '../services/reservationService';
 
 // Emoji del círculo por code de extra (la config no envía emoji). Fallback genérico.
 const EXTRA_EMOJI = { trophy: '🏆', medals: '🥇', photography: '📷', filming: '🎥' };
@@ -179,6 +180,22 @@ export default function ChampionshipCheckout() {
   const total = quote?.amount_total != null ? Number(quote.amount_total) : null;
   const hasValidQuote = !!quote && !quoteLoading && !quoteError && total != null;
 
+  // ── CRÉDITO (wallet_summary.credit_balance). A diferencia de Games (donde es obligatorio), en Campeonatos
+  // es OPCIONAL: si hay saldo aparece APLICADO por defecto, con Quitar/Utilizar. Sin rewards. ──
+  const [creditBalance, setCreditBalance] = useState(0);
+  const [usingCredit, setUsingCredit]     = useState(true);   // ON por defecto; se apaga con "Quitar"
+  const [creditPaying, setCreditPaying]   = useState(false);  // 100% crédito: confirmando sin pasarela
+  const [creditError, setCreditError]     = useState(null);
+  useEffect(() => {
+    let alive = true;
+    getWalletBalance().then(b => { if (alive) setCreditBalance(Math.max(0, Number(b) || 0)); }).catch(() => {});
+    return () => { alive = false; };
+  }, [user?.id]);
+  // credit_applied = min(saldo, total) mientras esté activo; recalcula solo al cambiar el total (quote/extras).
+  const creditApplied  = (usingCredit && creditBalance > 0 && total != null) ? Math.min(creditBalance, total) : 0;
+  const externalAmount = total != null ? Math.round((total - creditApplied) * 100) / 100 : null;
+  const fullyCredit    = creditApplied > 0 && externalAmount === 0;   // saldo cubre el 100% → sin pasarela
+
   // Stepper EXACTO de Partidos (ConfirmReservation.stepBtn): círculo, borde BLUE.
   const stepBtn = (onClick, disabled, plus) => (
     <button onClick={onClick} disabled={disabled}
@@ -309,7 +326,7 @@ export default function ChampionshipCheckout() {
     if (!selectedGameIds.length) return { error: 'AVAILABILITY_CHANGED' };  // sin IDs reales → volver a disponibilidad
     if (!eventDate) return { error: 'INVALID_DATE' };
     if (!groupId) return { error: 'CHAMPIONSHIP_FORMAT_UNAVAILABLE' };       // sin formato → backend no puede tarifar
-    const config = { ...buildHoldConfig(), payment_method: method || 'gateway' };
+    const config = { ...buildHoldConfig(), payment_method: method || 'gateway', credit_applied: creditApplied };
     const { data, error } = await createGatewayOrder({ gameIds: selectedGameIds, idempotencyKey: g.key, config });
     if (error) {
       if (/AVAILABILITY_CHANGED|NO_CAPACITY|CHAMPIONSHIP_AVAILABILITY_BLOCKED/.test(error.message || '')) { resetGateway(); return { error: 'AVAILABILITY_CHANGED' }; }
@@ -340,6 +357,32 @@ export default function ChampionshipCheckout() {
     const id = gatewayRef.current.id;
     if (id) { await failGateway({ championshipId: id, reason: 'payment_rejected' }); }
     resetGateway();
+  };
+
+  // ── 100% CRÉDITO: sin pasarela. Crea la order (credit_applied=total → external 0, backend valida y debita) y
+  // confirma directamente (como payWithCredit de Games). El asiento nace con external 0: el crédito ya se movió.
+  const payChampionshipWithCredit = async () => {
+    if (creditPaying) return;
+    setCreditError(null);
+    if (!selectedGameIds.length) { availabilityChangedBack(); return; }
+    if (!eventDate) { setCreditError('La fecha elegida no es válida.'); return; }
+    if (!groupId) { setCreditError('El formato seleccionado no está disponible.'); return; }
+    setCreditPaying(true);
+    const g = gatewayRef.current;
+    if (!g.key) g.key = uuidv4();
+    const config = { ...buildHoldConfig(), payment_method: 'credit', credit_applied: creditApplied };
+    const { data, error } = await createGatewayOrder({ gameIds: selectedGameIds, idempotencyKey: g.key, config });
+    if (error) {
+      setCreditPaying(false);
+      if (/AVAILABILITY_CHANGED|NO_CAPACITY|CHAMPIONSHIP_AVAILABILITY_BLOCKED/.test(error.message || '')) { resetGateway(); availabilityChangedBack(); return; }
+      setCreditError(/INSUFFICIENT_CREDIT/.test(error.message || '') ? 'Tu saldo cambió. Vuelve a intentarlo.' : champErrorMessage(error.message));
+      return;
+    }
+    g.id = data.id;
+    const { error: cErr } = await confirmGatewayPayment({ championshipId: data.id });
+    if (cErr) { setCreditPaying(false); resetGateway(); availabilityChangedBack(); return; }
+    resetGateway();
+    createChampionship('pending_publish', 'created', { realId: data.id });
   };
 
   // Volver a "Ver mi campeonato" reutilizando el return-state existente (cvReturn) → restaura scroll+estado
@@ -484,6 +527,24 @@ export default function ChampionshipCheckout() {
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, paddingTop: 8, borderTop: `1px solid ${HAIR}`, marginTop: 4, fontSize: 15, fontWeight: 700, color: TEXT, letterSpacing: -0.1 }}>
                 <span>Total</span><span style={{ whiteSpace: 'nowrap' }}>{soles(quote.amount_total)}</span>
               </div>
+              {/* CRÉDITO (opcional). Quitar/Utilizar inspirado en "Usar/Quitar Rewards" de Games, aquí para el crédito. */}
+              {creditBalance > 0 && (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, fontSize: 13.5, color: SUB }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ color: usingCredit ? GREEN : SUB, fontWeight: 600 }}>{usingCredit ? 'Crédito aplicado' : 'Crédito disponible'}</span>
+                      <button onClick={() => { setUsingCredit(v => !v); setCreditError(null); }}
+                        style={{ padding: '2px 8px', background: 'transparent', border: `1px solid ${usingCredit ? HAIR : GREEN}`, borderRadius: 999, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 700, color: usingCredit ? SUB : GREEN, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                        {usingCredit ? 'Quitar' : 'Utilizar'}
+                      </button>
+                    </span>
+                    <span style={{ color: usingCredit ? GREEN : SUB, fontWeight: 600, whiteSpace: 'nowrap' }}>{usingCredit ? `− ${soles(creditApplied)}` : soles(creditBalance)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, paddingTop: 8, borderTop: `1px solid ${HAIR}`, marginTop: 4, fontSize: 15, fontWeight: 800, color: TEXT, letterSpacing: -0.1 }}>
+                    <span>A pagar</span><span style={{ whiteSpace: 'nowrap' }}>{soles(externalAmount ?? total)}</span>
+                  </div>
+                </>
+              )}
             </>
           ) : (
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB, minHeight: 20, alignItems: 'center' }}>
@@ -493,22 +554,23 @@ export default function ChampionshipCheckout() {
           )}
         </div>
 
-        <CtaButton onPress={() => setPayOpen(true)} disabled={!facturaOk || !hasValidQuote}>
-          {quoteLoading ? 'Calculando…' : 'Confirmar'}
+        {creditError && <div style={{ fontSize: 12.5, color: '#C0392B', padding: '0 0 8px' }}>{creditError}</div>}
+        <CtaButton onPress={fullyCredit ? payChampionshipWithCredit : () => setPayOpen(true)} disabled={!facturaOk || !hasValidQuote || creditPaying}>
+          {creditPaying ? 'Procesando…' : quoteLoading ? 'Calculando…' : 'Confirmar'}
         </CtaButton>
       </div>
 
       {/* Pasarela reutilizada de Partidos + método Transferencia (solo Campeonato). MOCK. */}
       {payOpen && (
         <PaymentSheet
-          amount={total ?? 0}
+          amount={externalAmount ?? total ?? 0}   // con crédito parcial, la pasarela cobra SOLO el importe externo
           currency="S/"
           onClose={() => setPayOpen(false)}
           onPreCharge={gatewayPreCharge}          // Gateway: acquire lógico ANTES del mock del cobro
           onPaid={gatewayPaid}                    // mock aprobó → confirm_championship_gateway_payment
           onRejected={gatewayRejected}            // mock rechazó → fail_championship_gateway
           onAvailabilityChanged={availabilityChangedBack}  // acquire perdió la carrera → volver a disponibilidad
-          transfer={{
+          transfer={creditApplied > 0 ? undefined : {       // con crédito el pago externo va por pasarela; sin crédito, flujo actual (transferencia + pasarela)
             bank: CHAMPIONSHIP_BANK,
             onReserve: reserveChampionshipHold,             // create_championship_transfer_hold (hold REAL)
             onRelease: releaseChampionshipHold,             // release_championship_transfer_hold
