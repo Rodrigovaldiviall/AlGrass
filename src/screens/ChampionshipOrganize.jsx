@@ -997,7 +997,7 @@ export default function ChampionshipOrganize() {
               {/* Ciudad primero (Ciudad → Distritos → Cancha → resto). Cambia la ciudad activa global. */}
               <Chip active onClick={() => setCitySheet(true)}>{userCity || 'Ciudad'}</Chip>
               <Chip active={districts.size > 0} onClick={() => setDistrictSheet(true)}>{districts.size > 0 ? `Distrito · ${districts.size}` : 'Distrito'}</Chip>
-              <Chip active={venueFilter.size > 0} onClick={() => setVenueSheet(true)}>{venueFilter.size > 0 ? `Cancha · ${venueFilter.size}` : 'Cancha'}</Chip>
+              <Chip active={venueFilter.size > 0} onClick={() => setVenueSheet(true)}>{venueFilter.size > 0 ? `Sede · ${venueFilter.size}` : 'Sede'}</Chip>
               {AMENITIES.map(a => <Chip key={a.key} active={amenities.has(a.key)} onClick={() => toggleSet(setAmenities, a.key)}>{a.label}</Chip>)}
             </div>
 
@@ -1228,7 +1228,7 @@ export default function ChampionshipOrganize() {
           selected={districts} onToggle={(v) => toggleSet(setDistricts, v)} />
       )}
       {venueSheet && (
-        <PickSheet title="Elige canchas" onClose={() => setVenueSheet(false)}
+        <PickSheet title="Elige sedes" onClose={() => setVenueSheet(false)}
           items={championshipVenues(games, format, districts, amenities).map(v => ({ value: v.id, label: v.name, sub: `${v.district} · ${v.courts} canchas` }))}
           selected={venueFilter} onToggle={(v) => toggleSet(setVenueFilter, v)} />
       )}

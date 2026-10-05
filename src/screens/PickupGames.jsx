@@ -10,6 +10,7 @@ import logo from '../assets/logo.webp';
 import { getGames } from '../services/gameService';
 import { getVenues } from '../services/venueService';
 import DistrictSheet from '../components/DistrictSheet';
+import CanchaFilterSheet from '../components/CanchaFilterSheet';
 import VenueBottomSheet from '../components/VenueBottomSheet';
 import TabBar from '../components/TabBar';
 import RouteNoticeModal from '../components/RouteNoticeModal';
@@ -44,7 +45,7 @@ const EMPTY_FLT = {
   organiza: false,
   cubierta: false, estacionamiento: false, duchas: false, mujeres: false, master45: false,
   suplentes: false, filmed: false,
-  formatos: [], minSpots: null, dias: [], horarios: [], distritos: [],
+  formatos: [], minSpots: null, dias: [], horarios: [], distritos: [], canchas: [],
 };
 
 function parseHour(time, ampm) {
@@ -424,7 +425,7 @@ const CHIP_DEFS = [
   { id: 'duchas',          label: 'Duchas',           icon: c => ShowerIcon(c)   },
 ];
 
-function FilterRow({ chipActive, onToggleChip, onOpenPanel, panelHasExtra, hasHostedInFeed, onOpenDistricts, districtsActive }) {
+function FilterRow({ chipActive, onToggleChip, onOpenPanel, panelHasExtra, hasHostedInFeed, onOpenDistricts, districtsActive, onOpenCanchas, canchasActive }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px 8px', background: '#fff' }}>
       <FilterButton onClick={onOpenPanel} hasActive={panelHasExtra} />
@@ -436,6 +437,9 @@ function FilterRow({ chipActive, onToggleChip, onOpenPanel, panelHasExtra, hasHo
         <Chip key="distritos" label="Distritos"
           icon={c => <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 22s7-5.8 7-12a7 7 0 1 0-14 0c0 6.2 7 12 7 12z" stroke={c} strokeWidth="2"/><circle cx="12" cy="10" r="2.5" stroke={c} strokeWidth="2"/></svg>}
           active={districtsActive} onClick={onOpenDistricts} last={false} />
+        <Chip key="canchas" label="Sede"
+          icon={c => <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="14" rx="1.5" stroke={c} strokeWidth="2"/><path d="M12 5v14M3 12h18" stroke={c} strokeWidth="2"/><circle cx="12" cy="12" r="2.2" stroke={c} strokeWidth="2"/></svg>}
+          active={canchasActive} onClick={onOpenCanchas} last={false} />
         {hasHostedInFeed && (
           <Chip key="organiza" label="Organiza"
             icon={c => <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><circle cx="5" cy="4" r="2.5" stroke={c} strokeWidth="1.4"/><path d="M1 12c0-2.2 1.8-4 4-4" stroke={c} strokeWidth="1.4" strokeLinecap="round"/><circle cx="10" cy="8.5" r="2.5" stroke={c} strokeWidth="1.4"/><path d="M7 13c0-1.7 1.3-3 3-3s3 1.3 3 3" stroke={c} strokeWidth="1.4" strokeLinecap="round"/></svg>}
@@ -1126,6 +1130,13 @@ export default function PickupGames() {
       return { ...f, distritos: cur.includes(d) ? cur.filter(x => x !== d) : [...cur, d] };
     });
   }
+  const [canchaSheetOpen, setCanchaSheetOpen] = useState(false);
+  function toggleCancha(id) {
+    setFlt(f => {
+      const cur = f.canchas ?? [];
+      return { ...f, canchas: cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id] };
+    });
+  }
   // Venue restaurado que ya no existe en la ciudad actual → limpiar selección/sheet.
   useEffect(() => {
     if (selectedVenue && venues.length && !venues.some(v => v.id === selectedVenue.id)) {
@@ -1290,10 +1301,21 @@ export default function PickupGames() {
     return result;
   }, [flt, userCity, games]);
 
-  // Lista: filtro DURO de distrito sobre la base. El distrito es el único filtro especial.
-  const filteredGames = useMemo(
+  // Lista: filtro DURO de distrito sobre la base.
+  const filteredAfterDistrict = useMemo(
     () => filteredGamesNoDistrict.filter(g => !flt.distritos.length || flt.distritos.includes(g.venueDistrict)),
     [filteredGamesNoDistrict, flt.distritos]
+  );
+  // Canchas (sedes) DISPONIBLES para el filtro: sedes distintas presentes tras los demás filtros.
+  const canchaOptions = useMemo(() => {
+    const m = new Map();
+    for (const g of filteredAfterDistrict) { if (g.venueId && !m.has(g.venueId)) m.set(g.venueId, g.venueName || g.field || 'Cancha'); }
+    return [...m.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  }, [filteredAfterDistrict]);
+  // Lista final: filtro DURO por cancha/sede (venueId). canchas=[] → todas.
+  const filteredGames = useMemo(
+    () => filteredAfterDistrict.filter(g => !flt.canchas?.length || flt.canchas.includes(g.venueId)),
+    [filteredAfterDistrict, flt.canchas]
   );
 
   const grouped = useMemo(() => {
@@ -1493,6 +1515,8 @@ export default function PickupGames() {
         hasHostedInFeed={hasHostedInFeed}
         onOpenDistricts={() => setDistrictSheetOpen(true)}
         districtsActive={flt.distritos.length > 0}
+        onOpenCanchas={() => setCanchaSheetOpen(true)}
+        canchasActive={(flt.canchas?.length ?? 0) > 0}
       />
       <DateStrip
         dates={DATE_WINDOW}
@@ -1635,6 +1659,15 @@ export default function PickupGames() {
           onToggle={toggleDistrict}
           onClear={() => setFlt(f => ({ ...f, distritos: [] }))}
           onClose={() => setDistrictSheetOpen(false)}
+        />
+      )}
+      {canchaSheetOpen && (
+        <CanchaFilterSheet
+          venues={canchaOptions}
+          selected={flt.canchas ?? []}
+          onToggle={toggleCancha}
+          onClear={() => setFlt(f => ({ ...f, canchas: [] }))}
+          onClose={() => setCanchaSheetOpen(false)}
         />
       )}
       {showCitySheet && (

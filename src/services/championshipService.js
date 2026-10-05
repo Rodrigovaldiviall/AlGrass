@@ -291,3 +291,36 @@ export function publishChampionshipRpc({ championshipId }) {
   return supabase.rpc('publish_championship', { p_championship_id: championshipId });
 }
 
+// Order del campeonato (detalles del pago del OWNER). Lectura directa por RLS (orders_select_own:
+// payer_user_id = auth.uid()). Una championship.id = una order. Importes CONGELADOS en backend:
+//   amount_total = bruto; financial_snapshot.credit_applied / external_amount; payment_provider; status.
+// SOLO lectura; no recalcula nada. Devuelve la fila más reciente (una por campeonato en la práctica).
+export async function getChampionshipOrder({ championshipId }) {
+  const { data, error } = await supabase
+    .from('orders')
+    .select('amount_total, currency, financial_snapshot, payment_provider, status, claim_composition, resolved_at')
+    .eq('resource_type', 'championship')
+    .eq('resource_id', championshipId)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  return { data: Array.isArray(data) && data.length ? data[0] : null, error };
+}
+
+// cancel_championship_contract(RPC): el OWNER cancela SU campeonato, SOLO en pending_publish. scope 'full':
+// libera canchas, deja el campeonato 'canceled' y devuelve el 100% en crédito de wallet al pagador (reglas
+// financieras ya definidas en backend; refund sobre bruto). NO crea lógica nueva. Idempotencia/estados los
+// valida el backend. Errores: 'AUTH_REQUIRED','NOT_OWNER','CHAMPIONSHIP_NOT_CANCELABLE_BY_OWNER','CHAMPIONSHIP_NOT_FOUND'.
+export function cancelChampionshipContract({ championshipId, scope = 'full', codes = null, reason = null }) {
+  return supabase.rpc('cancel_championship_contract', {
+    p_championship_id: championshipId, p_scope: scope, p_codes: codes, p_reason: reason,
+  });
+}
+
+// get_championship_payment_detail(RPC): conceptos CONGELADOS del campeonato con lo devuelto de cada uno
+// (owner/staff). items[] = {kind: court|courts|extra|fee, code, game_id, quantity, amount, cancelable,
+// refunded, settled_by} + paid_total/refunded_total/remaining_total + owner_can_cancel. SOLO lectura; no
+// recalcula. Lanza CHAMPIONSHIP_PAYMENT_NOT_VALIDATED al owner si está en payment_validation (sin asiento).
+export function getChampionshipPaymentDetail({ championshipId }) {
+  return supabase.rpc('get_championship_payment_detail', { p_championship_id: championshipId });
+}
+

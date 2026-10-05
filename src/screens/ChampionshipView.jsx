@@ -25,7 +25,7 @@ import VenuePickerSheet from '../components/championship/VenuePickerSheet';
 import { effPhaseOf, rosterWindows } from '../utils/championshipRoster';
 import { PlayerModal } from './GameDetail';   // MISMO perfil público que el roster de Match (sin duplicar)
 import { validateCoverImage, uploadChampionshipCover, getChampionshipCoverUrl, deleteChampionshipCover } from '../utils/championshipCoverImage';
-import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, publishChampionshipRpc, updateChampionshipCover, joinChampionshipWithoutTeam, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, getChampionshipRegistrationState, getChampionshipCompetition, manageChampionshipPlayer, saveChampionshipMatchResult, setChampionshipMatchTeam, toggleChampionshipLive, setChampionshipChampion } from '../services/championshipService';
+import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, publishChampionshipRpc, updateChampionshipCover, joinChampionshipWithoutTeam, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, getChampionshipRegistrationState, getChampionshipCompetition, manageChampionshipPlayer, saveChampionshipMatchResult, setChampionshipMatchTeam, toggleChampionshipLive, setChampionshipChampion, getChampionshipOrder, cancelChampionshipContract, getChampionshipPaymentDetail } from '../services/championshipService';
 import TeamPickerSheet from '../components/championship/TeamPickerSheet';
 import { slotTeamConflicts } from '../utils/championshipFixture';
 
@@ -144,6 +144,15 @@ export default function ChampionshipView() {
     });
     return () => { alive = false; };
   }, [realId]); // eslint-disable-line
+
+  // Refresco puntual de la fila real (tras cancelar): re-lee la superficie pública y reemplaza realRow.
+  // El effect que sincroniza `champ` desde realRow refleja el nuevo status (p.ej. 'canceled') sin remount.
+  const refreshReal = () => {
+    if (!isRealMode || !realId) return;
+    getChampionshipPublic({ championshipId: realId }).then(({ data, error }) => {
+      if (!error && data) setRealRow(data);
+    });
+  };
 
   // Owner: cuando llega la clave real (RPC owner-only), hidrata clave/saved para mostrar/editar/publicar.
   useEffect(() => {
@@ -1960,7 +1969,7 @@ export default function ChampionshipView() {
       {/* Perfil público del jugador — MISMO PlayerModal que el roster de Match (privacidad/avatar iguales). */}
       {selectedPlayer && <PlayerModal player={selectedPlayer} onClose={() => setSelectedPlayer(null)} />}
       {/* "Gestionar mi reserva" (owner) — patrón Match: menú → Ver detalles del pago / Cancelar reserva. */}
-      {manageOpen && <OwnerManageSheet onClose={() => setManageOpen(false)} />}
+      {manageOpen && <OwnerManageSheet onClose={() => setManageOpen(false)} championshipId={realId} status={realRow?.status} onExtrasCanceled={refreshReal} onFullCanceled={() => navigate('/profile')} />}
       {/* Selector de equipo para un slot VACÍO de la llave (host/AlGrass en in_progress). Excluye el equipo del
           otro lado del mismo partido. Guardar → set_championship_match_team → refresca la llave. */}
       <TeamPickerSheet
@@ -2068,24 +2077,141 @@ function OrganizerRow({ person, role, first, onSelect }) {
 
 // ── "Gestionar mi reserva" (owner) — hoja inferior con el MISMO patrón que Match: un menú de acciones
 //    (filas con chevron) que al tocar morfa al sub-paso dentro del mismo contenedor.
-//    · "Ver detalles del pago": el desglose CONGELADO de la compra NO está en las lecturas actuales de la App
-//      (get_championship_public no expone importes; no hay RPC de orden/pago) → placeholder, sin inventar cifras.
-//    · "Cancelar reserva": SIN CONECTAR — no ejecuta RPC, no cambia estado, no libera canchas ni devuelve.
-function OwnerManageSheet({ onClose }) {
+//    · "Ver detalles del pago": desglose CONGELADO del checkout, leído de la order real
+//      (orders.financial_snapshot vía getChampionshipOrder). No recalcula importes. Visible SIEMPRE (owner).
+//    · "Cancelar reserva" (SOLO pending_publish): conceptos reales de get_championship_payment_detail →
+//      cancelar el campeonato COMPLETO o extras sueltos vía cancel_championship_contract (scope full/extras).
+//      Patrón UX de cancelación de Games (select → processing → done). Full → salir a Perfil; extras → quedarse.
+// Fila de "Detalles del pago": etiqueta + valor (mismo lenguaje visual que el resumen del checkout).
+function PayRow({ label, value, valueColor, last = false }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, padding: '10px 2px', borderBottom: last ? 'none' : `1px solid ${HAIR}` }}>
+      <span style={{ fontSize: 13.5, color: SUB }}>{label}</span>
+      <span style={{ fontSize: 14, fontWeight: 700, color: valueColor || TEXT, whiteSpace: 'nowrap' }}>{value}</span>
+    </div>
+  );
+}
+
+// Fila de concepto que puede estar DEVUELTO: tachada + badge "Devuelto"; su importe no cuenta al vigente.
+function PayDetailRow({ label, amount, refunded = false }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, padding: '10px 2px', borderBottom: `1px solid ${HAIR}` }}>
+      <span style={{ fontSize: 13.5, color: SUB, textDecoration: refunded ? 'line-through' : 'none' }}>{label}</span>
+      <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8, whiteSpace: 'nowrap' }}>
+        {refunded && <span style={{ fontSize: 11, fontWeight: 700, color: GREEN }}>Devuelto</span>}
+        <span style={{ fontSize: 14, fontWeight: 700, color: refunded ? SUB : TEXT, textDecoration: refunded ? 'line-through' : 'none' }}>{soles(amount)}</span>
+      </span>
+    </div>
+  );
+}
+
+function OwnerManageSheet({ onClose, championshipId, status, onExtrasCanceled, onFullCanceled }) {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState('menu');   // 'menu' | 'payment' | 'cancel'
+  const canCancel = status === 'pending_publish';   // cancelar SOLO antes de publicar (regla del backend)
+
+  // ── Detalles del pago: order REAL (desglose CONGELADO del checkout; no se recalcula nada) ──
+  const [order, setOrder] = useState(undefined);    // undefined=cargando · null=error · obj=ok
+  useEffect(() => {
+    let alive = true;
+    getChampionshipOrder({ championshipId }).then(({ data, error }) => { if (alive) setOrder(error ? null : data); });
+    return () => { alive = false; };
+  }, [championshipId]);
+  const fs      = order?.financial_snapshot || {};
+  const bruto   = order ? Number(order.amount_total) : null;
+  const credito = order ? Number(fs.credit_applied ?? 0) : 0;
+  const externo = order ? Number(fs.external_amount ?? (bruto - credito)) : null;
+  const extrasFs = Array.isArray(fs.extras) ? fs.extras : [];
+  const metodo = (() => {
+    if (!order) return '—';
+    const p = order.payment_provider;
+    if (p === 'credit') return 'Crédito';
+    if (p === 'gateway') return 'Pasarela';
+    const kind = order.claim_composition?.kind || '';
+    if (/transfer/.test(kind)) return 'Transferencia';
+    if (/gateway/.test(kind)) return 'Pasarela';
+    return '—';
+  })();
+  const estado = (() => {
+    const s = order?.status;
+    return s === 'pending' ? 'Pendiente' : s === 'validation' ? 'Validando pago' : s === 'confirmed' ? 'Pagado'
+      : s === 'failed' ? 'Rechazado' : s === 'expired' ? 'Expirado' : (s || '—');
+  })();
+
+  // ── Cancelación (conceptos reales con lo devuelto de cada uno). Mismo patrón UX que Games:
+  //    select → processing → done. "Campeonato completo" o extras sueltos (mutuamente excluyentes). ──
+  // FUENTE ÚNICA de reembolsos: get_championship_payment_detail (items con refunded/settled). Alimenta
+  // por igual: "Devuelto" en Detalles, deshabilitado en Cancelar y exclusión del Total a cancelar. Solo es
+  // válida para el owner en pending_publish (fuera de ahí no hay cancelaciones parciales posibles).
+  const [detail, setDetail] = useState(undefined);   // undefined=cargando/no-aplica · null=error · obj=ok
+  const [cstep, setCstep]   = useState('select');     // 'select' | 'processing' | 'done'
+  const [fullSel, setFullSel] = useState(false);
+  const [checked, setChecked] = useState(() => new Set());
+  const [cErr, setCErr]       = useState(null);
+  const [doneInfo, setDoneInfo] = useState({ amount: 0, full: false });
+  useEffect(() => {
+    if (!canCancel) return;   // solo pending_publish: fuera de ahí la RPC no aplica (y no hay refunds parciales)
+    let alive = true;
+    getChampionshipPaymentDetail({ championshipId }).then(({ data, error }) => { if (alive) setDetail(error ? null : data); });
+    return () => { alive = false; };
+  }, [championshipId, canCancel]);
+  const items   = Array.isArray(detail?.items) ? detail.items : [];
+  const courts  = items.filter(i => i.kind === 'court' || i.kind === 'courts');
+  const feeItem = items.find(i => i.kind === 'fee') || null;
+  const extras  = items.filter(i => i.kind === 'extra');
+  const isRefunded = (it) => !!it.refunded || !!it.settled_by || it.cancelable === false;
+  const refundedExtraCodes = new Set(extras.filter(isRefunded).map(e => e.code));
+  const refundedTotal  = Number(detail?.refunded_total ?? 0);
+  const remainingTotal = detail ? Number(detail.remaining_total ?? 0) : null;   // vigente (backend; no recalcula)
+  const cancelableCodes = extras.filter(e => !isRefunded(e)).map(e => e.code);
+  const extraName = (code) => (extrasFs.find(e => e.code === code)?.name) || (code === 'referee' ? 'Árbitro' : code);
+  const extraAmt  = (code) => Number(extras.find(e => e.code === code)?.amount ?? 0);
+  // "Campeonato completo" = marca TODOS los extras cancelables y cancela también canchas + fee.
+  const pickFull = () => { const next = !fullSel; setFullSel(next); setChecked(next ? new Set(cancelableCodes) : new Set()); };
+  const toggleExtra = (code) => {
+    setFullSel(false);   // cualquier extra individual desmarca "Campeonato completo"
+    setChecked(prev => { const n = new Set(prev); if (n.has(code)) n.delete(code); else n.add(code); return n; });
+  };
+  const canConfirm = fullSel || checked.size > 0;
+  // Total a cancelar: full → todo lo vigente (canchas+fee+extras no devueltos = remaining_total del backend);
+  // extras → suma de los extras marcados. Nunca incluye lo ya reembolsado.
+  const totalToCancel = fullSel ? (remainingTotal ?? 0) : [...checked].reduce((s, c) => s + extraAmt(c), 0);
+
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
-  const dismiss = () => { setOpen(false); setTimeout(onClose, 220); };
+  const dismiss = () => { if (cstep === 'processing') return; setOpen(false); setTimeout(onClose, 220); };
+  const goMenu = () => { setStep('menu'); setCstep('select'); setCErr(null); };
+
+  async function doCancel() {
+    if (cstep === 'processing' || !canConfirm) return;
+    const isFull = fullSel;
+    setCErr(null); setCstep('processing');
+    const { data, error } = await (isFull
+      ? cancelChampionshipContract({ championshipId, scope: 'full', reason: 'Cancelado por el organizador' })
+      : cancelChampionshipContract({ championshipId, scope: 'extras', codes: [...checked] }));
+    if (error) {
+      setCstep('select');
+      const m = error.message || '';
+      setCErr(/NOT_CANCELABLE|BLOCKED_FIXTURE/.test(m) ? 'Este campeonato ya no se puede cancelar.'
+        : /ALREADY_REFUNDED/.test(m) ? 'Ese extra ya fue devuelto.'
+        : 'No pudimos procesar la cancelación. Inténtalo de nuevo.');
+      return;
+    }
+    setDoneInfo({ amount: Number(data?.refunded_total) || 0, full: isFull });
+    setCstep('done');
+    setTimeout(() => { if (isFull) onFullCanceled?.(); else { onExtrasCanceled?.(); dismiss(); } }, 1600);
+  }
+
   const chevron = (c) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}><path d="M9 6l6 6-6 6" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>;
   const rowStyle = { display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '14px 4px', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' };
+  const showBack = step !== 'menu' && cstep === 'select';
   return (
     <div className="sheet-overlay" onClick={dismiss} style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', background: open ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0)', transition: 'background .22s ease' }}>
-      <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+      <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderTopLeftRadius: 22, borderTopRightRadius: 22, width: '100%', boxShadow: '0 -8px 32px rgba(0,0,0,0.12)', transform: open ? 'translateY(0)' : 'translateY(100%)', transition: 'transform .28s cubic-bezier(0.32,0.72,0,1)', maxHeight: '82vh', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '14px 16px 0', flexShrink: 0 }}>
           <div style={{ width: 42, height: 4, borderRadius: 2, background: '#D1D1D6', margin: '0 auto 14px' }} />
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 12, borderBottom: `1px solid ${HAIR}` }}>
-            {step !== 'menu' && (
-              <button onClick={() => setStep('menu')} aria-label="Atrás" style={{ width: 24, height: 22, marginLeft: -4, display: 'flex', alignItems: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, outline: 'none' }}>
+            {showBack && (
+              <button onClick={goMenu} aria-label="Atrás" style={{ width: 24, height: 22, marginLeft: -4, display: 'flex', alignItems: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, outline: 'none' }}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke={TEXT} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
               </button>
             )}
@@ -2094,40 +2220,167 @@ function OwnerManageSheet({ onClose }) {
             </span>
           </div>
         </div>
-        <div className="no-sb" style={{ overflowY: 'auto', padding: '4px 16px calc(16px + env(safe-area-inset-bottom))' }}>
+        <div className="no-sb" style={{ overflowY: 'auto', overscrollBehavior: 'contain', padding: '4px 16px calc(16px + env(safe-area-inset-bottom))' }}>
           {step === 'menu' && (
             <>
-              <button onClick={() => setStep('payment')} className="pressable" style={{ ...rowStyle, borderBottom: `1px solid ${HAIR}` }}>
+              <button onClick={() => setStep('payment')} className="pressable" style={{ ...rowStyle, borderBottom: canCancel ? `1px solid ${HAIR}` : 'none' }}>
                 <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: TEXT }}>Ver detalles del pago</span>
                 {chevron('#C7C7CC')}
               </button>
-              <button onClick={() => setStep('cancel')} className="pressable" style={rowStyle}>
-                <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: RED }}>Cancelar reserva</span>
-                {chevron(RED + '80')}
-              </button>
+              {/* Cancelar reserva: SOLO en pending_publish (pago confirmado y aún sin publicar). */}
+              {canCancel && (
+                <button onClick={() => setStep('cancel')} className="pressable" style={rowStyle}>
+                  <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: RED }}>Cancelar reserva</span>
+                  {chevron(RED + '80')}
+                </button>
+              )}
             </>
           )}
+
+          {/* ── Detalles del pago: MISMO desglose conceptual/visual del checkout (datos congelados) ── */}
           {step === 'payment' && (
-            <div style={{ padding: '14px 0 6px' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '13px 14px', borderRadius: 12, background: '#F6F7F9', border: `1px solid ${HAIR}` }}>
-                <svg width="17" height="17" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={SUB} strokeWidth="1.4"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={SUB} strokeWidth="1.5" strokeLinecap="round"/></svg>
-                <span style={{ fontSize: 12.5, color: SUB, fontWeight: 500, lineHeight: 1.5 }}>
-                  <span style={{ display: 'block', fontSize: 13.5, fontWeight: 800, color: TEXT, marginBottom: 3 }}>Desglose aún no disponible</span>
-                  El detalle congelado de la compra (canchas, árbitro, extras, organización y total) todavía no se expone en la app. Se conectará cuando el backend lo incluya en la lectura del campeonato.
-                </span>
-              </div>
+            <div style={{ padding: '6px 0 6px' }}>
+              {order === undefined ? (
+                <div style={{ fontSize: 13, color: SUB, padding: '18px 2px', textAlign: 'center' }}>Cargando detalles…</div>
+              ) : order === null ? (
+                <div style={{ fontSize: 13, color: SUB, padding: '18px 2px', textAlign: 'center' }}>No pudimos cargar los detalles del pago.</div>
+              ) : (
+                <>
+                  {/* Contrato ORIGINAL (financial_snapshot). Los extras ya devueltos no desaparecen: se tachan
+                      y se marcan "Devuelto" (fuente: get_championship_payment_detail), y salen del total vigente. */}
+                  <PayRow label={`Alquiler Canchas${fs.rental_count ? ` · ${fs.rental_count} ${fs.rental_count === 1 ? 'cancha' : 'canchas'}` : ''}${fs.service_court_hours != null ? ` · ${fs.service_court_hours} ${fs.service_court_hours === 1 ? 'hora' : 'horas'}` : ''}`} value={soles(fs.court_amount ?? 0)} />
+                  {Number(fs.referee_amount) > 0 && (
+                    <PayDetailRow label={`Árbitro${fs.service_court_hours != null ? ` × ${fs.service_court_hours} ${fs.service_court_hours === 1 ? 'hora' : 'horas'}` : ''}`} amount={fs.referee_amount} refunded={refundedExtraCodes.has('referee')} />
+                  )}
+                  <PayRow label="Organización AlGrass" value={soles(fs.algrass_fee_amount ?? 0)} />
+                  {extrasFs.map(x => (
+                    <PayDetailRow key={x.code} label={`${x.name || x.code}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`} amount={x.amount} refunded={refundedExtraCodes.has(x.code)} />
+                  ))}
+                  <PayRow label="Total contratado" value={soles(bruto)} valueColor={TEXT} />
+                  {credito > 0 && <PayRow label="Crédito aplicado" value={`− ${soles(credito)}`} valueColor={GREEN} />}
+                  <PayRow label="Importe externo" value={soles(externo)} />
+                  {refundedTotal > 0 && (
+                    <>
+                      <PayRow label="Devuelto" value={`− ${soles(refundedTotal)}`} valueColor={GREEN} />
+                      <PayRow label="Total vigente" value={soles(remainingTotal ?? (bruto - refundedTotal))} valueColor={TEXT} />
+                    </>
+                  )}
+                  <PayRow label="Método de pago" value={metodo} />
+                  <PayRow label="Estado del pago" value={estado} last />
+                </>
+              )}
             </div>
           )}
-          {step === 'cancel' && (
-            <div style={{ padding: '14px 0 6px' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '13px 14px', borderRadius: 12, background: '#FDF1F1', border: `1px solid ${RED}33` }}>
-                <svg width="17" height="17" viewBox="0 0 15 15" fill="none" style={{ flexShrink: 0, marginTop: 1 }}><circle cx="7.5" cy="7.5" r="6.5" stroke={RED} strokeWidth="1.5"/><path d="M7.5 5v4M7.5 10.5v.5" stroke={RED} strokeWidth="1.6" strokeLinecap="round"/></svg>
-                <span style={{ fontSize: 12.5, color: SUB, fontWeight: 500, lineHeight: 1.5 }}>
-                  <span style={{ display: 'block', fontSize: 13.5, fontWeight: 800, color: RED, marginBottom: 3 }}>Acción no disponible todavía</span>
-                  La cancelación de la reserva del campeonato aún no está implementada. Por ahora esta opción no ejecuta ninguna acción.
-                </span>
+
+          {/* ── Cancelar: Campeonato completo (todo) · Canchas (informativas) · Extras (seleccionables) ── */}
+          {step === 'cancel' && cstep === 'select' && (
+            <div style={{ padding: '10px 0 6px' }}>
+              {detail === undefined ? (
+                <div style={{ fontSize: 13, color: SUB, padding: '18px 2px', textAlign: 'center' }}>Cargando…</div>
+              ) : detail === null ? (
+                <div style={{ fontSize: 13, color: SUB, padding: '18px 2px', textAlign: 'center' }}>No pudimos cargar los conceptos.</div>
+              ) : (
+                <>
+                  {/* Campeonato completo = master: marca TODOS los extras cancelables y cancela también
+                      canchas + Organización AlGrass. Al marcar un extra suelto, "Campeonato completo" se desmarca. */}
+                  <button onClick={pickFull} className="pressable" style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '12px 12px', borderRadius: 12, border: `1.5px solid ${fullSel ? RED : HAIR}`, background: fullSel ? '#FDF1F1' : '#fff', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                    <span style={{ width: 22, height: 22, borderRadius: 6, flexShrink: 0, border: `1.8px solid ${fullSel ? RED : '#C7C7CC'}`, background: fullSel ? RED : '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {fullSel && <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M2.5 7.2l3 3L11.5 4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                    </span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: 'block', fontSize: 15, fontWeight: 800, color: TEXT }}>Campeonato completo</span>
+                      <span style={{ display: 'block', fontSize: 12.5, color: SUB, marginTop: 1 }}>Cancela canchas, Organización AlGrass y todos los extras. Devolución del 100% en crédito.</span>
+                    </span>
+                  </button>
+
+                  {/* Canchas — informativas, SIN checkbox (no se cancelan individualmente desde el App) */}
+                  {courts.length > 0 && (
+                    <>
+                      <div style={{ fontSize: 11.5, fontWeight: 700, color: SUB, letterSpacing: 0.3, textTransform: 'uppercase', margin: '16px 2px 6px' }}>Canchas</div>
+                      {courts.map((c, i) => (
+                        <div key={c.game_id || `court${i}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, padding: '8px 2px', borderTop: i === 0 ? 'none' : `1px solid ${HAIR}` }}>
+                          <span style={{ fontSize: 13.5, color: fullSel ? TEXT : SUB }}>Cancha {courts.length > 1 ? i + 1 : ''}</span>
+                          <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8, whiteSpace: 'nowrap' }}>
+                            {fullSel && <span style={{ fontSize: 11, fontWeight: 700, color: RED }}>Se cancela</span>}
+                            <span style={{ fontSize: 13.5, fontWeight: 700, color: TEXT }}>{soles(c.amount)}</span>
+                          </span>
+                        </div>
+                      ))}
+                      <div style={{ fontSize: 11.5, color: SUB, marginTop: 4 }}>Las canchas no se cancelan por separado.</div>
+                    </>
+                  )}
+
+                  {/* Organización AlGrass (fee) — fila separada, informativa, SIN checkbox */}
+                  {(feeItem || fs.algrass_fee_amount != null) && (
+                    <>
+                      <div style={{ fontSize: 11.5, fontWeight: 700, color: SUB, letterSpacing: 0.3, textTransform: 'uppercase', margin: '16px 2px 6px' }}>Organización</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, padding: '8px 2px' }}>
+                        <span style={{ fontSize: 13.5, color: fullSel ? TEXT : SUB }}>Organización AlGrass</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8, whiteSpace: 'nowrap' }}>
+                          {fullSel && <span style={{ fontSize: 11, fontWeight: 700, color: RED }}>Se cancela</span>}
+                          <span style={{ fontSize: 13.5, fontWeight: 700, color: TEXT }}>{soles(Number(feeItem?.amount ?? fs.algrass_fee_amount ?? 0))}</span>
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 11.5, color: SUB, marginTop: 4 }}>El fee no se cancela por separado.</div>
+                    </>
+                  )}
+
+                  {/* Extras — SÍ seleccionables individualmente (los ya devueltos quedan deshabilitados) */}
+                  {extras.length > 0 && (
+                    <>
+                      <div style={{ fontSize: 11.5, fontWeight: 700, color: SUB, letterSpacing: 0.3, textTransform: 'uppercase', margin: '16px 2px 6px' }}>Extras</div>
+                      {extras.map((e, i) => {
+                        const refunded = isRefunded(e);
+                        const on = checked.has(e.code);
+                        return (
+                          <button key={e.code || `extra${i}`} onClick={refunded ? undefined : () => toggleExtra(e.code)} disabled={refunded}
+                            className={refunded ? undefined : 'pressable'}
+                            style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 2px', borderTop: i === 0 ? 'none' : `1px solid ${HAIR}`, background: 'transparent', border: 'none', cursor: refunded ? 'default' : 'pointer', fontFamily: 'inherit', textAlign: 'left', opacity: refunded ? 0.55 : 1, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                            <span style={{ width: 22, height: 22, borderRadius: 6, flexShrink: 0, border: `1.6px solid ${on ? RED : '#C7C7CC'}`, background: on ? RED : '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                              {on && <svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M2.5 7.2l3 3L11.5 4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                            </span>
+                            <span style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: TEXT, textDecoration: refunded ? 'line-through' : 'none' }}>{extraName(e.code)}</span>
+                            {refunded && <span style={{ fontSize: 11.5, fontWeight: 700, color: GREEN }}>Devuelto</span>}
+                            <span style={{ fontSize: 13.5, fontWeight: 700, color: refunded ? SUB : TEXT, textDecoration: refunded ? 'line-through' : 'none', whiteSpace: 'nowrap' }}>{soles(e.amount)}</span>
+                          </button>
+                        );
+                      })}
+                    </>
+                  )}
+
+                  {cErr && <div style={{ fontSize: 12.5, color: RED, marginTop: 12 }}>{cErr}</div>}
+                  {/* Total a cancelar — MISMO patrón que la cancelación de Match con invitados (fila sobre el CTA). */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 16, paddingTop: 12, borderTop: `1px solid ${HAIR}` }}>
+                    <span style={{ fontSize: 14, color: SUB }}>Total a cancelar</span>
+                    <span style={{ fontSize: 15, fontWeight: 800, color: TEXT, whiteSpace: 'nowrap' }}>{soles(totalToCancel)}</span>
+                  </div>
+                  <button onClick={doCancel} disabled={!canConfirm} className={canConfirm ? 'pressable' : undefined}
+                    style={{ marginTop: 12, width: '100%', height: 50, borderRadius: 14, background: canConfirm ? RED : '#E8E8EC', color: canConfirm ? '#fff' : '#9A9AA0', border: 'none', cursor: canConfirm ? 'pointer' : 'not-allowed', fontSize: 15, fontWeight: 800, fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                    {fullSel ? 'Cancelar campeonato completo' : checked.size > 0 ? `Cancelar ${checked.size} extra${checked.size === 1 ? '' : 's'}` : 'Selecciona qué cancelar'}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+          {step === 'cancel' && cstep === 'processing' && (
+            <div style={{ padding: '48px 24px calc(48px + env(safe-area-inset-bottom))', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+              <div style={{ width: 48, height: 48, borderRadius: '50%', border: `4px solid ${SOFT}`, borderTop: `4px solid ${BLUE}`, animation: 'spin 0.9s linear infinite' }} />
+              <div style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Procesando...</div>
+            </div>
+          )}
+          {step === 'cancel' && cstep === 'done' && (
+            <div style={{ padding: '40px 24px calc(40px + env(safe-area-inset-bottom))', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#D7F0DD', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke={GREEN} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>
               </div>
-              <button disabled style={{ marginTop: 14, width: '100%', height: 50, borderRadius: 14, background: '#E8E8EC', color: '#9A9AA0', border: 'none', cursor: 'not-allowed', fontSize: 15, fontWeight: 700, fontFamily: 'inherit' }}>Cancelar reserva (no disponible)</button>
+              <div style={{ fontSize: 17, fontWeight: 700, color: TEXT }}>{doneInfo.full ? 'Campeonato cancelado' : 'Extras cancelados'}</div>
+              {doneInfo.amount > 0 ? (
+                <div style={{ fontSize: 14, color: SUB, textAlign: 'center', lineHeight: 1.45 }}>
+                  Se generó un crédito de <strong style={{ color: GREEN }}>{soles(doneInfo.amount)}</strong> en tu perfil.
+                </div>
+              ) : (
+                <div style={{ fontSize: 14, color: SUB, textAlign: 'center', lineHeight: 1.45 }}>Cancelación procesada.</div>
+              )}
             </div>
           )}
         </div>
