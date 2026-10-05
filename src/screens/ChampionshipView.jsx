@@ -1971,7 +1971,7 @@ export default function ChampionshipView() {
       {/* Perfil público del jugador — MISMO PlayerModal que el roster de Match (privacidad/avatar iguales). */}
       {selectedPlayer && <PlayerModal player={selectedPlayer} onClose={() => setSelectedPlayer(null)} />}
       {/* "Gestionar mi reserva" (owner) — patrón Match: menú → Ver detalles del pago / Cancelar reserva. */}
-      {manageOpen && <OwnerManageSheet onClose={() => setManageOpen(false)} championshipId={realId} status={realRow?.status} onExtrasCanceled={refreshReal} onFullCanceled={() => navigate('/profile')} />}
+      {manageOpen && <OwnerManageSheet onClose={() => setManageOpen(false)} championshipId={realId} status={realRow?.status} onExtrasCanceled={refreshReal} onFullCanceled={(amount) => navigate('/profile', { replace: true, state: { champConfirm: 'canceled', champCanceledAmount: amount } })} />}
       {/* Selector de equipo para un slot VACÍO de la llave (host/AlGrass en in_progress). Excluye el equipo del
           otro lado del mismo partido. Guardar → set_championship_match_team → refresca la llave. */}
       <TeamPickerSheet
@@ -2198,9 +2198,13 @@ function OwnerManageSheet({ onClose, championshipId, status, onExtrasCanceled, o
         : 'No pudimos procesar la cancelación. Inténtalo de nuevo.');
       return;
     }
-    setDoneInfo({ amount: Number(data?.refunded_total) || 0, full: isFull });
+    const amount = Number(data?.refunded_total) || 0;
+    // FULL → navega a Perfil YA; el overlay de éxito se muestra SOBRE Perfil (mismo mecanismo que el checkout
+    // de campeonato), sin pasar por el done del sheet → nunca se ve el Championship cancelado de fondo.
+    if (isFull) { onFullCanceled?.(amount); return; }
+    // EXTRAS → éxito DENTRO del mismo sheet, con botón final (sin auto-cierre); al pulsarlo refresca y se queda.
+    setDoneInfo({ amount, full: false });
     setCstep('done');
-    setTimeout(() => { if (isFull) onFullCanceled?.(); else { onExtrasCanceled?.(); dismiss(); } }, 1600);
   }
 
   const chevron = (c) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}><path d="M9 6l6 6-6 6" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>;
@@ -2250,11 +2254,12 @@ function OwnerManageSheet({ onClose, championshipId, status, onExtrasCanceled, o
                 <>
                   {/* Contrato ORIGINAL (financial_snapshot). Los extras ya devueltos no desaparecen: se tachan
                       y se marcan "Devuelto" (fuente: get_championship_payment_detail), y salen del total vigente. */}
+                  {/* Orden: 1) Canchas · 2) Organización AlGrass · 3) árbitro / resto de extras. */}
                   <PayRow label={`Alquiler Canchas${fs.rental_count ? ` · ${fs.rental_count} ${fs.rental_count === 1 ? 'cancha' : 'canchas'}` : ''}${fs.service_court_hours != null ? ` · ${fs.service_court_hours} ${fs.service_court_hours === 1 ? 'hora' : 'horas'}` : ''}`} value={soles(fs.court_amount ?? 0)} />
+                  <PayRow label="Organización AlGrass" value={soles(fs.algrass_fee_amount ?? 0)} />
                   {Number(fs.referee_amount) > 0 && (
                     <PayDetailRow label={`Árbitro${fs.service_court_hours != null ? ` × ${fs.service_court_hours} ${fs.service_court_hours === 1 ? 'hora' : 'horas'}` : ''}`} amount={fs.referee_amount} refunded={refundedExtraCodes.has('referee')} />
                   )}
-                  <PayRow label="Organización AlGrass" value={soles(fs.algrass_fee_amount ?? 0)} />
                   {extrasFs.map(x => (
                     <PayDetailRow key={x.code} label={`${x.name || x.code}${x.quantity > 1 ? ` ×${x.quantity}` : ''}`} amount={x.amount} refunded={refundedExtraCodes.has(x.code)} />
                   ))}
@@ -2375,7 +2380,7 @@ function OwnerManageSheet({ onClose, championshipId, status, onExtrasCanceled, o
               <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#D7F0DD', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke={GREEN} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>
               </div>
-              <div style={{ fontSize: 17, fontWeight: 700, color: TEXT }}>{doneInfo.full ? 'Campeonato cancelado' : 'Extras cancelados'}</div>
+              <div style={{ fontSize: 17, fontWeight: 700, color: TEXT }}>Extras cancelados</div>
               {doneInfo.amount > 0 ? (
                 <div style={{ fontSize: 14, color: SUB, textAlign: 'center', lineHeight: 1.45 }}>
                   Se generó un crédito de <strong style={{ color: GREEN }}>{soles(doneInfo.amount)}</strong> en tu perfil.
@@ -2383,6 +2388,10 @@ function OwnerManageSheet({ onClose, championshipId, status, onExtrasCanceled, o
               ) : (
                 <div style={{ fontSize: 14, color: SUB, textAlign: 'center', lineHeight: 1.45 }}>Cancelación procesada.</div>
               )}
+              {/* Botón final (igual que Games): sin auto-cierre. Al pulsar → refresca y se queda en ChampionshipView. */}
+              <button onClick={() => { onExtrasCanceled?.(); dismiss(); }} className="pressable" style={{ marginTop: 8, width: '100%', height: 50, borderRadius: 14, background: BLUE, color: '#fff', border: 'none', cursor: 'pointer', fontSize: 15, fontWeight: 700, fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                Aceptar
+              </button>
             </div>
           )}
         </div>

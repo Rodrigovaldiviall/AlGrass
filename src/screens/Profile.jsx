@@ -8,6 +8,7 @@ import { faHeadset, faCoins, faTowerBroadcast, faStar } from '@fortawesome/free-
 import { SupportMenu } from '../components/SupportMenu';
 import RewardsSheet from '../components/RewardsSheet';
 import ChampConfirmOverlay from '../components/ChampConfirmOverlay';
+import { soles } from '../data/championshipCheckoutMock';
 import TabBar from '../components/TabBar';
 import I from '../icons';
 import { readNotifBadgeLabel, badgeLabel } from '../utils/notifBadge';
@@ -2310,6 +2311,7 @@ export default function Profile() {
   // Confirmación de Campeonatos (pago 'created' / solicitud 'request') mostrada SOBRE Profile.
   // El tipo llega por location.state (transitorio); no se persiste en cv.championship/contactRequest.
   const [champConfirm, setChampConfirm] = useState(location.state?.champConfirm ?? null);
+  const [champCanceledAmount] = useState(location.state?.champCanceledAmount ?? 0);
   useEffect(() => {
     const cc = location.state?.champConfirm;
     if (!cc) return;
@@ -3684,6 +3686,17 @@ export default function Profile() {
           title="Solicitud enviada"
           lines={['Nos pondremos en contacto contigo para organizar tu campeonato.']}
           onContinue={() => { setChampConfirm(null); setHighlightedId('__champreq'); }}
+        />
+      )}
+      {/* Cancelación TOTAL de campeonato: overlay de éxito SOBRE Perfil (mismo mecanismo que la creación).
+          Perfil ya está debajo; el botón del overlay lo cierra y queda Perfil limpio. */}
+      {champConfirm === 'canceled' && (
+        <ChampConfirmOverlay
+          title="Campeonato cancelado"
+          lines={champCanceledAmount > 0
+            ? [<>Se generó un crédito de <strong style={{ color: GREEN }}>{soles(champCanceledAmount)}</strong> en tu perfil.</>]
+            : ['La reserva del campeonato fue cancelada.']}
+          onContinue={() => setChampConfirm(null)}
         />
       )}
       {!confirmedGame && slotExpiry && (
