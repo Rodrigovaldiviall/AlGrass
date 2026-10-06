@@ -10,6 +10,8 @@ import { getActiveCity, setActiveCity, fetchCities } from '../utils/profileData'
 import { useAuth } from '../context/AuthContext';
 import { formatDateLabel } from '../utils/format';
 import { coverColor } from '../data/championshipCover';
+import { getChampionshipCoverUrl } from '../utils/championshipCoverImage';
+import { supabase } from '../lib/supabase';
 
 const SCROLL_KEY = 'ch_list_scroll'; // mismo patrón que Partidos/Canchas (sessionStorage; solo UI)
 
@@ -58,9 +60,19 @@ function ChampionshipCard({ c, onPress, highlighted = false, innerRef = null }) 
         // El estado NO altera el color/tema visual de la card (solo pill/candado/superficie). Sin opacidad por estado.
         WebkitTapHighlightColor: 'transparent',
       }}>
-      {/* Portada */}
-      <div style={{ position: 'relative', height: 96, background: coverColor(c.coverTheme) }}>
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, rgba(0,0,0,0) 40%, rgba(0,0,0,0.55) 100%)' }} />
+      {/* Portada. Regla: PÚBLICO + foto de portada → imagen de fondo (cover/center); resto → holder por color
+          (fallback intacto). El color sigue como fondo base (se ve si la imagen no cargara). */}
+      <div style={{ position: 'relative', height: 96, background: coverColor(c.coverTheme), overflow: 'hidden' }}>
+        {c.visibility === 'public' && c.coverImagePath && (
+          // <img> absoluta: ancho = 100% del holder (todo el ancho de la foto visible, sin recorte izq/der), alto
+          // auto y centrado vertical → el único recorte es arriba/abajo (holder con overflow:hidden). Sin cover,
+          // sin scale, sin object-fit. El coverColor del holder queda de fallback debajo.
+          <img src={getChampionshipCoverUrl(supabase, c.coverImagePath, { width: 1200, quality: 82 })} alt=""
+            style={{ position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', width: '100%', height: 'auto', maxWidth: 'none', display: 'block', pointerEvents: 'none' }} />
+        )}
+        {/* Overlay para legibilidad. Con foto se suaviza (empieza más abajo + menos opacidad) para conservar luz/color;
+            sin foto (holder por color) se mantiene el degradado original. Pill y nombre siguen legibles. */}
+        <div style={{ position: 'absolute', inset: 0, background: (c.visibility === 'public' && c.coverImagePath) ? 'linear-gradient(to bottom, rgba(0,0,0,0) 52%, rgba(0,0,0,0.42) 100%)' : 'linear-gradient(to bottom, rgba(0,0,0,0) 40%, rgba(0,0,0,0.55) 100%)' }} />
         {/* Pill de estado + (activos) subtítulo inmediatamente debajo */}
         <div style={{ position: 'absolute', top: 10, left: 10, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
           <div style={{
@@ -252,6 +264,7 @@ export default function Championships() {
       resultsPublic: row.results_public !== false,
       daysAgo: null,
       coverTheme: row.cover_theme || '#E24A4A',   // mismo default que la vista/Profile (COVER_THEMES[0]) — evita azul incoherente
+      coverImagePath: row.cover_image_path ?? null,   // foto de portada (solo pública); null = holder por color (fallback)
       dateLabel,
       venueName: sum.venueName || row.venue_name || '',
     };
