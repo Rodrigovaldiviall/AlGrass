@@ -165,31 +165,41 @@ export default function ChampionshipTeam() {
   // viewport y un overlay fixed de altura 100dvh deja ver el fondo azul (#root). Anclamos el overlay a
   // visualViewport (top+height) para que el borde superior quede fijo y el sheet se adapte SOBRE el teclado; el
   // fondo no se mueve. rAddVV = { h, top } del visual viewport (null = sin dato / cerrado).
+  // rAddVV = geometría del TECLADO para el SHEET (solo esa capa lo usa). { h: alto visible, bottom: solape del
+  // teclado } (null = sin dato / cerrado). El backdrop y el fondo NO leen esto.
   const [rAddVV, setRAddVV] = useState(null);
+  const rShellRef = useRef(null);      // .screen-shell raíz: se congela a px mientras el sheet está abierto
   const rScrollerRef = useRef(null);   // scroller REAL de ChampionshipTeam (div absolute inset:0 overflowY:auto)
-  const rAddOverlayRef = useRef(null); // overlay fixed del sheet (recibe touch/wheel)
   const rAddListRef = useRef(null);    // única zona scrolleable del sheet (lista de resultados)
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!rAddOpen) { setRAddVV(null); return; }
-    // (1) FREEZE del scroller real. body NO es el scroller (html/#root overflow:hidden, 100dvh); el que mueve
-    //     scrollTop es el div absolute inset:0 overflowY:auto. Lo congelamos (overflow:hidden) guardando y
-    //     restaurando su scrollTop → fondo en el mismo pixel, cero salto al abrir/cerrar.
+    // (1) CONGELAR VISUALMENTE EL FONDO. #root y .screen-shell usan 100dvh → al abrir/cerrar teclado el navegador
+    //     recalcula dvh y el fondo se "acomoda". Fijamos .screen-shell a su alto en px AL ABRIR (freeze temporal,
+    //     no permanente) para que dvh no se recalcule; y congelamos el scroller real (overflow:hidden + scrollTop)
+    //     para que no se desplace. El fondo NO escucha visualViewport.
+    const shell = rShellRef.current;
+    const prevShellH = shell ? shell.style.height : '';
+    if (shell) shell.style.height = shell.offsetHeight + 'px';
     const sc = rScrollerRef.current;
     const prevScTop = sc ? sc.scrollTop : 0;
     const prevScOv = sc ? sc.style.overflow : '';
     if (sc) { sc.style.overflow = 'hidden'; sc.scrollTop = prevScTop; }
     const prevBodyOv = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';   // refuerzo; patrón ya usado por PaymentSheet/Fields/PickupGames
-    // (2) Anclaje al VISUAL VIEWPORT: con el teclado el navegador reduce el viewport visible; anclamos el overlay
-    //     a (offsetTop, height) para que su borde superior quede fijo y el sheet se adapte SOBRE el teclado.
+    document.body.style.overflow = 'hidden';
+    // (2) SOLO el SHEET se adapta al teclado: anclado por BOTTOM (sin salto de top). bottom = solape del teclado =
+    //     innerHeight(layout, estable) − (offsetTop + height)(visible). El backdrop (fixed inset:0) NO usa esto.
     const vv = typeof window !== 'undefined' ? window.visualViewport : null;
-    const apply = () => { if (vv) setRAddVV({ h: vv.height, top: vv.offsetTop }); };
+    const apply = () => {
+      if (!vv) return;
+      const bottom = Math.max(0, Math.round(window.innerHeight - (vv.offsetTop + vv.height)));
+      setRAddVV({ h: vv.height, bottom });
+    };
     apply();
     vv?.addEventListener('resize', apply);
     vv?.addEventListener('scroll', apply);
-    // (3) Impedir que el gesto llegue al fondo: FUERA de la lista → preventDefault; DENTRO, solo en los bordes
-    //     (anti scroll-chaining). Non-passive para poder cancelar el pan del documento con el teclado abierto.
+    // (3) Impedir que el gesto llegue al fondo (document-level non-passive): FUERA de la lista → preventDefault;
+    //     DENTRO, solo en los bordes (anti scroll-chaining). No afecta clicks ni escritura (solo touchmove/wheel).
     let startY = 0;
     const onStart = (e) => { startY = e.touches && e.touches[0] ? e.touches[0].clientY : 0; };
     const onMove = (e) => {
@@ -207,18 +217,18 @@ export default function ChampionshipTeam() {
       const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 1;
       if ((atTop && e.deltaY < 0) || (atBottom && e.deltaY > 0)) e.preventDefault();
     };
-    const ov = rAddOverlayRef.current;
-    ov?.addEventListener('touchstart', onStart, { passive: true });
-    ov?.addEventListener('touchmove', onMove, { passive: false });
-    ov?.addEventListener('wheel', onWheel, { passive: false });
+    document.addEventListener('touchstart', onStart, { passive: true });
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('wheel', onWheel, { passive: false });
     return () => {
+      if (shell) shell.style.height = prevShellH;
       document.body.style.overflow = prevBodyOv;
       if (sc) { sc.style.overflow = prevScOv; sc.scrollTop = prevScTop; }
       vv?.removeEventListener('resize', apply);
       vv?.removeEventListener('scroll', apply);
-      ov?.removeEventListener('touchstart', onStart);
-      ov?.removeEventListener('touchmove', onMove);
-      ov?.removeEventListener('wheel', onWheel);
+      document.removeEventListener('touchstart', onStart);
+      document.removeEventListener('touchmove', onMove);
+      document.removeEventListener('wheel', onWheel);
     };
   }, [rAddOpen]);
   // "Cambiar equipo" del slot de la llave (Fase 31): selector reutilizado (TeamPickerSheet).
@@ -627,7 +637,7 @@ export default function ChampionshipTeam() {
     }
 
     return (
-      <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: SOFT, overflow: 'hidden' }}>
+      <div ref={rShellRef} className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: SOFT, overflow: 'hidden' }}>
         <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 8, paddingRight: 16, flexShrink: 0 }}>
           <div style={{ height: 26, display: 'flex', alignItems: 'center', position: 'relative' }}>
             <button onClick={rBack} aria-label="Atrás" style={{ position: 'absolute', left: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0 }}>
@@ -851,9 +861,14 @@ export default function ChampionshipTeam() {
         {/* Sheet "Agregar jugadores": buscar → MULTISELECCIÓN (los seleccionados persisten entre búsquedas) → CTA
             final. Inscritos/organizador aparecen deshabilitados (PlayerRow disabled) + toast; no se seleccionan.
             Lista con scroll interno (overscroll contain → no arrastra el fondo). Backend valida rol/fase/duplicado. */}
-        {rAddOpen && (
-          <div ref={rAddOverlayRef} className="sheet-overlay" onClick={rCloseAdd} style={{ position: 'fixed', left: 0, right: 0, top: rAddVV ? rAddVV.top : 0, height: rAddVV ? rAddVV.h : '100dvh', zIndex: 250, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', background: 'rgba(0,0,0,0.35)', padding: '0 12px 12px', boxSizing: 'border-box' }}>
-            <div className="sheet-panel no-sb" onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, maxHeight: rAddVV ? Math.max(220, rAddVV.h - 24) : '86vh', display: 'flex', flexDirection: 'column', minHeight: 0, background: '#fff', borderRadius: 20, padding: 18, boxShadow: '0 -8px 32px rgba(0,0,0,0.12)' }}>
+        {rAddOpen && (<>
+          {/* CAPA 2 — BACKDROP: fijo al LAYOUT viewport (inset:0), NO atado a visualViewport → nunca se mueve ni
+              deja franja azul al abrir/cerrar teclado. */}
+          <div className="sheet-overlay" onClick={rCloseAdd} style={{ position: 'fixed', inset: 0, zIndex: 250, background: 'rgba(0,0,0,0.35)' }} />
+          {/* CAPA 3 — SHEET WRAPPER: ÚNICA capa atada al teclado. Anclada por BOTTOM (= solape del teclado) para que
+              baje/expanda sin salto de top y sin mover el backdrop. */}
+          <div onClick={rCloseAdd} style={{ position: 'fixed', left: 0, right: 0, bottom: rAddVV ? rAddVV.bottom : 0, zIndex: 251, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '0 12px 12px', boxSizing: 'border-box', pointerEvents: 'none' }}>
+            <div className="sheet-panel no-sb" onClick={e => e.stopPropagation()} style={{ pointerEvents: 'auto', width: '100%', maxWidth: 460, maxHeight: rAddVV ? Math.max(220, rAddVV.h - 24) : '86vh', display: 'flex', flexDirection: 'column', minHeight: 0, background: '#fff', borderRadius: 20, padding: 18, boxShadow: '0 -8px 32px rgba(0,0,0,0.12)' }}>
               <div style={{ fontSize: 17, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>Agregar jugadores</div>
               <div style={{ fontSize: 13, color: SUB, lineHeight: 1.45, marginTop: 4 }}>Busca por nombre o @usuario y selecciona varios para sumarlos a {rt?.name || 'este equipo'}.</div>
               <input value={rAddQuery} onChange={e => setRAddQuery(e.target.value)} placeholder="Buscar jugador…" autoFocus
@@ -895,7 +910,7 @@ export default function ChampionshipTeam() {
               )}
             </div>
           </div>
-        )}
+        </>)}
 
         {/* Selector para "Cambiar equipo" del slot de la llave. Excluye el equipo del OTRO lado del match. */}
         <TeamPickerSheet
