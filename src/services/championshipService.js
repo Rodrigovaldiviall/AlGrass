@@ -324,3 +324,78 @@ export function getChampionshipPaymentDetail({ championshipId }) {
   return supabase.rpc('get_championship_payment_detail', { p_championship_id: championshipId });
 }
 
+// ── Campeonato PÚBLICO · inscripción INDIVIDUAL pagada (sin equipo) ──
+// get_championship_public_pricing: lectura pública { is_public, public_individual_price, public_team_price }.
+export function getChampionshipPublicPricing({ championshipId }) {
+  return supabase.rpc('get_championship_public_pricing', { p_championship_id: championshipId });
+}
+// create_championship_registration_order: crea la order pending (unit × N personas); debita crédito.
+// userIds = [comprador + invitados] (usuarios reales). config.credit_applied / payment_method opcional.
+export function createChampionshipRegistrationOrder({ championshipId, idempotencyKey, userIds, config = {} }) {
+  return supabase.rpc('create_championship_registration_order', {
+    p_championship_id: championshipId, p_idempotency_key: idempotencyKey, p_user_ids: userIds, p_config: config,
+  });
+}
+// confirm_championship_registration: materializa championship_players (team_id null) para cada persona.
+export function confirmChampionshipRegistration({ championshipId, idempotencyKey }) {
+  return supabase.rpc('confirm_championship_registration', {
+    p_championship_id: championshipId, p_idempotency_key: idempotencyKey,
+  });
+}
+// fail_championship_registration: mata la order pending (el crédito se restituye por trigger).
+export function failChampionshipRegistration({ championshipId, idempotencyKey, reason = null }) {
+  return supabase.rpc('fail_championship_registration', {
+    p_championship_id: championshipId, p_idempotency_key: idempotencyKey, p_reason: reason,
+  });
+}
+
+// ── Inscripción PAGADA por EQUIPO (crear equipo público) ──────────────────────
+// create: crea la order pending (una unidad = public_team_price); congela nombre/color/diseño +
+// HASH de la clave; debita crédito. NO crea el equipo (eso lo hace confirm, atómicamente).
+// config: { team_name, team_color, team_design, team_secret, reward_applied, credit_applied }.
+export function createChampionshipTeamRegistrationOrder({ championshipId, idempotencyKey, config = {} }) {
+  return supabase.rpc('create_championship_team_registration_order', {
+    p_championship_id: championshipId, p_idempotency_key: idempotencyKey, p_config: config,
+  });
+}
+// confirm: materializa championship_teams + creator + reservation + consume_reward; devuelve team_id + join_token.
+export function confirmChampionshipTeamRegistration({ championshipId, idempotencyKey }) {
+  return supabase.rpc('confirm_championship_team_registration', {
+    p_championship_id: championshipId, p_idempotency_key: idempotencyKey,
+  });
+}
+export function failChampionshipTeamRegistration({ championshipId, idempotencyKey, reason = null }) {
+  return supabase.rpc('fail_championship_team_registration', {
+    p_championship_id: championshipId, p_idempotency_key: idempotencyKey, p_reason: reason,
+  });
+}
+// Unirse a un equipo por CLAVE manual (bcrypt backend) o por TOKEN del link. confirmChange=true
+// autoriza el cambio de equipo cuando el backend devuelve CONFIRM_TEAM_CHANGE_REQUIRED.
+export function joinChampionshipTeamWithSecret({ teamId, secret, confirmChange = false }) {
+  return supabase.rpc('join_championship_team_with_secret', {
+    p_team_id: teamId, p_secret: secret, p_confirm_change: confirmChange,
+  });
+}
+export function joinChampionshipTeamWithToken({ token, confirmChange = false }) {
+  return supabase.rpc('join_championship_team_with_token', {
+    p_token: token, p_confirm_change: confirmChange,
+  });
+}
+// get_championship_team_share: SOLO el owner; devuelve join_token (NUNCA el hash de la clave).
+export function getChampionshipTeamShare({ teamId }) {
+  return supabase.rpc('get_championship_team_share', { p_team_id: teamId });
+}
+// add_championship_team_member: el OWNER del equipo agrega un usuario real a SU equipo público (gratis).
+// Requiere la migración championships_team_owner_add_member.sql aplicada.
+export function addChampionshipTeamMember({ teamId, userId }) {
+  return supabase.rpc('add_championship_team_member', { p_team_id: teamId, p_user_id: userId });
+}
+// update_championship_team_secret: el OWNER cambia la clave (texto plano = join_secret).
+export function updateChampionshipTeamSecret({ teamId, secret }) {
+  return supabase.rpc('update_championship_team_secret', { p_team_id: teamId, p_secret: secret });
+}
+// get_championship_team_secret: owner-only; devuelve la clave (texto) de SU equipo para mostrarla/editarla.
+export function getChampionshipTeamSecret({ teamId }) {
+  return supabase.rpc('get_championship_team_secret', { p_team_id: teamId });
+}
+

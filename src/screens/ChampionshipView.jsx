@@ -25,7 +25,7 @@ import VenuePickerSheet from '../components/championship/VenuePickerSheet';
 import { effPhaseOf, rosterWindows } from '../utils/championshipRoster';
 import { PlayerModal } from './GameDetail';   // MISMO perfil público que el roster de Match (sin duplicar)
 import { validateCoverImage, uploadChampionshipCover, getChampionshipCoverUrl, deleteChampionshipCover } from '../utils/championshipCoverImage';
-import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, publishChampionshipRpc, updateChampionshipCover, joinChampionshipWithoutTeam, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, getChampionshipRegistrationState, getChampionshipCompetition, manageChampionshipPlayer, saveChampionshipMatchResult, setChampionshipMatchTeam, toggleChampionshipLive, setChampionshipChampion, getChampionshipOrder, cancelChampionshipContract, getChampionshipPaymentDetail } from '../services/championshipService';
+import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, publishChampionshipRpc, updateChampionshipCover, joinChampionshipWithoutTeam, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, getChampionshipRegistrationState, getChampionshipCompetition, manageChampionshipPlayer, saveChampionshipMatchResult, setChampionshipMatchTeam, toggleChampionshipLive, setChampionshipChampion, getChampionshipOrder, cancelChampionshipContract, getChampionshipPaymentDetail, getChampionshipPublicPricing, joinChampionshipTeamWithToken } from '../services/championshipService';
 import TeamPickerSheet from '../components/championship/TeamPickerSheet';
 import { slotTeamConflicts } from '../utils/championshipFixture';
 
@@ -94,7 +94,14 @@ function Seg({ active, onClick, disabled = false, children }) {
 export default function ChampionshipView() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useAuth();
+  const { user, oauthInitPending } = useAuth();
+  // ── INSTRUMENTACIÓN TEMPORAL (solo DEV) — diagnóstico de skeleton infinito. Prefijo [CHAMP_LOAD].
+  //    QUITAR tras capturar la causa. No cambia comportamiento. ──────────────────────────────────
+  const DBG = import.meta.env.DEV;
+  const clog = (...a) => { if (DBG) console.log('[CHAMP_LOAD]', ...a); };
+  const skelDbgRef = useRef(null);
+  const instIdRef = useRef(Math.random().toString(36).slice(2, 7));   // id de ESTA instancia montada (detecta remontes)
+  const prevDepsRef = useRef({ realId: Symbol('init') });             // deps previas del effect principal
   // Rol AlGrass GLOBAL (misma fuente que el backend _is_algrass_staff: tabla user_roles), cacheado en
   // localStorage y disponible sin llamar a get_championship_registration_state. Se usa solo para gatear la
   // carga del estado en pending_publish y evitar el 400 esperado de la RPC para usuarios no autorizados.
@@ -104,7 +111,7 @@ export default function ChampionshipView() {
   const { id: routeId } = useParams();
   // Deep-link a un EQUIPO: /championships/view/:id?team=<teamId>. Se reenvía a ChampionshipTeam en cuanto el
   // acceso está resuelto (tras el gate de clave si aplica). Reutiliza gate/acceso/auth de esta pantalla.
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const deepTeamId = searchParams.get('team');
   const deepFwdRef = useRef(false);
   const realId = routeId || null;              // /championships/view/:id → campeonato REAL (DB = fuente de verdad)
@@ -128,21 +135,31 @@ export default function ChampionshipView() {
   const [realLoading, setRealLoading] = useState(isRealMode && !cachedReal?.realRow);
   const [realError, setRealError] = useState(false);
   const [ownerKey, setOwnerKey] = useState(null);   // clave real (SOLO owner); null = aún no cargada / no-owner
+  // [CHAMP_LOAD] INSTANCE: effect []→ corre UNA vez por MONTAJE. Si ves unmounted/mounted repetidos con inst
+  // distinto = REMONTE externo. Si NO cambia el inst pero hay cleanup/main-effect-start = StrictMode o realId.
+  useEffect(() => { clog('INSTANCE mounted', { inst: instIdRef.current, championshipId: realId }); return () => clog('INSTANCE unmounted', { inst: instIdRef.current, championshipId: realId }); }, []); // eslint-disable-line
+  // [CHAMP_LOAD] 1 · montaje / cambio de championshipId
+  useEffect(() => { clog('mount/id', { inst: instIdRef.current, championshipId: realId, userId: user?.id || null, authLoading: oauthInitPending, isRealMode, realLoading, realError, hasChamp: !!champ }); }, [realId]); // eslint-disable-line
   useEffect(() => {
-    if (!isRealMode) return;
+    clog('effect deps changed', { inst: instIdRef.current, realId: [prevDepsRef.current.realId, realId] });
+    prevDepsRef.current = { realId };
+    clog('main effect start', { championshipId: realId, hasUser: !!user, userId: user?.id || null, authLoading: oauthInitPending, isRealMode });
+    if (!isRealMode) { clog('main early return: not real mode'); return; }
     let alive = true;
     if (!cachedReal?.realRow) setRealLoading(true);   // con caché de vuelta: refetch en background, sin skeleton
     setRealError(false); setOwnerKey(null);
     // Detalle por SUPERFICIE PÚBLICA (sin registration_key). La clave real solo se pide si soy el owner.
+    clog('public request start', { championshipId: realId });
     getChampionshipPublic({ championshipId: realId }).then(({ data, error }) => {
-      if (!alive) return;
-      if (error || !data) { setRealError(true); setRealLoading(false); return; }
+      if (!alive) { clog('response ignored stale', { championshipId: realId }); return; }
+      if (error || !data) { clog('public request error', { error: error?.message || error || null, dataNull: !data }); setRealError(true); setRealLoading(false); return; }
+      clog('public request success', { championshipId: data?.id ?? null, status: data?.status ?? null, dataNull: !data });
       setRealRow(data); setRealLoading(false);
       if (user?.id && data.owner_user_id === user.id) {
-        getChampionshipRegistrationKey({ championshipId: realId }).then(({ data: k }) => { if (alive) setOwnerKey(k || ''); });
+        getChampionshipRegistrationKey({ championshipId: realId }).then(({ data: k }) => { if (alive) setOwnerKey(k || ''); }).catch(() => {});
       }
-    });
-    return () => { alive = false; };
+    }).catch((e) => { clog('public request error (reject)', { message: String(e?.message || e) }); if (alive) { setRealError(true); setRealLoading(false); } });   // promesa rechazada (red/throw) → nunca dejar el skeleton colgado
+    return () => { alive = false; clog('cleanup', { championshipId: realId }); };
   }, [realId]); // eslint-disable-line
 
   // Refresco puntual de la fila real (tras cancelar): re-lee la superficie pública y reemplaza realRow.
@@ -153,6 +170,28 @@ export default function ChampionshipView() {
       if (!error && data) setRealRow(data);
     });
   };
+
+  // Precios públicos (inscripción individual pagada). is_public = order_id null + public_individual_price.
+  // publicPricing queda SIEMPRE con championship_id = realId tras resolver (éxito o error → centinela privado).
+  // Así "resuelto" se deriva comparando ese id con realId, sin setState síncrono en el effect (evita lint) y
+  // cubriendo el cambio de realId sin remontar.
+  const [publicPricing, setPublicPricing] = useState(null);
+  useEffect(() => {
+    if (!isRealMode || !realId) return;
+    let alive = true;
+    const fallback = { championship_id: realId, is_public: false, public_individual_price: null, public_team_price: null };
+    clog('pricing start', { championshipId: realId });
+    getChampionshipPublicPricing({ championshipId: realId })
+      .then(({ data, error }) => { if (!alive) return; if (error || !data) clog('pricing error', { error: error?.message || error || null, dataNull: !data }); else clog('pricing success', { is_public: data?.is_public ?? null }); setPublicPricing((error || !data) ? fallback : data); clog('pricing settle'); })
+      .catch((e) => { clog('pricing error (reject)', { message: String(e?.message || e) }); if (alive) { setPublicPricing(fallback); clog('pricing settle'); } });
+    return () => { alive = false; };
+  }, [realId]); // eslint-disable-line
+  // Tipo público/privado YA resuelto para ESTE campeonato (o no aplica por no ser real).
+  const pricingResolved = !isRealMode || (publicPricing?.championship_id === realId);
+  const publicUnitPrice = Number(publicPricing?.public_individual_price) || 0;
+  const publicPaid = pricingResolved && !!publicPricing?.is_public && publicUnitPrice > 0;
+  // Público de AlGrass (criterio estructural): NO tiene clave de acceso (ni para publicar ni para entrar).
+  const isPublicChamp = isRealMode && pricingResolved && !!publicPricing?.is_public;
 
   // Owner: cuando llega la clave real (RPC owner-only), hidrata clave/saved para mostrar/editar/publicar.
   useEffect(() => {
@@ -330,8 +369,10 @@ export default function ChampionshipView() {
     if (!isRealMode || !canLoad) return;
     // NO se resetea regState a null: se mantiene el último estado conocido visible mientras llega el fresco
     // (evita flash/salto del roster). Solo se reemplaza con los datos nuevos cuando responde el backend.
+    clog('reg state start', { championshipId: realId, status: st });
     getChampionshipRegistrationState({ championshipId: realId })
-      .then(({ data, error }) => { if (!error && data) { setRegState(data); setRegFresh(true); } });
+      .then(({ data, error }) => { if (error) clog('reg state error', { error: error?.message || error || null }); else clog('reg state success', { dataNull: !data }); if (!error && data) { setRegState(data); setRegFresh(true); } clog('reg state settle'); })
+      .catch((e) => { clog('reg state error (reject)', { message: String(e?.message || e) }); });
   }
   // Gate como booleano DERIVADO (mismo criterio que loadRegState): abierto/cerrado → true por status;
   // pending → true solo owner/AlGrass. Depender de ESTE booleano (no de amOwner/amAlgrassRole crudos) evita
@@ -352,13 +393,15 @@ export default function ChampionshipView() {
     && (realRow.status === 'in_progress' || realRow.status === 'completed')
     && realRow.results_public === true;
   // ¿Se necesita clave? real + fila + NO owner/host/miembro + NO lectura pública (results_public en fase competitiva).
-  const needsKey = isRealMode && !!realRow && !amOwner && !amHostAccess && !amMember && !publicReadOk;
+  const needsKey = isRealMode && !!realRow && !amOwner && !amHostAccess && !amMember && !publicReadOk && !isPublicChamp;
   // Cache TEMPORAL de clave (solo logueado): si hay entrada NO expirada, hay que revalidarla en silencio antes de
   // dejar entrar. Mientras se revalida (o falta hacerlo), NO se muestra el gate (se muestra carga) → sin flash.
   const cachedKeyEntry = (needsKey && !verifiedGrant && user?.id) ? readKeyAccess(user.id, realId) : null;
   const awaitingKeyReval = !!cachedKeyEntry && !keyRevalDone;
   // Gate visible = se necesita clave, sin grant en memoria, y NO hay revalidación pendiente/en curso del cache.
-  const gateOpen = needsKey && !verifiedGrant && !awaitingKeyReval && !keyRevalidating;
+  // No renderizar el gate de clave hasta saber si el campeonato es público (evita el flash en públicos).
+  // Privado: cuando pricingResolved=true el comportamiento es idéntico al actual.
+  const gateOpen = needsKey && !verifiedGrant && !awaitingKeyReval && !keyRevalidating && pricingResolved;
   // Revalidación SILENCIOSA del cache: autoridad = backend (verify_championship_access), nunca el cache. Éxito →
   // entra sin pedir clave (sin renovar TTL). Fallo (clave cambiada/expirada) → borra el cache y muestra el gate.
   useEffect(() => {
@@ -370,6 +413,11 @@ export default function ChampionshipView() {
       setKeyRevalidating(false); setKeyRevalDone(true);
       if (!error && data === true) setVerifiedGrant(true);          // clave sigue válida → acceso, sin renovar TTL
       else clearKeyAccess(user.id, realId);                          // clave cambió/inválida → limpiar → pedir de nuevo
+    }).catch(() => {
+      // Promesa RECHAZADA (red/throw): sin este catch, keyRevalidating quedaba en true y el skeleton (que depende
+      // de awaitingKeyReval/keyRevalidating) no se limpiaba nunca → skeleton infinito hasta refrescar. Al marcar
+      // done+idle, la pantalla cae al gate de clave (pedir de nuevo), que es el fallback correcto.
+      setKeyRevalidating(false); setKeyRevalDone(true);
     });
   }, [awaitingKeyReval, keyRevalidating, keyRevalDone, realId, user?.id]); // eslint-disable-line
   async function submitGate() {
@@ -426,7 +474,9 @@ export default function ChampionshipView() {
   // Privacidad REAL: dirty = lo escrito difiere de lo guardado en DB. Publicar exige clave GUARDADA
   // (no solo tecleada) + sin cambios pendientes. En demo/preview basta la clave local (mock legacy).
   const privacyDirty = isRealMode && (accessCode.trim() !== (savedPrivacy.key || '') || resultsPublic !== savedPrivacy.resultsPublic);
-  const publishEnabled = isRealMode
+  const publishEnabled = isPublicChamp
+    ? (!savingPrivacy && !publishing)   // público: SIN clave; publica directo
+    : isRealMode
     ? (!!savedPrivacy.key && !privacyDirty && !savingPrivacy && !publishing)
     : (!!accessCode.trim() && !publishing);
   // Guardar privacidad REAL en DB (update_championship_privacy). Success → saved* sincronizado con DB.
@@ -628,6 +678,16 @@ export default function ChampionshipView() {
   const regTeamCount = regState?.team_count ?? regTeams.length;
   const regPlayerCount = regState?.player_count ?? 0;
   const myMembership = regState?.current_user_membership || null;
+  // Participación del usuario (derivada de regState; el backend sigue siendo la autoridad final). En PÚBLICO
+  // pagado, "sin equipo" SIEMPRE es pagado (el alta gratis sin equipo está cerrada) → paid_individual. Permite
+  // gatear los CTA ANTES de abrir el checkout, evitando el "La disponibilidad cambió" tras entrar.
+  const myChampPart = () => {
+    const mem = myMembership;
+    if (!mem) return 'none';
+    if (!mem.team_id) return 'paid_individual';
+    const t = regTeams.find(x => x.id === mem.team_id);
+    return (t && user?.id && t.created_by_user_id === user.id) ? 'team_owner' : 'free_member';
+  };
   // Organizadores reales (Fase 13): owner siempre; host solo si está puesto y es
   // otra persona —eso lo decide la RPC, aquí no se vuelve a comparar—.
   const regOrganizers = regState?.organizers || null;
@@ -812,7 +872,8 @@ export default function ChampionshipView() {
     navigate('/championships/team', { replace: true, state: {
       realChampionship: true, teamMode: 'existing', champId: realId, teamId: deepTeamId,
       champStatus: realRow.status, champLive: realRow.live_started_at ?? null, regSnapshot: regState,
-      championshipOrigin: readBackOrigin() || 'championships',
+      championshipOrigin: readBackOrigin() || 'championships', isPublic: isPublicChamp,
+      openSecretJoin: searchParams.get('join') === 'secret',   // intención tras login → abre modal de clave 1 vez
     } });
   }, [deepTeamId, isRealMode, realRow, gateOpen]); // eslint-disable-line
 
@@ -981,6 +1042,17 @@ export default function ChampionshipView() {
       if (!requireAuth('newTeam')) return;
       // Estar inscrito NO bloquea crear equipos (crear ≠ membership). Solo limita la capacidad global.
       if ((regState?.team_count ?? 0) >= realSlotCount) { flashToast('Los cupos están completos.'); return; }
+      // PÚBLICO pagado + registration_open → checkout de equipo ("Crear equipo · S/X"). El equipo NO se
+      // crea hasta confirmar el pago; no usa el builder demo que persiste al "Guardar".
+      const teamPrice = Number(publicPricing?.public_team_price) || 0;
+      if (isPublicChamp && teamPrice > 0 && champ?.status === 'registration_open') {
+        // Gating según participación conocida (el backend bloquea igual; aquí evitamos abrir el checkout en vano).
+        const part = myChampPart();
+        if (part === 'paid_individual' || part === 'team_owner') { flashToast('No es posible realizar esta acción porque ya estás inscrito en este campeonato.'); return; }
+        if (part === 'free_member') { flashToast('Ya perteneces a un equipo en este campeonato.'); return; }   // gratuito: sin mensaje de cancelación
+        navigate('/championships/team-checkout', { state: { championshipId: realId, championshipName: name, unitPrice: teamPrice } });
+        return;
+      }
       persistCV();   // guarda scroll + caché (realRow/regState) para volver ya renderizado
       // champStatus + regSnapshot → tras crear, ChampionshipTeam evalúa canJoin/canDeleteTeam con el estado y
       // owner/is_algrass reales (sin quedar en null), y muestra CTA/Eliminar de forma estable.
@@ -1021,7 +1093,7 @@ export default function ChampionshipView() {
     }
     // regSnapshot: estado ya conocido (teams/roster/membership/owner/is_algrass) → ChampionshipTeam pinta la
     // estructura real en el primer render (sin flash) y luego refresca por RPC (backend = fuente de verdad).
-    navigate('/championships/team', { state: { realChampionship: true, teamMode: 'existing', champId: realId, teamId: t.id, champStatus: champ?.status, champLive: realRow?.live_started_at ?? null, regSnapshot: regState, fromBracket } });
+    navigate('/championships/team', { state: { realChampionship: true, teamMode: 'existing', champId: realId, teamId: t.id, champStatus: champ?.status, champLive: realRow?.live_started_at ?? null, regSnapshot: regState, fromBracket, isPublic: isPublicChamp } });
   }
   // Abrir el selector de equipo para un slot VACÍO de la llave (host/AlGrass en in_progress). Toma el equipo del
   // otro lado para excluirlo y el actual (si lo hubiera) como preselección. NO asigna al tocar: se confirma con Guardar.
@@ -1110,9 +1182,41 @@ export default function ChampionshipView() {
   function confirmChangeGo() {
     const c = confirmChange; setConfirmChange(null);
     if (!c) return;
-    if (c.kind === 'team') joinTeamReal(c.teamId);
+    if (c.kind === 'token') joinByToken(c.token, true);   // cambio A→B confirmado (deep-link)
+    else if (c.kind === 'joinpaid') navigate('/championships/join', { state: { championshipId: realId, championshipName: name, unitPrice: publicUnitPrice } });  // free_member → checkout individual (team→null al confirmar)
+    else if (c.kind === 'team') joinTeamReal(c.teamId);
     else joinNoTeamReal();
   }
+
+  // ── Deep-link de invitación por TOKEN de equipo (público pagado) ──
+  // Limpia ?jt= de la URL sin remontar (replace). El backend es la autoridad del join.
+  const clearJt = () => { const sp = new URLSearchParams(searchParams); sp.delete('jt'); setSearchParams(sp, { replace: true }); };
+  const jtDoneRef = useRef(false);
+  async function joinByToken(token, confirmChange) {
+    const { error } = await joinChampionshipTeamWithToken({ token, confirmChange });
+    if (error) {
+      const m = String(error.message || '');
+      if (/CONFIRM_TEAM_CHANGE_REQUIRED/.test(m)) { setConfirmChange({ kind: 'token', token }); return; }  // NO limpiar: espera decisión
+      clearJt();
+      if (/PAID_REGISTRATION_MUST_CANCEL_FIRST/.test(m)) flashToast('Primero debes cancelar tu inscripción actual.');
+      else if (/NOT_OPEN/.test(m)) flashToast('Las inscripciones están cerradas.');
+      else if (/INVALID_LINK/.test(m)) flashToast('El enlace de invitación no es válido.');
+      else flashToast('No se pudo unir al equipo. Intenta de nuevo.');
+      return;
+    }
+    clearJt();
+    flashToast('Te uniste al equipo');
+    loadRegState(); refreshReal();   // refresco autoritativo (participación + roster + fila real)
+  }
+  // Al abrir /championships/view/:id?jt=TOKEN: si anon → /auth conservando la URL completa (vuelve y reintenta);
+  // si autenticado → join por token una sola vez por mount (jtDoneRef). 'already' = éxito idempotente (sin error).
+  useEffect(() => {
+    const token = searchParams.get('jt');
+    if (!token || !isRealMode || jtDoneRef.current) return;
+    if (!user) { persistCV(); navigate('/auth', { state: { backPath: location.pathname + location.search } }); return; }
+    jtDoneRef.current = true;
+    joinByToken(token, false);
+  }, [searchParams, isRealMode, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // REAL: unirse a un equipo EXISTENTE (registration_open/closed). Requiere no estar ya inscrito.
   // SET membership al equipo (insert o cambio directo). La confirmación de cambio se maneja en la UI antes.
   async function joinTeamReal(teamId) {
@@ -1299,6 +1403,25 @@ export default function ChampionshipView() {
 
   // REAL: mientras carga (o hidrata) mostramos loading; NUNCA caemos a demo ni a "Crear campeonato".
   // Si falla el fetch → error explícito, sin usar el CV como fallback (no mostrar otro campeonato).
+  if (DBG) {
+    const snap = `${realId}|${realLoading}|${realError}|${!!champ}|${awaitingKeyReval}|${keyRevalidating}|${keyRevalDone}|${pricingResolved}|${isPublicChamp}|${oauthInitPending}|${!!user}`;
+    if (skelDbgRef.current !== snap) {
+      skelDbgRef.current = snap;
+      console.log('[CHAMP_LOAD] skeleton'
+        + '\n  inst=' + instIdRef.current
+        + '\n  id=' + realId
+        + '\n  loading=' + realLoading
+        + '\n  error=' + realError
+        + '\n  champ=' + (!!champ)
+        + '\n  awaitingKeyReval=' + awaitingKeyReval
+        + '\n  keyRevalidating=' + keyRevalidating
+        + '\n  keyRevalDone=' + keyRevalDone
+        + '\n  pricingResolved=' + pricingResolved
+        + '\n  isPublicChamp=' + isPublicChamp
+        + '\n  authLoading=' + oauthInitPending
+        + '\n  hasUser=' + (!!user));
+    }
+  }
   if (isRealMode && (realLoading || realError || !champ || awaitingKeyReval || keyRevalidating)) {
     return (
       <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: SOFT, overflow: 'hidden' }}>
@@ -1598,7 +1721,8 @@ export default function ChampionshipView() {
             {isOwner && isCreated && (
             <div style={{ ...CARD, background: privacyLocked ? '#F7F7F9' : '#fff' }}>
               <div style={H}>Privacidad</div>
-              {/* Clave de acceso — MISMO layout siempre; publicado = cerrada (click copia) + "Editar" la abre */}
+              {/* Clave de acceso — SOLO PRIVADOS. En público de AlGrass NO existe clave: se oculta por completo. */}
+              {!isPublicChamp && (<>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
                 <div style={{ fontSize: 13.5, fontWeight: 700, color: TEXT }}>Configura clave de acceso</div>
                 {privacyLocked && (
@@ -1617,6 +1741,7 @@ export default function ChampionshipView() {
               )}
               <div style={{ fontSize: 12, color: SUB, marginTop: 6 }}>Comparte este código con tus invitados para que se inscriban.</div>
               <div style={{ height: 1, background: HAIR, margin: '14px 0' }} />
+              </>)}
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 700, color: TEXT }}>Calendario y resultados públicos</div>
@@ -1777,7 +1902,30 @@ export default function ChampionshipView() {
                     {/* Unirme sin equipo — TOGGLE (solo registration_open). En lista → "Estás en la lista" (check)
                         → tocar de nuevo sale directo (sin confirmación). En un equipo → tocar pide confirmación
                         de cambio (requestNoTeam). Salir del equipo se hace desde la pantalla del equipo. */}
-                    {(canCreate || inscriptionsDisabled || pvReal) && !hostBlocksSelf && (() => { const inList = !!myMembership && !myMembership.team_id; const joinDisabled = regBusy || (inscriptionsDisabled && !amOwner) || pvReal; return (
+                    {(canCreate || inscriptionsDisabled || pvReal) && !hostBlocksSelf && (() => { const inList = !!myMembership && !myMembership.team_id; const joinDisabled = regBusy || (inscriptionsDisabled && !amOwner) || pvReal;
+                      // PÚBLICO: "Unirme sin equipo" es inscripción individual PAGADA → checkout (no el toggle gratis).
+                      // Público por EQUIPOS (sin precio individual) → NO hay inscripción individual: ni gratis ni de
+                      // pago. Participar es creando/uniéndose a un equipo (por clave/token). Sin este corte, el toggle
+                      // gratis quedaba expuesto y join_championship_without_team no lo bloquea en team-only público.
+                      if (isPublicChamp) {
+                        if (publicUnitPrice <= 0) return null;
+                        if (inList) return (
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, width: '100%', height: 46, borderRadius: 14, background: '#D7F0DD', color: '#1F6B36', fontFamily: 'inherit', fontSize: 15, fontWeight: 700 }}>
+                            <span style={{ width: 20, height: 20, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1F6B36' }}><svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2.5 6.5l2.5 2.5 4.5-5" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
+                            Inscrito sin equipo
+                          </div>
+                        );
+                        const joinPaid = () => { if (!user?.id) { navigate('/auth', { state: { backPath: '/championships/view/' + realId } }); return; } const part = myChampPart(); if (part === 'team_owner') { flashToast('No es posible realizar esta acción porque ya estás inscrito en este campeonato.'); return; } if (part === 'free_member') { setConfirmChange({ kind: 'joinpaid' }); return; } navigate('/championships/join', { state: { championshipId: realId, championshipName: name, unitPrice: publicUnitPrice } }); };
+                        return (
+                          <>
+                            <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginBottom: 8 }}>Inscríbete individualmente, con o sin invitados.</div>
+                            <button onClick={joinDisabled ? undefined : joinPaid} disabled={joinDisabled} className={joinDisabled ? undefined : 'pressable'} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, width: '100%', height: 46, borderRadius: 14, border: 'none', cursor: joinDisabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, background: joinDisabled ? '#E8E8EC' : ORANGE, color: joinDisabled ? '#9A9AA0' : '#1B1B1F', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+                              {`Unirme sin equipo · ${soles(publicUnitPrice)}`}
+                            </button>
+                          </>
+                        );
+                      }
+                      return (
                       <>
                         <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginBottom: 8 }}>¿No tienes equipo todavía? Únete a la lista general y luego te acomodamos.</div>
                         <button onClick={joinDisabled ? undefined : (inList ? leaveReal : requestNoTeam)} disabled={joinDisabled} className={joinDisabled ? undefined : 'pressable'} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, width: '100%', height: 46, borderRadius: 14, border: 'none', cursor: joinDisabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, background: inList ? '#D7F0DD' : '#fff', color: inList ? '#1F6B36' : (joinDisabled ? '#9A9AA0' : TEXT), opacity: regBusy ? 0.7 : 1, boxShadow: inList ? 'none' : `inset 0 0 0 1px ${HAIR}`, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
@@ -1884,7 +2032,9 @@ export default function ChampionshipView() {
           ) : isPendingPublish ? (() => {
             const canPublish = publishEnabled;
             // Ayuda contextual: falta clave guardada vs cambios sin guardar (REAL). Demo: solo clave local.
-            const hint = isRealMode
+            const hint = isPublicChamp
+              ? null   // público: no hay clave que configurar → sin ayuda de clave
+              : isRealMode
               ? (!savedPrivacy.key ? 'Configura una clave de acceso y pulsa Guardar'
                 : privacyDirty ? 'Guarda los cambios de privacidad para publicar.' : null)
               : (!accessCode.trim() ? 'Configura una clave de acceso y pulsa Guardar' : null);
@@ -1937,13 +2087,16 @@ export default function ChampionshipView() {
         {/* Confirmación REAL (Fase 10): cambiar de equipo o pasar a sin equipo estando ya inscrito. */}
         {confirmChange && (() => {
           const currentTeamName = myMembership?.team_id ? (regTeams.find(t => t.id === myMembership.team_id)?.name || 'tu equipo') : null;
-          const isToTeam = confirmChange.kind === 'team';
+          const isToken = confirmChange.kind === 'token';
+          const isToTeam = confirmChange.kind === 'team' || isToken;
           return (
             <div className="sheet-overlay" onClick={() => setConfirmChange(null)} style={{ position: 'fixed', inset: 0, zIndex: 250, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', background: 'rgba(0,0,0,0.35)', padding: '0 16px calc(24px + env(safe-area-inset-bottom))' }}>
               <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 420, background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 -8px 32px rgba(0,0,0,0.12)' }}>
                 <div style={{ fontSize: 17, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>{isToTeam ? 'Cambiar de equipo' : '¿Continuar sin equipo?'}</div>
                 <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, marginTop: 8 }}>
-                  {currentTeamName
+                  {isToken
+                    ? (currentTeamName ? `Ya perteneces a ${currentTeamName}. ¿Quieres cambiarte a este equipo?` : '¿Quieres cambiarte a este equipo?')
+                    : currentTeamName
                     ? (isToTeam ? `Ya estás inscrito en ${currentTeamName}. ¿Quieres cambiarte a ${confirmChange.teamName}?` : `Ya estás inscrito en ${currentTeamName}. Si continúas, dejarás el equipo y quedarás inscrito sin equipo.`)
                     : (isToTeam ? `¿Quieres unirte a ${confirmChange.teamName}?` : '¿Quieres continuar sin equipo?')}
                 </div>
@@ -1958,7 +2111,7 @@ export default function ChampionshipView() {
 
         {/* Toast breve — copiar clave / compartir fallback / avisos de inscripción única */}
         {toast && (
-          <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.75)', color: '#fff', padding: '8px 18px', borderRadius: 20, fontSize: 14, fontWeight: 500, zIndex: 9999, pointerEvents: 'none', whiteSpace: 'nowrap', maxWidth: '84%', textAlign: 'center' }}>{toast}</div>
+          <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.75)', color: '#fff', padding: '10px 18px', borderRadius: 16, fontSize: 14, fontWeight: 500, zIndex: 9999, pointerEvents: 'none', whiteSpace: 'normal', maxWidth: '84%', width: 'max-content', lineHeight: 1.35, textAlign: 'center' }}>{toast}</div>
         )}
       </div>
 

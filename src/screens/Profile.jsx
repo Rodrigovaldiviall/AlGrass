@@ -2312,6 +2312,7 @@ export default function Profile() {
   // El tipo llega por location.state (transitorio); no se persiste en cv.championship/contactRequest.
   const [champConfirm, setChampConfirm] = useState(location.state?.champConfirm ?? null);
   const [champCanceledAmount] = useState(location.state?.champCanceledAmount ?? 0);
+  const [champJoinedId] = useState(location.state?.championshipId ?? null);
   useEffect(() => {
     const cc = location.state?.champConfirm;
     if (!cc) return;
@@ -3697,6 +3698,14 @@ export default function Profile() {
             ? [<>Se generó un crédito de <strong style={{ color: GREEN }}>{soles(champCanceledAmount)}</strong> en tu perfil.</>]
             : ['La reserva del campeonato fue cancelada.']}
           onContinue={() => setChampConfirm(null)}
+        />
+      )}
+      {/* Inscripción individual pagada a un campeonato público → overlay sobre Perfil + highlight. */}
+      {champConfirm === 'joined' && (
+        <ChampConfirmOverlay
+          title="¡Inscripción confirmada!"
+          lines={['Ya estás inscrito. Encuéntralo en tus campeonatos.']}
+          onContinue={() => { setChampConfirm(null); setHighlightedId(champJoinedId || null); }}
         />
       )}
       {!confirmedGame && slotExpiry && (

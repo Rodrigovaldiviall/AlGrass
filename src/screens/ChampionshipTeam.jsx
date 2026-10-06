@@ -7,7 +7,7 @@ import PlayerAvatar from '../components/championship/PlayerAvatar';
 import RosterAvatar from '../components/championship/RosterAvatar';
 import { PlayerModal } from './GameDetail';   // MISMO perfil público que el roster de Inscripciones (sin duplicar)
 import { TEAM_DESIGNS, DEFAULT_DESIGN, teamDesign, sameDesign, withinTeamNameWordLimit, playerLabel, CURRENT_USER_NAME } from '../data/championshipTeamsMock';
-import { saveChampionshipTeam, getChampionshipRegistrationState, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, manageChampionshipPlayer, setChampionshipMatchTeam, getChampionshipCompetition } from '../services/championshipService';
+import { saveChampionshipTeam, getChampionshipRegistrationState, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, manageChampionshipPlayer, setChampionshipMatchTeam, getChampionshipCompetition, joinChampionshipTeamWithSecret, getChampionshipTeamShare, addChampionshipTeamMember, updateChampionshipTeamSecret, getChampionshipTeamSecret } from '../services/championshipService';
 import { searchUsers } from '../services/reservationService';   // MISMA búsqueda pública (users_public) que invitaciones de Match
 import PlayerActionSheet from '../components/championship/PlayerActionSheet';
 import TeamPickerSheet from '../components/championship/TeamPickerSheet';
@@ -70,6 +70,7 @@ export default function ChampionshipTeam() {
   //    (Shield/DesignSwatch/roster/CTA/confirm) con datos y RPCs reales, sin crear pantalla paralela. ──
   const { user } = useAuth();
   const teamId = nav.teamId || null;
+  const isPublic = !!nav.isPublic;   // campeonato público pagado (desde ChampionshipView). Privado = false.
   const realExisting = !!nav.realChampionship && !!champId && !!teamId && mode === 'existing';
   const champStatus = nav.champStatus || null;
   // Validando pago: crear equipo NO está permitido (ni por navegación directa/back). Se vuelve al detalle.
@@ -102,6 +103,54 @@ export default function ChampionshipTeam() {
   const [rAddOpen, setRAddOpen] = useState(false);
   const [rAddQuery, setRAddQuery] = useState('');
   const [rAddResults, setRAddResults] = useState([]);
+  // ── PÚBLICO: unirse por CLAVE (join_championship_team_with_secret). NO toca privados. ──
+  const [keyOpen, setKeyOpen] = useState(false);
+  const [keySecret, setKeySecret] = useState('');
+  const [keyBusy, setKeyBusy] = useState(false);
+  const [keyErr, setKeyErr] = useState('');
+  const [keyConfirm, setKeyConfirm] = useState(false);   // CONFIRM_TEAM_CHANGE_REQUIRED → confirmar cambio A→B
+  const secretAutoRef = useRef(false);                   // abre el modal de clave UNA vez al volver del login (intención)
+  // ── PÚBLICO · clave del equipo (texto plano, como registration_key). El owner la VE y la EDITA en portada. ──
+  const [teamSecret, setTeamSecret] = useState(null);    // clave actual (solo owner la carga); null = no cargada/no-owner
+  const [rSecret, setRSecret] = useState('');            // valor editable de la clave en "Editar portada"
+  useEffect(() => {
+    if (!realExisting || !isPublic || !user?.id) { setTeamSecret(null); return; }
+    const t = (rState?.teams || []).find(x => x.id === teamId);
+    if (!t || t.created_by_user_id !== user.id) { setTeamSecret(null); return; }   // solo el owner lee su clave
+    let alive = true;
+    getChampionshipTeamSecret({ teamId }).then(({ data }) => { if (alive) setTeamSecret(data?.join_secret ?? ''); }).catch(() => {});
+    return () => { alive = false; };
+  }, [realExisting, isPublic, user?.id, rState, teamId]);
+  // Intención "unirse por clave" tras login (nav.openSecretJoin, puesta por el reenvío de ChampionshipView):
+  // abre el modal de clave UNA sola vez por montaje (secretAutoRef). NO inscribe (el usuario escribe y pulsa
+  // Unirme). Si ya está en ESTE equipo, no abre. No reabre al cerrar/re-render (ref) ni en navegaciones normales
+  // (que no traen openSecretJoin). La URL ?team=&join=secret la reemplazó el reenvío → no persiste en historial.
+  useEffect(() => {
+    if (secretAutoRef.current) return;
+    if (!realExisting || !isPublic || !nav.openSecretJoin || !user?.id) return;
+    const mem = rState?.current_user_membership || null;
+    if (mem && mem.team_id === teamId) return;   // ya está en este equipo → nada que abrir
+    secretAutoRef.current = true;
+    setKeyErr(''); setKeyConfirm(false); setKeySecret(''); setKeyOpen(true);
+  }, [realExisting, isPublic, user?.id, rState, teamId]); // eslint-disable-line
+  async function keyJoin(confirm) {
+    if (keyBusy) return; setKeyBusy(true); setKeyErr('');
+    const { error } = await joinChampionshipTeamWithSecret({ teamId, secret: keySecret.trim(), confirmChange: confirm });
+    setKeyBusy(false);
+    if (error) {
+      const m = String(error.message || '');
+      if (/CONFIRM_TEAM_CHANGE_REQUIRED/.test(m)) { setKeyConfirm(true); return; }   // pedir confirmación, no limpiar
+      setKeyConfirm(false);
+      setKeyErr(/INVALID_SECRET/.test(m) ? 'La clave no es correcta.'
+        : /NO_TEAM_SECRET/.test(m) ? 'Este equipo no admite acceso por clave.'
+        : /NOT_OPEN/.test(m) ? 'Las inscripciones están cerradas.'
+        : /PAID_REGISTRATION_MUST_CANCEL_FIRST/.test(m) ? 'Primero debes cancelar tu inscripción actual.'
+        : 'No se pudo unir. Intenta de nuevo.');
+      return;
+    }
+    setKeyOpen(false); setKeyConfirm(false); setKeySecret('');
+    loadRState();   // refresco autoritativo (sin update optimista)
+  }
   const [rAddSearching, setRAddSearching] = useState(false);
   const [rAddSelected, setRAddSelected] = useState(null);        // { id, name, code, ... } | null
   const [rAddBusy, setRAddBusy] = useState(false);
@@ -393,13 +442,18 @@ export default function ChampionshipTeam() {
     async function rDoAddPlayer() {
       if (rAddBusy || !rAddSelected) return;
       setRAddBusy(true); setRAddErr('');
-      const { error } = await manageChampionshipPlayer({ championshipId: champId, userId: rAddSelected.id, teamId, remove: false });
+      // PÚBLICO + owner del equipo → RPC dedicada (gratis, sin pago). Privado/host → manage_championship_player.
+      const ownerPublicAdd = isPublic && amCreator;
+      const { error } = ownerPublicAdd
+        ? await addChampionshipTeamMember({ teamId, userId: rAddSelected.id })
+        : await manageChampionshipPlayer({ championshipId: champId, userId: rAddSelected.id, teamId, remove: false });
       setRAddBusy(false);
       if (error) {
         const m = String(error.message || '');
         setRAddErr(/NOT_AUTHORIZED/.test(m) ? 'No tienes permiso para agregar jugadores.'
           : /NOT_OPEN|INVALID_PHASE/.test(m) ? 'No disponible en esta fase.'
           : /TEAM_NOT_FOUND/.test(m) ? 'Ese equipo ya no existe.'
+          : /ALREADY_IN_OTHER_TEAM/.test(m) ? 'Ese jugador ya pertenece a otro equipo.'
           : /INVALID_INPUT|USER_NOT_FOUND|ALREADY/.test(m) ? 'Ese usuario ya no está disponible o ya está inscrito.'
           : 'No se pudo agregar al jugador.');
         return;
@@ -448,18 +502,36 @@ export default function ChampionshipTeam() {
       rDoJoin();                                                        // no inscrito → directo
     }
     // Compartir el equipo: Web Share API si existe; si no, copiar al portapapeles (mismo patrón que ChampionshipView).
-    function shareTeam() {
+    // PÚBLICO: el enlace usa el TOKEN opaco (get_championship_team_share, owner-only) → ?jt=TOKEN (join por link).
+    // NUNCA expone el hash ni la clave. PRIVADO: enlace actual ?team= (comportamiento intacto).
+    async function shareTeam() {
       const title = rt?.name || 'Equipo';
       const text = `Únete a ${title} en AlGrass`;
-      if (navigator.share) { navigator.share({ title, text, url: teamShareUrl }).catch(() => {}); return; }
-      if (navigator.clipboard) navigator.clipboard.writeText(teamShareUrl).then(() => { setRCopied(true); setTimeout(() => setRCopied(false), 1800); }).catch(() => {});
+      let url = teamShareUrl;
+      if (isPublic) {
+        const { data, error } = await getChampionshipTeamShare({ teamId });
+        if (error || !data?.join_token) { setRErr('No se pudo generar el enlace para compartir.'); return; }
+        url = `${window.location.origin}/championships/view/${champId}?jt=${data.join_token}`;
+      }
+      if (navigator.share) { navigator.share({ title, text, url }).catch(() => {}); return; }
+      if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => { setRCopied(true); setTimeout(() => setRCopied(false), 1800); }).catch(() => {});
     }
     async function rSave() {
       if (rBusy || !rTrim) return;
       setRBusy(true); setRErr('');
       const { error } = await saveChampionshipTeam({ championshipId: champId, teamId, name: rTrim, color: rDesign.colors[0], design: rDesign.id });
+      if (error) { setRBusy(false); const m = String(error.message || ''); setRErr(/TEAM_HAS_PLAYERS/.test(m) ? 'No puedes editar: el equipo ya tiene jugadores.' : /NOT_AUTHORIZED/.test(m) ? 'No tienes permiso para editar este equipo.' : /NOT_OPEN|REGISTRATION_CLOSED/.test(m) ? 'Las inscripciones no están abiertas.' : 'No se pudo guardar.'); rReload(); return; }
+      // PÚBLICO · OWNER: si la clave cambió, actualizarla en el MISMO Guardar (texto plano). Mínimo 4.
+      if (isPublic && amCreator) {
+        const s = rSecret.trim();
+        if (s && s !== (teamSecret || '').trim()) {
+          if (s.length < 4) { setRBusy(false); setRErr('La clave debe tener al menos 4 caracteres.'); return; }
+          const { error: kErr } = await updateChampionshipTeamSecret({ teamId, secret: s });
+          if (kErr) { setRBusy(false); setRErr('Se guardó el equipo, pero no se pudo actualizar la clave.'); return; }
+          setTeamSecret(s);
+        }
+      }
       setRBusy(false);
-      if (error) { const m = String(error.message || ''); setRErr(/TEAM_HAS_PLAYERS/.test(m) ? 'No puedes editar: el equipo ya tiene jugadores.' : /NOT_AUTHORIZED/.test(m) ? 'No tienes permiso para editar este equipo.' : /NOT_OPEN|REGISTRATION_CLOSED/.test(m) ? 'Las inscripciones no están abiertas.' : 'No se pudo guardar.'); rReload(); return; }
       setREditing(false); setREditSource(null); rDirty.current = false; rReload();
     }
     async function rDelete() {
@@ -486,8 +558,9 @@ export default function ChampionshipTeam() {
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </button>
             <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>Equipo</div>
-            {/* Compartir el equipo (deep-link) — solo fuera de edición; misma posición que otros headers. */}
-            {!rEditing && (
+            {/* Compartir el equipo (deep-link) — solo fuera de edición. PÚBLICO: solo el owner/creator lo ve
+                (y el enlace lleva el token). PRIVADO: visible como hasta ahora. */}
+            {!rEditing && (isPublic ? amCreator : true) && (
               <button onClick={shareTeam} aria-label="Compartir equipo" className="pressable" style={{ position: 'absolute', right: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 3v13" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M8 7l4-4 4 4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M5 12v7a1 1 0 001 1h12a1 1 0 001-1v-7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
               </button>
@@ -508,7 +581,7 @@ export default function ChampionshipTeam() {
             <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
               <Shield color={rEditing ? rDesign.colors[0] : (rt?.color || rDesign.colors[0])} design={rEditing ? rDesign : designById(rt?.design)} name={rEditing ? rName : (rt?.name || '')} size={120} />
               {!rEditing && canEditName && (
-                <button onClick={() => { setREditSource('manual'); setREditing(true); }} aria-label="Editar equipo" className="pressable" style={{ position: 'absolute', top: 6, left: 'calc(50% + 64px)', width: 34, height: 34, borderRadius: '50%', background: '#fff', border: `1px solid ${HAIR}`, boxShadow: '0 1px 4px rgba(0,0,0,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0, outline: 'none' }}>
+                <button onClick={() => { setREditSource('manual'); setRSecret(teamSecret || ''); setREditing(true); }} aria-label="Editar equipo" className="pressable" style={{ position: 'absolute', top: 6, left: 'calc(50% + 64px)', width: 34, height: 34, borderRadius: '50%', background: '#fff', border: `1px solid ${HAIR}`, boxShadow: '0 1px 4px rgba(0,0,0,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0, outline: 'none' }}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 20h4l10-10-4-4L4 16v4z" stroke={BLUE} strokeWidth="1.7" strokeLinejoin="round" /><path d="M13.5 6.5l4 4" stroke={BLUE} strokeWidth="1.7" strokeLinecap="round" /></svg>
                 </button>
               )}
@@ -530,9 +603,25 @@ export default function ChampionshipTeam() {
                 )}
                 <div style={{ fontSize: 12.5, fontWeight: 700, color: SUB, marginBottom: 6 }}>Nombre del equipo</div>
                 <input value={rName} onChange={e => { if (withinTeamNameWordLimit(e.target.value)) { rDirty.current = true; setRName(e.target.value); } }} placeholder="Nombre del equipo" maxLength={40} style={{ width: '100%', height: 44, borderRadius: 10, border: `1px solid ${HAIR}`, padding: '0 12px', fontSize: 15, color: TEXT, fontFamily: 'inherit', background: '#fff', outline: 'none', boxSizing: 'border-box', marginBottom: 20 }} />
+                {/* PÚBLICO · OWNER: clave del equipo en el MISMO editor (un solo Guardar). Un solo input, sin repetir. */}
+                {isPublic && amCreator && (
+                  <>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: SUB, marginBottom: 6 }}>Clave del equipo</div>
+                    <input value={rSecret} onChange={e => { rDirty.current = true; setRSecret(e.target.value); }} placeholder="Clave del equipo (mínimo 4)" maxLength={40}
+                      type="text" name="champ-team-secret" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-lpignore="true" data-1p-ignore data-form-type="other"
+                      style={{ width: '100%', height: 44, borderRadius: 10, border: `1px solid ${HAIR}`, padding: '0 12px', fontSize: 15, color: TEXT, fontFamily: 'inherit', background: '#fff', outline: 'none', boxSizing: 'border-box', marginBottom: 20 }} />
+                  </>
+                )}
               </>
             ) : (
-              <div style={{ textAlign: 'center', fontSize: 18, fontWeight: 800, color: TEXT, letterSpacing: -0.3, marginBottom: 20 }}>{rt?.name || 'Equipo'}</div>
+              <div style={{ textAlign: 'center', marginBottom: 20 }}>
+                <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, letterSpacing: -0.3 }}>{rt?.name || 'Equipo'}</div>
+                {isPublic && amCreator && teamSecret !== null && (
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: SUB, marginTop: 6 }}>
+                    {teamSecret ? <>Clave del equipo: <span style={{ color: TEXT, fontWeight: 800 }}>{teamSecret}</span></> : 'Sin clave · edítala en la portada'}
+                  </div>
+                )}
+              </div>
             )}
 
             {rErr && <div style={{ fontSize: 12.5, color: DANGER, lineHeight: 1.4, marginBottom: 10, textAlign: 'center' }}>{rErr}</div>}
@@ -575,14 +664,15 @@ export default function ChampionshipTeam() {
               </button>
             )}
 
-            {/* Agregar jugador NUEVO (Fase 29) — SOLO Host/AlGrass en fase válida (canAdminAddNew). Owner/jugador
-                normal no lo ven. El backend valida igual (add_player). Abre un modal de búsqueda + selección. */}
-            {canAdminAddNew && (
+            {/* Agregar jugador NUEVO (Fase 29) — Host/AlGrass en fase válida (canAdminAddNew) o, en PÚBLICO pagado,
+                el OWNER del equipo en registration_open (RPC dedicada, gratis). Mismo modal de búsqueda + selección. */}
+            {(canAdminAddNew || (isPublic && amCreator && st === 'registration_open')) && (
               <button onClick={rOpenAdd} className="pressable" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 46, borderRadius: 14, border: `1.5px dashed ${HAIR}`, background: '#fff', color: BLUE, cursor: 'pointer', fontFamily: 'inherit', fontSize: 14.5, fontWeight: 700, marginBottom: 8, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
                 <svg width="16" height="16" viewBox="0 0 18 18" fill="none"><path d="M9 3v12M3 9h12" stroke={BLUE} strokeWidth="2" strokeLinecap="round" /></svg>
                 Agregar jugador
               </button>
             )}
+
 
             {/* "Eliminar equipo" depende SOLO de canDeleteTeam (roster=0 + permisos), NO de estar editando:
                 debe convivir con el auto-edit del team vacío (Guardar + Únete + empty state). */}
@@ -596,12 +686,24 @@ export default function ChampionshipTeam() {
               join/leave), NO de estar editando: editar el team y unirse son acciones independientes. */}
           {canJoin && (
             <div style={{ position: 'absolute', left: 16, right: 16, bottom: 'calc(env(safe-area-inset-bottom) + 12px)', pointerEvents: 'none' }}>
-              <button onClick={rBusy ? undefined : rToggleJoin} disabled={rBusy} className="pressable" style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, width: '100%', height: 54, borderRadius: 18, border: 'none', cursor: rBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, outline: 'none', background: joinedHere ? '#D7F0DD' : ORANGE, color: joinedHere ? '#1F6B36' : '#1B1B1F', opacity: rBusy ? 0.75 : 1, boxShadow: joinedHere ? 'none' : '0 6px 18px rgba(245,165,36,0.40)' }}>
-                <span style={{ width: 20, height: 20, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', border: joinedHere ? 'none' : '2px solid #1B1B1F', background: joinedHere ? '#1F6B36' : 'transparent' }}>
-                  {joinedHere && <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2.5 6.5l2.5 2.5 4.5-5" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-                </span>
-                {rBusy ? '…' : (joinedHere ? 'En el equipo' : 'Únete al equipo')}
-              </button>
+              {isPublic && !joinedHere ? (
+                // PÚBLICO: unirse es por CLAVE/link (el "Únete" libre queda oculto). El cambio A→B lo confirma el modal.
+                <button onClick={() => {
+                  // No logueado → /auth conservando destino + intención (?team=&join=secret). NO llama RPC. Al
+                  // volver autenticado, ChampionshipView reenvía a ESTE equipo con openSecretJoin → abre el modal.
+                  if (!user) { navigate('/auth', { state: { backPath: `${teamReturnPath}&join=secret` } }); return; }
+                  setKeyErr(''); setKeyConfirm(false); setKeySecret(''); setKeyOpen(true);
+                }} className="pressable" style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, width: '100%', height: 54, borderRadius: 18, border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, outline: 'none', background: ORANGE, color: '#1B1B1F', boxShadow: '0 6px 18px rgba(245,165,36,0.40)' }}>
+                  Unirme con clave
+                </button>
+              ) : (
+                <button onClick={rBusy ? undefined : rToggleJoin} disabled={rBusy} className="pressable" style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, width: '100%', height: 54, borderRadius: 18, border: 'none', cursor: rBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, outline: 'none', background: joinedHere ? '#D7F0DD' : ORANGE, color: joinedHere ? '#1F6B36' : '#1B1B1F', opacity: rBusy ? 0.75 : 1, boxShadow: joinedHere ? 'none' : '0 6px 18px rgba(245,165,36,0.40)' }}>
+                  <span style={{ width: 20, height: 20, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', border: joinedHere ? 'none' : '2px solid #1B1B1F', background: joinedHere ? '#1F6B36' : 'transparent' }}>
+                    {joinedHere && <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2.5 6.5l2.5 2.5 4.5-5" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                  </span>
+                  {rBusy ? '…' : (joinedHere ? 'En el equipo' : 'Únete al equipo')}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -615,6 +717,38 @@ export default function ChampionshipTeam() {
                 <button onClick={() => setRConfirm(null)} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: `1.5px solid ${HAIR}`, background: '#fff', color: TEXT, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, outline: 'none' }}>Cancelar</button>
                 <button onClick={() => { setRConfirm(null); rDoJoin(); }} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: 'none', background: ORANGE, color: '#1B1B1F', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, outline: 'none' }}>{rConfirm.fromName ? 'Cambiarme' : 'Unirme'}</button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* PÚBLICO · Unirse por CLAVE. Pide la clave; si el backend pide confirmar cambio A→B, muestra el mismo
+            copy de cambio. NUNCA lee/expone el hash. Éxito → cierra + loadRState (sin update optimista). */}
+        {keyOpen && (
+          <div className="sheet-overlay" onClick={() => !keyBusy && setKeyOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 250, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', background: 'rgba(0,0,0,0.35)', padding: '0 16px calc(24px + env(safe-area-inset-bottom))' }}>
+            <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 420, background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 -8px 32px rgba(0,0,0,0.12)' }}>
+              {keyConfirm ? (
+                <>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>¿Cambiar de equipo?</div>
+                  <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, marginTop: 8 }}>Ya perteneces a otro equipo. ¿Quieres cambiarte a {rt?.name || 'este equipo'}?</div>
+                  {keyErr && <div style={{ fontSize: 12.5, color: DANGER, marginTop: 10 }}>{keyErr}</div>}
+                  <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+                    <button onClick={() => { setKeyConfirm(false); }} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: `1.5px solid ${HAIR}`, background: '#fff', color: TEXT, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, outline: 'none' }}>Cancelar</button>
+                    <button onClick={() => keyJoin(true)} disabled={keyBusy} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: 'none', background: ORANGE, color: '#1B1B1F', cursor: keyBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, opacity: keyBusy ? 0.7 : 1, outline: 'none' }}>{keyBusy ? '…' : 'Cambiarme'}</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>Unirme con clave</div>
+                  <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, marginTop: 8 }}>Ingresa la clave del equipo {rt?.name ? `"${rt.name}"` : ''} para unirte.</div>
+                  <input value={keySecret} onChange={e => { setKeySecret(e.target.value); setKeyErr(''); }} placeholder="Clave del equipo" maxLength={40}
+                    style={{ width: '100%', height: 44, borderRadius: 10, border: `1px solid ${keyErr ? DANGER : HAIR}`, padding: '0 12px', fontSize: 15, color: TEXT, fontFamily: 'inherit', background: '#fff', outline: 'none', boxSizing: 'border-box', marginTop: 14 }} />
+                  {keyErr && <div style={{ fontSize: 12.5, color: DANGER, marginTop: 8 }}>{keyErr}</div>}
+                  <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+                    <button onClick={() => setKeyOpen(false)} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: `1.5px solid ${HAIR}`, background: '#fff', color: TEXT, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, outline: 'none' }}>Cancelar</button>
+                    <button onClick={() => keyJoin(false)} disabled={keyBusy || keySecret.trim().length === 0} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: 'none', background: ORANGE, color: '#1B1B1F', cursor: (keyBusy || !keySecret.trim()) ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, opacity: (keyBusy || !keySecret.trim()) ? 0.6 : 1, outline: 'none' }}>{keyBusy ? '…' : 'Unirme'}</button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -643,7 +777,10 @@ export default function ChampionshipTeam() {
             <div className="sheet-panel no-sb" onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, maxHeight: '86vh', display: 'flex', flexDirection: 'column', background: '#fff', borderRadius: 20, padding: 18, boxShadow: '0 -8px 32px rgba(0,0,0,0.12)' }}>
               <div style={{ fontSize: 17, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>Agregar jugador</div>
               <div style={{ fontSize: 13, color: SUB, lineHeight: 1.45, marginTop: 4 }}>Busca por nombre o @usuario y selecciónalo para sumarlo a {rt?.name || 'este equipo'}.</div>
-              <input value={rAddQuery} onChange={e => { setRAddQuery(e.target.value); setRAddSelected(null); }} placeholder="Buscar jugador…" autoFocus style={{ width: '100%', height: 44, borderRadius: 12, border: `1px solid ${HAIR}`, padding: '0 14px', marginTop: 12, fontSize: 15, color: TEXT, fontFamily: 'inherit', background: '#fff', outline: 'none', boxSizing: 'border-box' }} />
+              <input value={rAddQuery} onChange={e => { setRAddQuery(e.target.value); setRAddSelected(null); }} placeholder="Buscar jugador…" autoFocus
+                type="search" name="champ-player-search" inputMode="search" enterKeyHint="search"
+                autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-lpignore="true" data-1p-ignore data-form-type="other"
+                style={{ width: '100%', height: 44, borderRadius: 12, border: `1px solid ${HAIR}`, padding: '0 14px', marginTop: 12, fontSize: 15, color: TEXT, fontFamily: 'inherit', background: '#fff', outline: 'none', boxSizing: 'border-box' }} />
               <div className="no-sb" style={{ flex: 1, minHeight: 80, maxHeight: '42vh', overflowY: 'auto', marginTop: 10 }}>
                 {rAddSearching ? (
                   <div style={{ fontSize: 13, color: SUB, padding: '10px 2px' }}>Buscando…</div>

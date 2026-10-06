@@ -22,7 +22,7 @@ export const CHAMPIONSHIP_BANK = {
 };
 
 // Formato de soles del checkout de campeonato (enteros; claramente mock).
-export function soles(n) { return `S/ ${Number(n || 0).toFixed(0)}`; }
+export function soles(n) { return `S/ ${Number(n || 0).toFixed(2)}`; }
 
 // Total = base + extras seleccionados (Set de ids).
 export function championshipTotal(base, selectedIds) {
