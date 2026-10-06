@@ -17,6 +17,7 @@ function regErrorMessage(msg) {
   if (/TEAM_NAME_REQUIRED/.test(m)) return 'Ponle un nombre al equipo.';
   if (/TEAM_SECRET_REQUIRED/.test(m)) return 'Define una clave para el equipo.';
   if (/ALREADY_ENROLLED/.test(m)) return 'Ya estás inscrito en este campeonato. Cancela tu inscripción actual primero.';
+  if (/ACTIVE_INDIVIDUAL_RESERVATION/.test(m)) return 'Ya tienes una reserva individual activa en este campeonato.';
   if (/PUBLIC_CHAMPIONSHIP_TEAM_PAYMENT_REQUIRED/.test(m)) return 'La creación de equipo es de pago. Vuelve a intentarlo desde aquí.';
   if (/ORDER_EXPIRED/.test(m)) return 'El tiempo para completar la creación terminó. Vuelve a intentarlo.';
   if (/AVAILABILITY_CHANGED/.test(m)) return 'La disponibilidad cambió. Vuelve a intentarlo.';

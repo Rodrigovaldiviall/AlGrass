@@ -8,7 +8,7 @@ import { soles } from '../data/championshipCheckoutMock';
 import { uuidv4 } from '../lib/uuid';
 import { useAuth } from '../context/AuthContext';
 import { searchUsers, getWalletBalance, getRewardBalance } from '../services/reservationService';
-import { createChampionshipRegistrationOrder, confirmChampionshipRegistration, failChampionshipRegistration } from '../services/championshipService';
+import { createChampionshipRegistrationOrder, confirmChampionshipRegistration, failChampionshipRegistration, getChampionshipRegistrationState } from '../services/championshipService';
 
 // Errores backend → copy controlado.
 function regErrorMessage(msg) {
@@ -25,12 +25,19 @@ function regErrorMessage(msg) {
 
 // ── Subpantalla "Agregar jugadores" ── MISMA UX visual que Match (AddPlayersScreen), pero
 // mínima para campeonato: sin cupos/roster/host/favoritos. self nunca aparece (excludeIds).
-function JoinAddPlayers({ alreadySelected, selfId, onCancel, onConfirm }) {
+function JoinAddPlayers({ alreadySelected, selfId, enrolledIds = [], ownerId = null, onCancel, onConfirm }) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(() => alreadySelected);
   const [results, setResults] = useState([]);
+  const [dupMsg, setDupMsg] = useState('');            // toast local "no seleccionable" (patrón Match)
   const reqRef = useRef(0);
+  const dupRef = useRef(0);
   const q = query.trim();
+  const enrolledSet = new Set(enrolledIds);
+  const flashDup = (m) => { setDupMsg(m); clearTimeout(dupRef.current); dupRef.current = setTimeout(() => setDupMsg(''), 2500); };
+  // Motivo por el que una fila NO es seleccionable (igual que Match: organizador / ya inscrito).
+  const disabledReason = (p) => (ownerId && p.id === ownerId) ? 'El organizador no puede añadirse como jugador.'
+    : enrolledSet.has(p.id) ? 'Este jugador ya está inscrito en el campeonato.' : '';
 
   useEffect(() => {
     const reqId = ++reqRef.current;
@@ -45,7 +52,11 @@ function JoinAddPlayers({ alreadySelected, selfId, onCancel, onConfirm }) {
   }, [q, selfId]);
 
   const selIds = new Set(selected.map(p => p.id));
-  const toggle = (p) => setSelected(prev => prev.some(x => x.id === p.id) ? prev.filter(x => x.id !== p.id) : [...prev, p]);
+  const toggle = (p) => {
+    const r = disabledReason(p);
+    if (r) { flashDup(r); return; }   // no seleccionable → solo feedback, no se añade
+    setSelected(prev => prev.some(x => x.id === p.id) ? prev.filter(x => x.id !== p.id) : [...prev, p]);
+  };
   const listBelow = results.filter(p => !selIds.has(p.id));
   const noMatch = q.length >= 2 && results.length === 0;
 
@@ -87,7 +98,7 @@ function JoinAddPlayers({ alreadySelected, selfId, onCancel, onConfirm }) {
         {noMatch && (
           <div style={{ padding: '40px 24px', textAlign: 'center', color: SUB, fontSize: 14 }}>Ningún jugador coincide con "{query}".</div>
         )}
-        {q.length >= 2 && !noMatch && listBelow.map(p => <PlayerRow key={p.id} p={p} checked={false} onToggle={() => toggle(p)} />)}
+        {q.length >= 2 && !noMatch && listBelow.map(p => { const r = disabledReason(p); return <PlayerRow key={p.id} p={p} checked={false} disabled={!!r} subtitle={r ? (p.id === ownerId ? 'Organizador' : 'Ya inscrito') : null} onToggle={() => toggle(p)} />; })}
         {q.length < 2 && selected.length === 0 && (
           <div style={{ padding: '40px 24px', textAlign: 'center', color: SUB, fontSize: 14 }}>Busca jugadores por nombre o @ID para agregarlos.</div>
         )}
@@ -96,6 +107,11 @@ function JoinAddPlayers({ alreadySelected, selfId, onCancel, onConfirm }) {
       <div style={{ background: '#fff', borderTop: `1px solid ${HAIR}`, padding: '12px 16px calc(12px + env(safe-area-inset-bottom))' }}>
         <CtaButton onPress={() => onConfirm(selected)} disabled={!dirty}>{ctaLabel}</CtaButton>
       </div>
+
+      {/* Toast "no seleccionable" (mismo feedback que Match: organizador / ya inscrito). */}
+      {dupMsg && (
+        <div style={{ position: 'fixed', left: '50%', bottom: 140, transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.8)', color: '#fff', fontSize: 13.5, fontWeight: 600, padding: '10px 16px', borderRadius: 20, zIndex: 9999, pointerEvents: 'none', maxWidth: '84%', textAlign: 'center' }}>{dupMsg}</div>
+      )}
     </div>
   );
 }
@@ -119,6 +135,18 @@ export default function ChampionshipJoinCheckout() {
   const [subView, setSubView] = useState('confirm');
   const [guests, setGuests] = useState([]);   // [{id, name, code, hue, avatarPath, avatarVersion}]
   const userIds = [user?.id, ...guests.map(g => g.id)].filter(Boolean);
+  // Inscritos + organizador del campeonato → para marcar no seleccionables en "Agregar jugadores" (patrón Match).
+  // Lectura pública del estado (registration_open). El backend igualmente rechaza (ALREADY_ENROLLED); esto es UX.
+  const [enrolledIds, setEnrolledIds] = useState([]);
+  const [ownerId, setOwnerId] = useState(null);
+  useEffect(() => {
+    if (!championshipId) return;
+    getChampionshipRegistrationState({ championshipId }).then(({ data }) => {
+      if (!data) return;
+      setEnrolledIds((data.players || []).map(p => p.user_id).filter(Boolean));
+      setOwnerId(data.owner_user_id || null);
+    }).catch(() => {});
+  }, [championshipId]);
   const count = userIds.length;
   const gross = Math.round(unitPrice * count * 100) / 100;
 
@@ -210,6 +238,8 @@ export default function ChampionshipJoinCheckout() {
         <JoinAddPlayers
           alreadySelected={guests}
           selfId={user?.id}
+          enrolledIds={enrolledIds}
+          ownerId={ownerId}
           onCancel={() => setSubView('confirm')}
           onConfirm={(selected) => { setGuests(selected); setSubView('confirm'); }}
         />

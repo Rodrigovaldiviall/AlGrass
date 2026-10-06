@@ -5,6 +5,7 @@ import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, DANGER } from '../constants';
 import Shield, { DesignSwatch } from '../components/championship/Shield';
 import PlayerAvatar from '../components/championship/PlayerAvatar';
 import RosterAvatar from '../components/championship/RosterAvatar';
+import { PlayerRow } from '../components/checkout/PlayerPickerUI';
 import { PlayerModal } from './GameDetail';   // MISMO perfil público que el roster de Inscripciones (sin duplicar)
 import { TEAM_DESIGNS, DEFAULT_DESIGN, teamDesign, sameDesign, withinTeamNameWordLimit, playerLabel, CURRENT_USER_NAME } from '../data/championshipTeamsMock';
 import { saveChampionshipTeam, getChampionshipRegistrationState, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, manageChampionshipPlayer, setChampionshipMatchTeam, getChampionshipCompetition, joinChampionshipTeamWithSecret, getChampionshipTeamShare, addChampionshipTeamMember, updateChampionshipTeamSecret, getChampionshipTeamSecret } from '../services/championshipService';
@@ -143,6 +144,7 @@ export default function ChampionshipTeam() {
       setKeyConfirm(false);
       setKeyErr(/INVALID_SECRET/.test(m) ? 'La clave no es correcta.'
         : /NO_TEAM_SECRET/.test(m) ? 'Este equipo no admite acceso por clave.'
+        : /TEAM_CHANGE_CLOSED/.test(m) ? 'Las inscripciones están cerradas. Ya no puedes cambiar de equipo.'
         : /NOT_OPEN/.test(m) ? 'Las inscripciones están cerradas.'
         : /PAID_REGISTRATION_MUST_CANCEL_FIRST/.test(m) ? 'Primero debes cancelar tu inscripción actual.'
         : 'No se pudo unir. Intenta de nuevo.');
@@ -152,9 +154,73 @@ export default function ChampionshipTeam() {
     loadRState();   // refresco autoritativo (sin update optimista)
   }
   const [rAddSearching, setRAddSearching] = useState(false);
-  const [rAddSelected, setRAddSelected] = useState(null);        // { id, name, code, ... } | null
+  const [rAddSel, setRAddSel] = useState([]);                    // multiselección: [{ id, name, code, ... }]
   const [rAddBusy, setRAddBusy] = useState(false);
   const [rAddErr, setRAddErr] = useState('');
+  const [rAddDup, setRAddDup] = useState('');            // toast "no seleccionable" (inscrito / organizador)
+  const rAddDupRef = useRef(0);
+  const flashAddDup = (m) => { setRAddDup(m); clearTimeout(rAddDupRef.current); rAddDupRef.current = setTimeout(() => setRAddDup(''), 2500); };
+  // Scroll-lock del fondo + anclaje al VISUAL VIEWPORT mientras el sheet de agregar está abierto. El scroller real
+  // es interno (html/#root overflow:hidden, 100dvh), pero con el teclado móvil el navegador hace pan del visual
+  // viewport y un overlay fixed de altura 100dvh deja ver el fondo azul (#root). Anclamos el overlay a
+  // visualViewport (top+height) para que el borde superior quede fijo y el sheet se adapte SOBRE el teclado; el
+  // fondo no se mueve. rAddVV = { h, top } del visual viewport (null = sin dato / cerrado).
+  const [rAddVV, setRAddVV] = useState(null);
+  const rScrollerRef = useRef(null);   // scroller REAL de ChampionshipTeam (div absolute inset:0 overflowY:auto)
+  const rAddOverlayRef = useRef(null); // overlay fixed del sheet (recibe touch/wheel)
+  const rAddListRef = useRef(null);    // única zona scrolleable del sheet (lista de resultados)
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!rAddOpen) { setRAddVV(null); return; }
+    // (1) FREEZE del scroller real. body NO es el scroller (html/#root overflow:hidden, 100dvh); el que mueve
+    //     scrollTop es el div absolute inset:0 overflowY:auto. Lo congelamos (overflow:hidden) guardando y
+    //     restaurando su scrollTop → fondo en el mismo pixel, cero salto al abrir/cerrar.
+    const sc = rScrollerRef.current;
+    const prevScTop = sc ? sc.scrollTop : 0;
+    const prevScOv = sc ? sc.style.overflow : '';
+    if (sc) { sc.style.overflow = 'hidden'; sc.scrollTop = prevScTop; }
+    const prevBodyOv = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';   // refuerzo; patrón ya usado por PaymentSheet/Fields/PickupGames
+    // (2) Anclaje al VISUAL VIEWPORT: con el teclado el navegador reduce el viewport visible; anclamos el overlay
+    //     a (offsetTop, height) para que su borde superior quede fijo y el sheet se adapte SOBRE el teclado.
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    const apply = () => { if (vv) setRAddVV({ h: vv.height, top: vv.offsetTop }); };
+    apply();
+    vv?.addEventListener('resize', apply);
+    vv?.addEventListener('scroll', apply);
+    // (3) Impedir que el gesto llegue al fondo: FUERA de la lista → preventDefault; DENTRO, solo en los bordes
+    //     (anti scroll-chaining). Non-passive para poder cancelar el pan del documento con el teclado abierto.
+    let startY = 0;
+    const onStart = (e) => { startY = e.touches && e.touches[0] ? e.touches[0].clientY : 0; };
+    const onMove = (e) => {
+      const list = rAddListRef.current;
+      if (!list || !list.contains(e.target)) { e.preventDefault(); return; }
+      const dy = (e.touches && e.touches[0] ? e.touches[0].clientY : 0) - startY;
+      const atTop = list.scrollTop <= 0;
+      const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 1;
+      if ((atTop && dy > 0) || (atBottom && dy < 0)) e.preventDefault();
+    };
+    const onWheel = (e) => {
+      const list = rAddListRef.current;
+      if (!list || !list.contains(e.target)) { e.preventDefault(); return; }
+      const atTop = list.scrollTop <= 0;
+      const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 1;
+      if ((atTop && e.deltaY < 0) || (atBottom && e.deltaY > 0)) e.preventDefault();
+    };
+    const ov = rAddOverlayRef.current;
+    ov?.addEventListener('touchstart', onStart, { passive: true });
+    ov?.addEventListener('touchmove', onMove, { passive: false });
+    ov?.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      document.body.style.overflow = prevBodyOv;
+      if (sc) { sc.style.overflow = prevScOv; sc.scrollTop = prevScTop; }
+      vv?.removeEventListener('resize', apply);
+      vv?.removeEventListener('scroll', apply);
+      ov?.removeEventListener('touchstart', onStart);
+      ov?.removeEventListener('touchmove', onMove);
+      ov?.removeEventListener('wheel', onWheel);
+    };
+  }, [rAddOpen]);
   // "Cambiar equipo" del slot de la llave (Fase 31): selector reutilizado (TeamPickerSheet).
   const [rChangeOpen, setRChangeOpen] = useState(false);
   const [rChangeSel, setRChangeSel] = useState(null);
@@ -201,19 +267,19 @@ export default function ChampionshipTeam() {
     return () => { window.removeEventListener('focus', refetch); document.removeEventListener('visibilitychange', refetch); };
   }, [realExisting, champId, teamId]); // eslint-disable-line
   // Búsqueda de usuarios para "Agregar jugador" (debounce 300ms). Reutiliza searchUsers (users_public: solo campos
-  // públicos). Excluye a los YA inscritos en ESTE campeonato (cualquier equipo) para no ofrecer duplicados.
+  // públicos). Patrón Match/ChampionshipJoinCheckout: los YA inscritos y el organizador NO se ocultan (aparecen
+  // deshabilitados en gris, no seleccionables). searchUsers ya excluye al propio usuario.
   useEffect(() => {
     if (!rAddOpen) return;
     const q = rAddQuery.trim();
-    const excludeIds = (rState?.players || []).map(p => p.user_id).filter(Boolean);
     let alive = true;
     const t = setTimeout(() => {
       if (!q) { setRAddResults([]); setRAddSearching(false); return; }
       setRAddSearching(true);
-      searchUsers(q, { limit: 20, excludeIds }).then(rows => { if (alive) { setRAddResults(rows || []); setRAddSearching(false); } });
+      searchUsers(q, { limit: 20 }).then(rows => { if (alive) { setRAddResults(rows || []); setRAddSearching(false); } });
     }, 300);
     return () => { alive = false; clearTimeout(t); };
-  }, [rAddOpen, rAddQuery, rState]);
+  }, [rAddOpen, rAddQuery]);
   // Equipo VACÍO + autorizado → modo edición DIRECTO (sin pulsar "Editar"), UNA sola vez por MOUNT: el guard
   // por ref evita reabrir edición tras pulsar Guardar (rState cambia por el refetch). Al salir y volver, el
   // componente se remonta → autoEditDone vuelve a false → auto-open otra vez si sigue vacío. Con jugadores → lectura.
@@ -422,7 +488,7 @@ export default function ChampionshipTeam() {
     const rBack = () => navigate(viewPath, { state: { cvReturn: true } });
     const rReload = () => loadRState();
     async function rDoJoin() { setRBusy(true); setRErr(''); const { error } = await joinChampionshipTeam({ championshipId: champId, teamId }); setRBusy(false); if (error) { const m = String(error.message || ''); setRErr(/REGISTRATION_CLOSED|NOT_OPEN/.test(m) ? 'Las inscripciones no están disponibles.' : /TEAM_NOT_FOUND/.test(m) ? 'Ese equipo ya no existe.' : 'No se pudo unir.'); rReload(); return; } rReload(); }
-    async function rDoLeave() { setRBusy(true); setRErr(''); const { error } = await leaveChampionship({ championshipId: champId }); setRBusy(false); if (error) { setRErr(/NOT_OPEN/.test(error.message || '') ? 'No puedes salir en este estado.' : 'No se pudo salir.'); rReload(); return; } rReload(); }
+    async function rDoLeave() { setRBusy(true); setRErr(''); const { error } = await leaveChampionship({ championshipId: champId }); setRBusy(false); if (error) { const m = String(error.message || ''); setRErr(/TEAM_OWNER_MUST_CANCEL_RESERVATION/.test(m) ? 'Eres el capitán. Para salir, cancela la reserva del equipo desde "Gestionar mi reserva".' : /NOT_OPEN/.test(m) ? 'No puedes salir en este estado.' : 'No se pudo salir.'); rReload(); return; } rReload(); }
     // Gestión ADMINISTRATIVA de un jugador (Fase 23) vía manage_championship_player: mover a equipo (teamId),
     // dejar sin equipo (teamId=null) o quitar (remove). El backend valida rol+fase. Refresca con loadRState:
     // si el jugador sale de ESTE equipo, desaparece del roster; si se mueve, se ve al volver a ChampionshipView.
@@ -437,28 +503,35 @@ export default function ChampionshipTeam() {
     }
     // Agregar jugador NUEVO al equipo actual: reutiliza manage_championship_player (acción add_player; host/AlGrass;
     // owner NUNCA; el backend valida rol+fase). Inserta membership DIRECTO con team_id (sin pasar por team_id=null).
-    function rOpenAdd() { setRAddOpen(true); setRAddQuery(''); setRAddResults([]); setRAddSelected(null); setRAddErr(''); }
-    function rCloseAdd() { if (rAddBusy) return; setRAddOpen(false); setRAddQuery(''); setRAddResults([]); setRAddSelected(null); setRAddErr(''); }
+    function rOpenAdd() { setRAddOpen(true); setRAddQuery(''); setRAddResults([]); setRAddSel([]); setRAddErr(''); }
+    function rCloseAdd() { if (rAddBusy) return; setRAddOpen(false); setRAddQuery(''); setRAddResults([]); setRAddSel([]); setRAddErr(''); }
     async function rDoAddPlayer() {
-      if (rAddBusy || !rAddSelected) return;
+      if (rAddBusy || rAddSel.length === 0) return;
       setRAddBusy(true); setRAddErr('');
-      // PÚBLICO + owner del equipo → RPC dedicada (gratis, sin pago). Privado/host → manage_championship_player.
+      // PÚBLICO + owner del equipo → RPC dedicada (gratis). Privado/host → manage_championship_player. Mismas RPC
+      // de UNO en UNO (no hay bulk): se procesan los seleccionados en secuencia; si uno falla, se detiene y se
+      // reporta (no se oculta). rReload refresca el estado autoritativo (los ya agregados aparecerán inscritos).
       const ownerPublicAdd = isPublic && amCreator;
-      const { error } = ownerPublicAdd
-        ? await addChampionshipTeamMember({ teamId, userId: rAddSelected.id })
-        : await manageChampionshipPlayer({ championshipId: champId, userId: rAddSelected.id, teamId, remove: false });
+      let firstErr = null;
+      for (const u of rAddSel) {
+        const { error } = ownerPublicAdd
+          ? await addChampionshipTeamMember({ teamId, userId: u.id })
+          : await manageChampionshipPlayer({ championshipId: champId, userId: u.id, teamId, remove: false });
+        if (error) { firstErr = error; break; }
+      }
       setRAddBusy(false);
-      if (error) {
-        const m = String(error.message || '');
+      if (firstErr) {
+        const m = String(firstErr.message || '');
         setRAddErr(/NOT_AUTHORIZED/.test(m) ? 'No tienes permiso para agregar jugadores.'
           : /NOT_OPEN|INVALID_PHASE/.test(m) ? 'No disponible en esta fase.'
           : /TEAM_NOT_FOUND/.test(m) ? 'Ese equipo ya no existe.'
-          : /ALREADY_IN_OTHER_TEAM/.test(m) ? 'Ese jugador ya pertenece a otro equipo.'
-          : /INVALID_INPUT|USER_NOT_FOUND|ALREADY/.test(m) ? 'Ese usuario ya no está disponible o ya está inscrito.'
-          : 'No se pudo agregar al jugador.');
+          : /ALREADY_IN_OTHER_TEAM/.test(m) ? 'Alguno de los jugadores ya pertenece a otro equipo.'
+          : /INVALID_INPUT|USER_NOT_FOUND|ALREADY/.test(m) ? 'Alguno ya no está disponible o ya está inscrito.'
+          : 'No se pudieron agregar los jugadores.');
+        rReload();   // algunos pudieron agregarse antes del fallo → refrescar
         return;
       }
-      setRAddOpen(false); setRAddQuery(''); setRAddResults([]); setRAddSelected(null);
+      setRAddOpen(false); setRAddQuery(''); setRAddResults([]); setRAddSel([]);
       rReload();
     }
     // "Cambiar equipo" del slot de la llave: reemplaza SOLO ese lado (fromBracket.side) del match por el equipo
@@ -494,6 +567,9 @@ export default function ChampionshipTeam() {
     const teamShareUrl = `${window.location.origin}${teamReturnPath}`;
     function rToggleJoin() {
       if (rBusy || !canJoin) return;
+      // Owner de equipo PÚBLICO pagado = capitán fijo: NUNCA sale por leave gratuito. Su única salida es
+      // "Gestionar mi reserva" → "Cancelar reserva" (cancelación completa del equipo). Defensa en UI.
+      if (isPublic && amCreator && joinedHere) return;
       // Anónimo → /auth reutilizando backPath (mecanismo real de retorno). Vuelve a ESTE equipo (deep-link ?team=)
       // y puede completar "Unirme" ya autenticado. No se navega a Home/listado/ChampionshipView genérico.
       if (!user) { navigate('/auth', { state: { backPath: teamReturnPath } }); return; }
@@ -577,7 +653,7 @@ export default function ChampionshipTeam() {
         </div>
 
         <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-          <div className="no-sb" style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '18px 16px calc(84px + env(safe-area-inset-bottom))' }}>
+          <div ref={rScrollerRef} className="no-sb" style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '18px 16px calc(84px + env(safe-area-inset-bottom))' }}>
             <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
               <Shield color={rEditing ? rDesign.colors[0] : (rt?.color || rDesign.colors[0])} design={rEditing ? rDesign : designById(rt?.design)} name={rEditing ? rName : (rt?.name || '')} size={120} />
               {!rEditing && canEditName && (
@@ -683,8 +759,10 @@ export default function ChampionshipTeam() {
           </div>
 
           {/* CTA de pertenencia: Únete al equipo ↔ En el equipo. Depende SOLO de canJoin (estado permite
-              join/leave), NO de estar editando: editar el team y unirse son acciones independientes. */}
-          {canJoin && (
+              join/leave), NO de estar editando: editar el team y unirse son acciones independientes.
+              OWNER de equipo PÚBLICO pagado (created_by_user_id === user.id): NINGÚN CTA de pertenencia (ni
+              "Desuscribirme" ni "Capitán"). Su única salida es Gestionar mi reserva → Cancelar reserva. */}
+          {canJoin && !(isPublic && amCreator && joinedHere) && (
             <div style={{ position: 'absolute', left: 16, right: 16, bottom: 'calc(env(safe-area-inset-bottom) + 12px)', pointerEvents: 'none' }}>
               {isPublic && !joinedHere ? (
                 // PÚBLICO: unirse es por CLAVE/link (el "Únete" libre queda oculto). El cambio A→B lo confirma el modal.
@@ -770,41 +848,51 @@ export default function ChampionshipTeam() {
           </div>
         )}
 
-        {/* Modal "Agregar jugador": buscar por nombre/@user_code → seleccionar UNO → Guardar. No agrega al tocar
-            un resultado (solo selecciona). El backend valida rol/fase/duplicado; el botón oculto no es seguridad. */}
+        {/* Sheet "Agregar jugadores": buscar → MULTISELECCIÓN (los seleccionados persisten entre búsquedas) → CTA
+            final. Inscritos/organizador aparecen deshabilitados (PlayerRow disabled) + toast; no se seleccionan.
+            Lista con scroll interno (overscroll contain → no arrastra el fondo). Backend valida rol/fase/duplicado. */}
         {rAddOpen && (
-          <div className="sheet-overlay" onClick={rCloseAdd} style={{ position: 'fixed', inset: 0, zIndex: 250, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', background: 'rgba(0,0,0,0.35)', padding: '0 12px calc(16px + env(safe-area-inset-bottom))' }}>
-            <div className="sheet-panel no-sb" onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, maxHeight: '86vh', display: 'flex', flexDirection: 'column', background: '#fff', borderRadius: 20, padding: 18, boxShadow: '0 -8px 32px rgba(0,0,0,0.12)' }}>
-              <div style={{ fontSize: 17, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>Agregar jugador</div>
-              <div style={{ fontSize: 13, color: SUB, lineHeight: 1.45, marginTop: 4 }}>Busca por nombre o @usuario y selecciónalo para sumarlo a {rt?.name || 'este equipo'}.</div>
-              <input value={rAddQuery} onChange={e => { setRAddQuery(e.target.value); setRAddSelected(null); }} placeholder="Buscar jugador…" autoFocus
+          <div ref={rAddOverlayRef} className="sheet-overlay" onClick={rCloseAdd} style={{ position: 'fixed', left: 0, right: 0, top: rAddVV ? rAddVV.top : 0, height: rAddVV ? rAddVV.h : '100dvh', zIndex: 250, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', background: 'rgba(0,0,0,0.35)', padding: '0 12px 12px', boxSizing: 'border-box' }}>
+            <div className="sheet-panel no-sb" onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 460, maxHeight: rAddVV ? Math.max(220, rAddVV.h - 24) : '86vh', display: 'flex', flexDirection: 'column', minHeight: 0, background: '#fff', borderRadius: 20, padding: 18, boxShadow: '0 -8px 32px rgba(0,0,0,0.12)' }}>
+              <div style={{ fontSize: 17, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>Agregar jugadores</div>
+              <div style={{ fontSize: 13, color: SUB, lineHeight: 1.45, marginTop: 4 }}>Busca por nombre o @usuario y selecciona varios para sumarlos a {rt?.name || 'este equipo'}.</div>
+              <input value={rAddQuery} onChange={e => setRAddQuery(e.target.value)} placeholder="Buscar jugador…" autoFocus
                 type="search" name="champ-player-search" inputMode="search" enterKeyHint="search"
                 autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-lpignore="true" data-1p-ignore data-form-type="other"
                 style={{ width: '100%', height: 44, borderRadius: 12, border: `1px solid ${HAIR}`, padding: '0 14px', marginTop: 12, fontSize: 15, color: TEXT, fontFamily: 'inherit', background: '#fff', outline: 'none', boxSizing: 'border-box' }} />
-              <div className="no-sb" style={{ flex: 1, minHeight: 80, maxHeight: '42vh', overflowY: 'auto', marginTop: 10 }}>
+              <div ref={rAddListRef} className="no-sb" style={{ flex: 1, minHeight: 80, overflowY: 'auto', overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', marginTop: 10 }}>
+                {/* Seleccionados (persisten entre búsquedas); tocar uno lo quita. Patrón Match. */}
+                {rAddSel.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 11.5, fontWeight: 700, color: SUB, letterSpacing: 0.4, textTransform: 'uppercase', padding: '6px 2px 2px' }}>Seleccionados · {rAddSel.length}</div>
+                    {rAddSel.map(u => <PlayerRow key={u.id} p={u} checked onToggle={() => setRAddSel(prev => prev.filter(x => x.id !== u.id))} />)}
+                  </>
+                )}
                 {rAddSearching ? (
                   <div style={{ fontSize: 13, color: SUB, padding: '10px 2px' }}>Buscando…</div>
                 ) : rAddQuery.trim() && rAddResults.length === 0 ? (
-                  <div style={{ fontSize: 13, color: SUB, padding: '10px 2px' }}>Sin resultados. Solo aparecen usuarios de AlGrass aún no inscritos.</div>
-                ) : rAddResults.map(u => {
-                  const sel = rAddSelected?.id === u.id;
+                  <div style={{ fontSize: 13, color: SUB, padding: '10px 2px' }}>Sin resultados.</div>
+                ) : rAddResults.filter(u => !rAddSel.some(x => x.id === u.id)).map(u => {
+                  // Patrón Match: inscrito / organizador aparecen pero deshabilitados (no seleccionables) + toast.
+                  const enrolled = (rState?.players || []).some(p => p.user_id === u.id);
+                  const isOwner = rState?.owner_user_id === u.id;
+                  const reason = isOwner ? 'El organizador no puede añadirse como jugador.'
+                    : enrolled ? 'Este jugador ya está inscrito en el campeonato.' : '';
                   return (
-                    <button key={u.id} onClick={() => setRAddSelected(u)} className="pressable" style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '8px 8px', borderRadius: 12, border: sel ? `1.5px solid ${BLUE}` : '1.5px solid transparent', background: sel ? '#EAF1FD' : 'transparent', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-                      <RosterAvatar path={u.avatarPath} hue={u.hue} name={u.name || 'Jugador'} size={36} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.name || 'Jugador'}</div>
-                        {u.code && <div style={{ fontSize: 12, color: SUB, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.code}</div>}
-                      </div>
-                      {sel && <svg width="18" height="18" viewBox="0 0 18 18" fill="none" style={{ flexShrink: 0 }}><path d="M3.5 9.5l3.5 3.5 7-8" stroke={BLUE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-                    </button>
+                    <PlayerRow key={u.id} p={u} checked={false} disabled={!!reason}
+                      subtitle={reason ? (isOwner ? 'Organizador' : 'Ya inscrito') : null}
+                      onToggle={() => { if (reason) { flashAddDup(reason); return; } setRAddSel(prev => [...prev, u]); }} />
                   );
                 })}
               </div>
               {rAddErr && <div style={{ fontSize: 12.5, color: DANGER, lineHeight: 1.4, marginTop: 8 }}>{rAddErr}</div>}
               <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
                 <button onClick={rCloseAdd} disabled={rAddBusy} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: `1.5px solid ${HAIR}`, background: '#fff', color: TEXT, cursor: rAddBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, outline: 'none' }}>Cancelar</button>
-                <button onClick={(!rAddSelected || rAddBusy) ? undefined : rDoAddPlayer} disabled={!rAddSelected || rAddBusy} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: 'none', background: (!rAddSelected || rAddBusy) ? '#E8E8EC' : BLUE, color: (!rAddSelected || rAddBusy) ? '#9A9AA0' : '#fff', cursor: (!rAddSelected || rAddBusy) ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, outline: 'none' }}>{rAddBusy ? 'Guardando…' : 'Guardar'}</button>
+                <button onClick={(rAddSel.length === 0 || rAddBusy) ? undefined : rDoAddPlayer} disabled={rAddSel.length === 0 || rAddBusy} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: 'none', background: (rAddSel.length === 0 || rAddBusy) ? '#E8E8EC' : BLUE, color: (rAddSel.length === 0 || rAddBusy) ? '#9A9AA0' : '#fff', cursor: (rAddSel.length === 0 || rAddBusy) ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, outline: 'none' }}>{rAddBusy ? 'Guardando…' : (rAddSel.length ? `Agregar ${rAddSel.length} ${rAddSel.length === 1 ? 'jugador' : 'jugadores'}` : 'Agregar jugadores')}</button>
               </div>
+              {rAddDup && (
+                <div style={{ position: 'fixed', left: '50%', bottom: 140, transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.8)', color: '#fff', fontSize: 13.5, fontWeight: 600, padding: '10px 16px', borderRadius: 20, zIndex: 9999, pointerEvents: 'none', maxWidth: '84%', textAlign: 'center' }}>{rAddDup}</div>
+              )}
             </div>
           </div>
         )}

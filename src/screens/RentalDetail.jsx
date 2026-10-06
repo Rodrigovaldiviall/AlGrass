@@ -302,7 +302,7 @@ function CancelSheet({ userName, gameId, baseAmount = 0, onClose, onConfirm, onD
                   )}
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 2px 2px' }}>
-                  <span style={{ fontSize: 14, color: SUB }}>Crédito estimado</span>
+                  <span style={{ fontSize: 14, color: SUB }}>Crédito a devolver</span>
                   <span style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{fmt(estRefund)}</span>
                 </div>
               </>

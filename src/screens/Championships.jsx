@@ -6,7 +6,8 @@ import { faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';   // anten
 import TabBar from '../components/TabBar';
 import ChampConfirmOverlay from '../components/ChampConfirmOverlay';
 import { listPublicChampionships } from '../services/championshipService';
-import { getActiveCity } from '../utils/profileData';
+import { getActiveCity, setActiveCity, fetchCities } from '../utils/profileData';
+import { useAuth } from '../context/AuthContext';
 import { formatDateLabel } from '../utils/format';
 import { coverColor } from '../data/championshipCover';
 
@@ -132,14 +133,41 @@ export default function Championships() {
   const location = useLocation();
   // Ciudad ACTIVA = MISMA fuente que Partidos/Rentals (getActiveCity → localStorage pichanga_profile.city).
   // Reactiva: se re-lee al volver a la pantalla (focus/visibility) para reflejar un cambio de ciudad sin remount.
-  const [userCity, setUserCity] = useState(getActiveCity);
+  // user.city (AuthContext) = ciudad persistida (users.city) ya resuelta desde Supabase al hidratar sesión.
+  // Se usa SOLO como recuperación cuando falta el cache local; nunca para pisar una ciudad válida de localStorage.
+  const { user } = useAuth();
+  // Prioridad: getActiveCity() (localStorage, ciudad activa inmediata y fresca ante cambios en sesión) →
+  // user?.city (recuperación del perfil logueado si el cache se perdió). NO se elige cities[0] ni se carga sin ciudad.
+  const [userCity, setUserCity] = useState(() => getActiveCity() || user?.city || '');
+  const [cityReady, setCityReady] = useState(false);   // ciudad efectiva resuelta (incluye fallback cities[0])
   useEffect(() => {
-    const sync = () => setUserCity(getActiveCity());
+    // Reacciona a user?.city en deps: si al montar userCity era '' y user.city llega async (AuthContext),
+    // este effect re-corre y actualiza userCity → el effect [userCity] dispara la carga de esa ciudad.
+    const sync = () => setUserCity(prev => prev || getActiveCity() || user?.city || '');
     sync();
     window.addEventListener('focus', sync);
     document.addEventListener('visibilitychange', sync);
     return () => { window.removeEventListener('focus', sync); document.removeEventListener('visibilitychange', sync); };
-  }, []);
+  }, [user?.city]);
+  // MISMO fallback que Partidos/Canchas: si no hay ciudad persistida/usuario, usar cities[0] (lista de venues) y
+  // persistirla en localStorage (fuente común). Garantiza una ciudad efectiva SIN selector visible y SIN depender
+  // del perfil. cityReady evita el flash de "sin ciudad" mientras resuelve. Updater funcional: no pisa una ciudad
+  // ya activa/persistida.
+  useEffect(() => {
+    let alive = true;
+    fetchCities().then(cities => {
+      if (!alive) return;
+      setUserCity(prev => {
+        if (prev) return prev;
+        const persisted = getActiveCity() || user?.city || '';
+        if (persisted) return persisted;
+        if (Array.isArray(cities) && cities.length > 0) { setActiveCity(cities[0]); return cities[0]; }  // default alfabético (solo localStorage)
+        return prev;
+      });
+      setCityReady(true);
+    }).catch(() => { if (alive) setCityReady(true); });
+    return () => { alive = false; };
+  }, []); // eslint-disable-line
 
   // Scroll de la lista: mismo mecanismo que Partidos/Canchas.
   const listRef = useRef(null);
@@ -168,14 +196,23 @@ export default function Championships() {
   //    champs: null = cargando · [] = vacío · array = datos. Refetch en refresh/reintento (no sessionStorage).
   const [champs, setChamps] = useState(null);
   const [loadError, setLoadError] = useState(false);
+  // ── INSTRUMENTACIÓN TEMPORAL (solo DEV) — diagnóstico de carga infinita en /championships. Prefijo
+  //    [CHAMP_LIST]. NO cambia comportamiento (el catch solo loguea, no toca estado). QUITAR tras confirmar. ──
+  const DBG = import.meta.env.DEV;
+  const clog = (...a) => { if (DBG) console.log('[CHAMP_LIST]', ...a); };
+  const listDbgRef = useRef(null);
+  clog('component render', { userCity: userCity || null, champs: champs === null ? 'null' : (Array.isArray(champs) ? champs.length : String(champs)), loadError });
+  useEffect(() => { clog('mounted'); return () => clog('unmounted'); }, []); // eslint-disable-line
   const loadChampionships = () => {
+    clog('load effect start', { userCity: userCity || null });
     // Auth hidratando (user aún sin city): NO marcar vacío; se mantiene en carga y se reintenta cuando city llega.
-    if (!userCity) return;
+    if (!userCity) { clog('early return: no userCity'); return; }
     setLoadError(false);
+    clog('list_public start', { userCity });
     listPublicChampionships(userCity).then(({ data, error }) => {
-      if (error) { console.warn('[championships] list_public_championships error:', error.message || error, error); setLoadError(true); setChamps([]); return; }
-      setChamps(data || []);
-    });
+      if (error) { clog('list_public error', { error: error?.message || error || null }); console.warn('[championships] list_public_championships error:', error.message || error, error); setLoadError(true); setChamps([]); clog('list_public settle'); return; }
+      clog('list_public success', { count: (data || []).length }); setChamps(data || []); clog('list_public settle');
+    }).catch((e) => { clog('list_public error (reject)', { message: String(e?.message || e) }); setLoadError(true); setChamps([]); });   // reject → error UI, nunca champs=null eterno
   };
   // Refetch cuando la ciudad del perfil se hidrata o cambia (null → "Arequipa" → "Lima").
   useEffect(() => { loadChampionships(); }, [userCity]); // eslint-disable-line
@@ -250,6 +287,16 @@ export default function Championships() {
     return () => clearTimeout(t);
   }, [highlightedId]);
 
+  if (DBG && champs === null) {
+    const snap = `${userCity || '∅'}|${loadError}`;
+    if (listDbgRef.current !== snap) {
+      listDbgRef.current = snap;
+      console.log('[CHAMP_LIST] loading reason'
+        + '\n  champs=null (skeleton)'
+        + '\n  userCity=' + (userCity || '(vacío → early return, nunca carga)')
+        + '\n  loadError=' + loadError);
+    }
+  }
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
       {/* Header AlGrass */}
@@ -263,7 +310,19 @@ export default function Championships() {
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         {/* La lista scrollea por detrás del CTA; paddingBottom deja aire para la última card */}
         <div ref={listRef} onScroll={e => { scrollPosRef.current = e.currentTarget.scrollTop; }} className="no-sb" style={{ position: 'absolute', inset: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '14px 16px 88px' }}>
-          {champs === null ? (
+          {!userCity && !cityReady ? (
+            // Ciudad aún resolviéndose (fallback cities[0] async) → skeleton, NO empty state (evita flash falso).
+            <>
+              <SectionLabel>Activos</SectionLabel>
+              {Array.from({ length: 3 }, (_, i) => <ChampionshipCardSkeleton key={i} />)}
+            </>
+          ) : !userCity ? (
+            // Caso excepcional: resuelto y aún sin ciudad (no hay venues con ciudad). Copy NEUTRAL (no "ve a tu perfil").
+            <div style={{ padding: '48px 24px', textAlign: 'center' }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Aún no hay campeonatos disponibles</div>
+              <div style={{ fontSize: 13.5, color: SUB, lineHeight: 1.5 }}>Vuelve a intentarlo más tarde.</div>
+            </div>
+          ) : champs === null ? (
             // Datos desconocidos → skeleton con la misma estructura que las cards (evita layout shift).
             <>
               <SectionLabel>Activos</SectionLabel>

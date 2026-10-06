@@ -329,6 +329,20 @@ export function getChampionshipPaymentDetail({ championshipId }) {
 export function getChampionshipPublicPricing({ championshipId }) {
   return supabase.rpc('get_championship_public_pricing', { p_championship_id: championshipId });
 }
+
+// ── "Gestionar mi reserva" (reserva PAGADA): detalle + cancelación. Devuelve null si no hay reserva pagada. ──
+// kind: 'paid_individual_payer' | 'paid_individual_guest' | 'team_owner'. Solo lectura.
+export function getChampionshipMyReservation({ championshipId }) {
+  return supabase.rpc('get_championship_my_reservation', { p_championship_id: championshipId });
+}
+// Cancela plaza(s) individuales (payer: suyas + invitados; invitado: solo la suya). Refund al payer original.
+export function cancelChampionshipRegistrationPlaza({ championshipId, userIds }) {
+  return supabase.rpc('cancel_championship_registration_plaza', { p_championship_id: championshipId, p_user_ids: userIds });
+}
+// Owner cancela la reserva del EQUIPO pagado (retira miembros + elimina equipo). confirm=true salta TEAM_HAS_MEMBERS.
+export function cancelChampionshipTeamRegistration({ championshipId, teamId, confirm = false }) {
+  return supabase.rpc('cancel_championship_team_registration', { p_championship_id: championshipId, p_team_id: teamId, p_confirm: confirm });
+}
 // create_championship_registration_order: crea la order pending (unit × N personas); debita crédito.
 // userIds = [comprador + invitados] (usuarios reales). config.credit_applied / payment_method opcional.
 export function createChampionshipRegistrationOrder({ championshipId, idempotencyKey, userIds, config = {} }) {

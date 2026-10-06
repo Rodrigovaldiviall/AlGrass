@@ -9,6 +9,7 @@ import MapsLinkButton from '../components/MapsLinkButton';
 import { useChampionshipOrganizerPhone } from '../hooks/useChampionshipOrganizerPhone';
 import OrganizerContactButton from '../components/OrganizerContactButton';
 import TabBar from '../components/TabBar';
+import MorphSheet from '../components/MorphSheet';
 import ConfirmExitDialog from '../components/ConfirmExitDialog';
 import I from '../icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -25,7 +26,7 @@ import VenuePickerSheet from '../components/championship/VenuePickerSheet';
 import { effPhaseOf, rosterWindows } from '../utils/championshipRoster';
 import { PlayerModal } from './GameDetail';   // MISMO perfil público que el roster de Match (sin duplicar)
 import { validateCoverImage, uploadChampionshipCover, getChampionshipCoverUrl, deleteChampionshipCover } from '../utils/championshipCoverImage';
-import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, publishChampionshipRpc, updateChampionshipCover, joinChampionshipWithoutTeam, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, getChampionshipRegistrationState, getChampionshipCompetition, manageChampionshipPlayer, saveChampionshipMatchResult, setChampionshipMatchTeam, toggleChampionshipLive, setChampionshipChampion, getChampionshipOrder, cancelChampionshipContract, getChampionshipPaymentDetail, getChampionshipPublicPricing, joinChampionshipTeamWithToken } from '../services/championshipService';
+import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, publishChampionshipRpc, updateChampionshipCover, joinChampionshipWithoutTeam, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, getChampionshipRegistrationState, getChampionshipCompetition, manageChampionshipPlayer, saveChampionshipMatchResult, setChampionshipMatchTeam, toggleChampionshipLive, setChampionshipChampion, getChampionshipOrder, cancelChampionshipContract, getChampionshipPaymentDetail, getChampionshipPublicPricing, joinChampionshipTeamWithToken, getChampionshipMyReservation, cancelChampionshipRegistrationPlaza, cancelChampionshipTeamRegistration } from '../services/championshipService';
 import TeamPickerSheet from '../components/championship/TeamPickerSheet';
 import { slotTeamConflicts } from '../utils/championshipFixture';
 
@@ -188,6 +189,10 @@ export default function ChampionshipView() {
   }, [realId]); // eslint-disable-line
   // Tipo público/privado YA resuelto para ESTE campeonato (o no aplica por no ser real).
   const pricingResolved = !isRealMode || (publicPricing?.championship_id === realId);
+  // Frontera EXPLÍCITA: mientras no sepamos si es público o privado, el estado es "resolviendo" (NO privado).
+  // Se trata como carga (skeleton) y NUNCA se decide clave/gate. El fallback del effect (éxito o catch) siempre
+  // deja publicPricing con championship_id=realId → pricingPending cae a false (no hay skeleton infinito).
+  const pricingPending = isRealMode && !pricingResolved;
   const publicUnitPrice = Number(publicPricing?.public_individual_price) || 0;
   const publicPaid = pricingResolved && !!publicPricing?.is_public && publicUnitPrice > 0;
   // Público de AlGrass (criterio estructural): NO tiene clave de acceso (ni para publicar ni para entrar).
@@ -396,7 +401,9 @@ export default function ChampionshipView() {
   const needsKey = isRealMode && !!realRow && !amOwner && !amHostAccess && !amMember && !publicReadOk && !isPublicChamp;
   // Cache TEMPORAL de clave (solo logueado): si hay entrada NO expirada, hay que revalidarla en silencio antes de
   // dejar entrar. Mientras se revalida (o falta hacerlo), NO se muestra el gate (se muestra carga) → sin flash.
-  const cachedKeyEntry = (needsKey && !verifiedGrant && user?.id) ? readKeyAccess(user.id, realId) : null;
+  // pricingResolved como frontera: sin resolver NO hay cache ni revalidación (evita reval/gate en la ventana,
+  // y evita tratar un público como privado antes de saberlo).
+  const cachedKeyEntry = (pricingResolved && needsKey && !verifiedGrant && user?.id) ? readKeyAccess(user.id, realId) : null;
   const awaitingKeyReval = !!cachedKeyEntry && !keyRevalDone;
   // Gate visible = se necesita clave, sin grant en memoria, y NO hay revalidación pendiente/en curso del cache.
   // No renderizar el gate de clave hasta saber si el campeonato es público (evita el flash en públicos).
@@ -543,6 +550,71 @@ export default function ChampionshipView() {
   // Aparece en validando/pendiente (encima del CTA existente) y en publicado (único botón, flotando sobre TabBar).
   const showManageCTA = isRealMode && amOwner && isCreated;
   const [manageOpen, setManageOpen] = useState(false);   // hoja "Gestionar mi reserva" (menú → detalles/cancelar)
+  // ── PARTICIPANTE PAGADO: "Gestionar mi reserva" (inscripción individual / equipo). Distinto del manage del
+  //    ORGANIZADOR (contrato). Solo público + logueado + reserva PAGADA (free_member/free_individual → null). ──
+  const [myResv, setMyResv] = useState(null);
+  const [resvOpen, setResvOpen] = useState(false);
+  const [resvView, setResvView] = useState('menu');      // 'menu' | 'detail' | 'cancel' (patrón Match: menú → acción)
+  const [resvSel, setResvSel] = useState([]);            // user_ids seleccionados a cancelar (individual payer)
+  const [resvBusy, setResvBusy] = useState(false);
+  const [resvErr, setResvErr] = useState('');
+  const [resvTeamConfirm, setResvTeamConfirm] = useState(false);   // confirmar cancelar equipo con miembros
+  const [resvDone, setResvDone] = useState(null);                  // { refunded } tras cancelar → success in-sheet
+  function loadMyReservation() {
+    if (!isRealMode || !realId || !user?.id || !isPublicChamp) { setMyResv(null); return; }
+    getChampionshipMyReservation({ championshipId: realId })
+      .then(({ data, error }) => { setMyResv((error || !data) ? null : data); })
+      .catch(() => setMyResv(null));
+  }
+  useEffect(() => { loadMyReservation(); }, [isRealMode, realId, user?.id, isPublicChamp, realRow?.status]); // eslint-disable-line
+  function openResv() { setResvErr(''); setResvTeamConfirm(false); setResvSel([]); setResvDone(null); setResvView('menu'); setResvOpen(true); }
+  // Cierre del success in-sheet (botón "Entendido"): NO navega (se queda en el campeonato, mismo scroll). Recién
+  // aquí se refresca el estado autoritativo (myResv puede pasar a null, roster/fila real cambian).
+  function closeResvDone() { setResvOpen(false); setResvDone(null); setResvView('menu'); setResvSel([]); loadMyReservation(); loadRegState(); refreshReal(); }
+  async function doCancelPlazas(userIds) {
+    if (resvBusy || !userIds?.length) return;
+    setResvBusy(true); setResvErr('');
+    const { data, error } = await cancelChampionshipRegistrationPlaza({ championshipId: realId, userIds });
+    setResvBusy(false);
+    if (error) {
+      const m = String(error.message || '');
+      setResvErr(/CANCEL_WINDOW_CLOSED|NOT_OPEN/.test(m) ? 'Las cancelaciones ya no están disponibles.'
+        : /NOT_AUTHORIZED/.test(m) ? 'No puedes cancelar esta plaza.'
+        : 'No se pudo cancelar. Intenta de nuevo.');
+      return;
+    }
+    // Loading→success in-sheet: no cerramos; mostramos confirmación con el crédito devuelto (autoritativo del RPC).
+    setResvSel([]); setResvDone({ refunded: Number(data?.refunded_total) || 0 }); setResvView('done');
+  }
+  async function doCancelTeam(confirm) {
+    if (resvBusy || !myResv?.team_id) return;
+    setResvBusy(true); setResvErr('');
+    const { data, error } = await cancelChampionshipTeamRegistration({ championshipId: realId, teamId: myResv.team_id, confirm });
+    setResvBusy(false);
+    if (error) {
+      const m = String(error.message || '');
+      if (/TEAM_HAS_MEMBERS/.test(m)) { setResvTeamConfirm(true); return; }   // pedir confirmación, no limpiar
+      setResvErr(/CANCEL_WINDOW_CLOSED|NOT_OPEN/.test(m) ? 'Las cancelaciones ya no están disponibles.'
+        : /NOT_AUTHORIZED/.test(m) ? 'No puedes cancelar esta reserva.'
+        : 'No se pudo cancelar. Intenta de nuevo.');
+      return;
+    }
+    setResvTeamConfirm(false); setResvDone({ refunded: Number(data?.refunded) || 0 }); setResvView('done');
+  }
+  // Botón "Gestionar mi reserva" (participante PAGADO) — se renderiza en TODOS los estados publicados
+  // (open/closed/in_progress/completed); por eso vive en una constante usada en ambas ramas (Inscripciones y
+  // Resultados), sin duplicar el modal. Miembros gratuitos: myResv = null → no se muestra. La acción Cancelar
+  // dentro del modal se habilita solo si myResv.cancelable (registration_open); el backend defiende con CANCEL_WINDOW_CLOSED.
+  // Botón FLOTANTE del participante pagado (mismo patrón que el CTA flotante de Games: wrapper absolute bottom con
+  // pointerEvents:none + botón pointerEvents:auto, por encima del TabBar en flujo, respetando safe-area). Se oculta
+  // si el viewer es el OWNER (ese usa su propio CTA de gestión). Se renderiza UNA vez en la capa flotante inferior.
+  const myResvBtn = (isRealMode && myResv && !showManageCTA) ? (
+    <div style={{ position: 'absolute', left: 16, right: 16, bottom: tabBarVisible ? '12px' : 'calc(env(safe-area-inset-bottom) + 12px)', pointerEvents: 'none' }}>
+      <button onClick={openResv} className="pressable" style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 54, background: '#fff', color: TEXT, border: `1.5px solid ${HAIR}`, borderRadius: 18, boxShadow: '0 6px 18px rgba(0,0,0,0.10)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+        Gestionar mi reserva
+      </button>
+    </div>
+  ) : null;
   // Botón "Gestionar mi reserva" (mismo look que el CTA secundario de Match). stacked=true → margen inferior
   // porque va ENCIMA del botón de estado (validando/publicar); stacked=false → único (publicado).
   const manageCTAButton = (stacked) => (
@@ -1048,8 +1120,16 @@ export default function ChampionshipView() {
       if (isPublicChamp && teamPrice > 0 && champ?.status === 'registration_open') {
         // Gating según participación conocida (el backend bloquea igual; aquí evitamos abrir el checkout en vano).
         const part = myChampPart();
+        // Bloqueo SOLO por producto PAGADO incompatible (A/C): paid_individual con plaza propia / team_owner pagado.
         if (part === 'paid_individual' || part === 'team_owner') { flashToast('No es posible realizar esta acción porque ya estás inscrito en este campeonato.'); return; }
-        if (part === 'free_member') { flashToast('Ya perteneces a un equipo en este campeonato.'); return; }   // gratuito: sin mensaje de cancelación
+        // Caso B (payer que canceló su plaza pero conserva invitados activos pagados por él): myChampPart() lo
+        // ve como 'none', pero sigue siendo payer de una inscripción individual viva (ACTIVE_INDIVIDUAL_RESERVATION).
+        if (myResv?.kind === 'paid_individual_payer' && Array.isArray(myResv.plazas) && myResv.plazas.some(p => !p.canceled)) {
+          flashToast('Ya tienes una reserva individual activa en este campeonato.'); return;
+        }
+        // GRATIS → PAGADO permitido. free_member (pertenece a un equipo gratis) → confirmar el cambio antes del
+        // checkout (reutiliza confirmChange; el confirm del pago mueve su fila al nuevo equipo). none → directo.
+        if (part === 'free_member') { setConfirmChange({ kind: 'createteampaid', teamPrice }); return; }
         navigate('/championships/team-checkout', { state: { championshipId: realId, championshipName: name, unitPrice: teamPrice } });
         return;
       }
@@ -1184,6 +1264,7 @@ export default function ChampionshipView() {
     if (!c) return;
     if (c.kind === 'token') joinByToken(c.token, true);   // cambio A→B confirmado (deep-link)
     else if (c.kind === 'joinpaid') navigate('/championships/join', { state: { championshipId: realId, championshipName: name, unitPrice: publicUnitPrice } });  // free_member → checkout individual (team→null al confirmar)
+    else if (c.kind === 'createteampaid') navigate('/championships/team-checkout', { state: { championshipId: realId, championshipName: name, unitPrice: c.teamPrice } });  // free_member → checkout de equipo (su fila se mueve al nuevo team en confirm)
     else if (c.kind === 'team') joinTeamReal(c.teamId);
     else joinNoTeamReal();
   }
@@ -1422,7 +1503,7 @@ export default function ChampionshipView() {
         + '\n  hasUser=' + (!!user));
     }
   }
-  if (isRealMode && (realLoading || realError || !champ || awaitingKeyReval || keyRevalidating)) {
+  if (isRealMode && (realLoading || realError || !champ || awaitingKeyReval || keyRevalidating || pricingPending)) {
     return (
       <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: SOFT, overflow: 'hidden' }}>
         <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 8, paddingRight: 12, flexShrink: 0 }}>
@@ -2046,11 +2127,11 @@ export default function ChampionshipView() {
                 {/* El aviso va ENCIMA de los dos botones: entre ellos dejaba un hueco y
                     separaba «Gestionar mi reserva» de «Publicar campeonato». */}
                 {hint && <div style={{ pointerEvents: 'none', textAlign: 'center', marginBottom: 8, fontSize: 12, fontWeight: 700, color: TEXT, background: '#FFF7EA', border: `1px solid ${ORANGE}66`, borderRadius: 8, padding: '7px 10px' }}>{hint}</div>}
-                {showManageCTA && manageCTAButton(true)}
-                <button onClick={publishChampionship} disabled={!canPublish || publishing} className={(canPublish && !publishing) ? 'pressable' : undefined} style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 54, background: canPublish ? ORANGE : '#E4E4EA', color: canPublish ? '#1B1B1F' : '#9A9AA2', border: 'none', borderRadius: 18, boxShadow: canPublish ? '0 6px 18px rgba(245,165,36,0.40)' : 'none', cursor: (canPublish && !publishing) ? 'pointer' : 'not-allowed', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, WebkitTapHighlightColor: 'transparent' }}>
+                <button onClick={publishChampionship} disabled={!canPublish || publishing} className={(canPublish && !publishing) ? 'pressable' : undefined} style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 54, background: canPublish ? ORANGE : '#E4E4EA', color: canPublish ? '#1B1B1F' : '#9A9AA2', border: 'none', borderRadius: 18, boxShadow: canPublish ? '0 6px 18px rgba(245,165,36,0.40)' : 'none', cursor: (canPublish && !publishing) ? 'pointer' : 'not-allowed', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, WebkitTapHighlightColor: 'transparent', marginBottom: showManageCTA ? 10 : 0 }}>
                   {publishing && <span style={{ width: 16, height: 16, borderRadius: '50%', border: '2.5px solid rgba(27,27,31,0.2)', borderTop: '2.5px solid #1B1B1F', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />}
                   {publishing ? 'Publicando…' : 'Publicar campeonato'}
                 </button>
+                {showManageCTA && manageCTAButton(false)}
               </>
             );
           })() : champ ? (showManageCTA ? manageCTAButton(false) : null) : contactRequest?.status === 'pending' ? (
@@ -2069,6 +2150,9 @@ export default function ChampionshipView() {
             </button>
           )}
         </div>
+
+        {/* Participante PAGADO: "Gestionar mi reserva" flotante (mismo patrón que el CTA de Games), sobre el TabBar. */}
+        {myResvBtn}
 
         {/* Confirmación: pasar de un equipo a "sin equipo" (mueve la inscripción, no duplica) */}
         {confirmMove && (
@@ -2089,12 +2173,15 @@ export default function ChampionshipView() {
           const currentTeamName = myMembership?.team_id ? (regTeams.find(t => t.id === myMembership.team_id)?.name || 'tu equipo') : null;
           const isToken = confirmChange.kind === 'token';
           const isToTeam = confirmChange.kind === 'team' || isToken;
+          const isCreateTeam = confirmChange.kind === 'createteampaid';   // free_member → comprar equipo nuevo
           return (
             <div className="sheet-overlay" onClick={() => setConfirmChange(null)} style={{ position: 'fixed', inset: 0, zIndex: 250, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', background: 'rgba(0,0,0,0.35)', padding: '0 16px calc(24px + env(safe-area-inset-bottom))' }}>
               <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 420, background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 -8px 32px rgba(0,0,0,0.12)' }}>
-                <div style={{ fontSize: 17, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>{isToTeam ? 'Cambiar de equipo' : '¿Continuar sin equipo?'}</div>
+                <div style={{ fontSize: 17, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>{(isToTeam || isCreateTeam) ? 'Cambiar de equipo' : '¿Continuar sin equipo?'}</div>
                 <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, marginTop: 8 }}>
-                  {isToken
+                  {isCreateTeam
+                    ? (currentTeamName ? `Ya perteneces a ${currentTeamName}. Si continúas, pasarás al nuevo equipo.` : 'Si continúas, crearás y pasarás a tu nuevo equipo.')
+                    : isToken
                     ? (currentTeamName ? `Ya perteneces a ${currentTeamName}. ¿Quieres cambiarte a este equipo?` : '¿Quieres cambiarte a este equipo?')
                     : currentTeamName
                     ? (isToTeam ? `Ya estás inscrito en ${currentTeamName}. ¿Quieres cambiarte a ${confirmChange.teamName}?` : `Ya estás inscrito en ${currentTeamName}. Si continúas, dejarás el equipo y quedarás inscrito sin equipo.`)
@@ -2102,7 +2189,7 @@ export default function ChampionshipView() {
                 </div>
                 <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
                   <button onClick={() => setConfirmChange(null)} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: `1.5px solid ${HAIR}`, background: '#fff', color: TEXT, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Cancelar</button>
-                  <button onClick={confirmChangeGo} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: 'none', background: ORANGE, color: '#1B1B1F', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{isToTeam ? 'Cambiarme' : 'Continuar sin equipo'}</button>
+                  <button onClick={confirmChangeGo} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: 'none', background: ORANGE, color: '#1B1B1F', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>{isToTeam ? 'Cambiarme' : isCreateTeam ? 'Continuar' : 'Continuar sin equipo'}</button>
                 </div>
               </div>
             </div>
@@ -2126,6 +2213,183 @@ export default function ChampionshipView() {
       {selectedPlayer && <PlayerModal player={selectedPlayer} onClose={() => setSelectedPlayer(null)} />}
       {/* "Gestionar mi reserva" (owner) — patrón Match: menú → Ver detalles del pago / Cancelar reserva. */}
       {manageOpen && <OwnerManageSheet onClose={() => setManageOpen(false)} championshipId={realId} status={realRow?.status} onExtrasCanceled={refreshReal} onFullCanceled={(amount) => navigate('/profile', { replace: true, state: { champConfirm: 'canceled', champCanceledAmount: amount } })} />}
+      {/* "Gestionar mi reserva" (PARTICIPANTE pagado): detalle de pago + cancelación. Patrón Match. */}
+      {resvOpen && myResv && (() => {
+        const kind = myResv.kind;
+        const canCancel = !!myResv.cancelable;
+        const rewardN = Number(myResv.reward_applied) || 0;
+        const creditN = Number(myResv.credit_applied) || 0;
+        const fmt = soles;   // formateador de moneda del módulo (presentación)
+        // Línea estilo Match (PaymentDetail.row): label y valor mismo tamaño/peso; accent=GREEN, bold=700.
+        const row = (label, value, bold = false, accent = false) => (
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: bold ? 700 : 500, color: accent ? GREEN : TEXT }}><span>{label}</span><span>{value}</span></div>
+        );
+        const effView = resvDone ? 'done' : resvTeamConfirm ? 'teamconfirm' : resvView;   // dirige el morph (altura/fade)
+        return (
+        <MorphSheet view={effView} busy={resvBusy} onClose={() => { if (resvDone) closeResvDone(); else { setResvOpen(false); setResvDone(null); } }}>
+          {(sref) => (
+          <div ref={sref} className="no-sb" style={{ padding: '4px 20px calc(20px + env(safe-area-inset-bottom))', maxHeight: '72vh', overflowY: 'auto', overscrollBehavior: 'contain' }}>
+            {resvDone ? (
+              // ÉXITO in-sheet (loading→success): NO cierra ni navega; el usuario pulsa "Entendido".
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '28px 8px 8px', textAlign: 'center' }}>
+                <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#D7F0DD', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke={GREEN} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                </div>
+                <div style={{ fontSize: 17, fontWeight: 700, color: TEXT }}>Reserva cancelada</div>
+                <div style={{ fontSize: 14, color: SUB, lineHeight: 1.45 }}>{(Number(resvDone.refunded) || 0) > 0 ? <>Se generó un crédito de <strong style={{ color: GREEN }}>{soles(resvDone.refunded)}</strong> en tu perfil.</> : 'Tu cancelación se procesó.'}</div>
+                <button onClick={closeResvDone} className="pressable" style={{ width: '100%', height: 50, borderRadius: 14, border: 'none', background: BLUE, color: '#fff', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, marginTop: 8, outline: 'none' }}>Entendido</button>
+              </div>
+            ) : resvTeamConfirm ? (
+              <>
+                <div style={{ fontSize: 17, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>¿Cancelar la reserva del equipo?</div>
+                <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, marginTop: 8 }}>Tienes jugadores inscritos en este equipo. Si cancelas la reserva, el equipo será retirado del campeonato.</div>
+                {resvErr && <div style={{ fontSize: 12.5, color: RED, marginTop: 10 }}>{resvErr}</div>}
+                <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+                  <button onClick={() => { setResvTeamConfirm(false); }} disabled={resvBusy} className="pressable" style={{ flex: 1, height: 50, borderRadius: 14, border: `1.5px solid ${HAIR}`, background: '#fff', color: TEXT, cursor: resvBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, outline: 'none' }}>Volver</button>
+                  <button onClick={() => doCancelTeam(true)} disabled={resvBusy} className="pressable" style={{ flex: 1, height: 50, borderRadius: 14, border: 'none', background: resvBusy ? '#E8E8EC' : RED, color: resvBusy ? '#9A9AA0' : '#fff', cursor: resvBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, outline: 'none' }}>{resvBusy ? 'Cancelando…' : 'Confirmar cancelación'}</button>
+                </div>
+              </>
+            ) : resvView === 'menu' ? (
+              // MENÚ (patrón Match): primero elegir acción. cancelLabel según kind.
+              (() => {
+                const cancelLabel = kind === 'paid_individual_guest' ? 'Cancelar mi plaza' : 'Cancelar reserva';
+                const rowCard = { width: '100%', padding: '14px 16px', borderRadius: 14, background: '#fff', border: `1px solid ${HAIR}`, display: 'flex', alignItems: 'center', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', WebkitTapHighlightColor: 'transparent', outline: 'none' };
+                const chev = (color) => <svg width="8" height="14" viewBox="0 0 8 14" fill="none" style={{ flexShrink: 0 }}><path d="M1 1l6 6-6 6" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+                return (
+                  <>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, textAlign: 'center', letterSpacing: -0.2, marginBottom: 16 }}>Gestionar mi reserva</div>
+                    <button onClick={() => { setResvErr(''); setResvView('detail'); }} className="pressable" style={{ ...rowCard, marginBottom: canCancel ? 10 : 0 }}>
+                      <div style={{ flex: 1, fontSize: 15, fontWeight: 600, color: TEXT }}>Ver detalles del pago</div>
+                      {chev(SUB)}
+                    </button>
+                    {canCancel ? (
+                      <button onClick={() => { setResvErr(''); setResvSel([]); setResvView('cancel'); }} className="pressable" style={{ ...rowCard, marginBottom: 0 }}>
+                        <div style={{ flex: 1, fontSize: 15, fontWeight: 600, color: RED }}>{cancelLabel}</div>
+                        {chev(RED + '80')}
+                      </button>
+                    ) : (
+                      <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.45, marginTop: 10, textAlign: 'center' }}>Las cancelaciones solo están disponibles mientras las inscripciones estén abiertas.</div>
+                    )}
+                  </>
+                );
+              })()
+            ) : resvView === 'detail' ? (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', marginBottom: 2 }}>
+                  <button onClick={() => { setResvErr(''); setResvView('menu'); }} aria-label="Atrás" style={{ width: 26, height: 20, marginLeft: -4, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', outline: 'none' }}>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke={TEXT} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  </button>
+                  <div style={{ flex: 1, fontSize: 16, fontWeight: 700, color: TEXT, textAlign: 'center', letterSpacing: -0.2 }}>Detalles del pago</div>
+                  <span style={{ width: 22, flexShrink: 0 }} />
+                </div>
+
+                {/* Detalle de pago */}
+                <div style={{ marginTop: 14, padding: '12px 14px 14px', background: '#fff', border: `1px solid ${HAIR}`, borderRadius: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {kind === 'team_owner' ? (
+                    <>
+                      {row('Equipo', myResv.team_name || '—')}
+                      {row('Inscripción del equipo', fmt(Number(myResv.unit_price) || Number(myResv.subtotal_amount) || 0))}
+                      {rewardN > 0 && row('Recompensa', `− ${fmt(rewardN)}`, false, true)}
+                      {creditN > 0 && row('Crédito aplicado', `− ${fmt(creditN)}`, false, true)}
+                      <div style={{ borderTop: `1px solid ${HAIR}`, paddingTop: 8 }}>{row('Importe pagado', fmt(myResv.external_amount), true)}</div>
+                    </>
+                  ) : kind === 'paid_individual_guest' ? (
+                    <>
+                      {row('Mi plaza', fmt(myResv.my_amount))}
+                      {row('Pagado por', myResv.payer_name || 'otra persona')}
+                    </>
+                  ) : (Array.isArray(myResv.orders) && myResv.orders.length > 1) ? (
+                    // PAYER con plazas financiadas por VARIAS orders (reinscripción): un bloque por order, cada
+                    // una con su propio snapshot (nunca se suman reward/crédito entre orders).
+                    <>
+                      {myResv.orders.map((o, i) => { const r = Number(o.reward_applied) || 0, c = Number(o.credit_applied) || 0, g = Number(o.guest_total) || 0; return (
+                        <div key={o.order_id} style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: i ? `1px solid ${HAIR}` : 'none', marginTop: i ? 2 : 0, paddingTop: i ? 10 : 0 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: SUB }}>Pago {i + 1}</div>
+                          {row('Titular', fmt(Number(o.unit_price) || 0))}
+                          {r > 0 && row('Recompensa', `− ${fmt(r)}`, false, true)}
+                          {g > 0 && row(`Invitados (${(o.player_count || 1) - 1})`, fmt(g))}
+                          {c > 0 && row('Crédito aplicado', `− ${fmt(c)}`, false, true)}
+                          <div style={{ borderTop: `1px solid ${HAIR}`, paddingTop: 8 }}>{row('Importe pagado', fmt(o.external_amount), true)}</div>
+                        </div>
+                      ); })}
+                    </>
+                  ) : (
+                    <>
+                      {row('Titular', fmt(Number(myResv.unit_price) || 0))}
+                      {rewardN > 0 && row('Recompensa', `− ${fmt(rewardN)}`, false, true)}
+                      {(Number(myResv.guest_total) || 0) > 0 && row(`Invitados (${(myResv.player_count || 1) - 1})`, fmt(myResv.guest_total))}
+                      {creditN > 0 && row('Crédito aplicado', `− ${fmt(creditN)}`, false, true)}
+                      <div style={{ borderTop: `1px solid ${HAIR}`, paddingTop: 8 }}>{row('Importe pagado', fmt(myResv.external_amount), true)}</div>
+                    </>
+                  )}
+                  {rewardN > 0 && <div style={{ fontSize: 11.5, color: SUB, lineHeight: 1.4 }}>La recompensa aplicada no se reembolsa.</div>}
+                </div>
+
+              </>
+            ) : (
+              // resvView === 'cancel' (solo accesible cuando canCancel)
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button onClick={() => { setResvErr(''); setResvView('menu'); }} aria-label="Atrás" style={{ width: 22, height: 20, marginLeft: -4, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', outline: 'none' }}>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5l-7 7 7 7" stroke={TEXT} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  </button>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, letterSpacing: -0.2 }}>{kind === 'paid_individual_guest' ? 'Cancelar mi plaza' : 'Cancelar reserva'}</div>
+                </div>
+                {resvErr && <div style={{ fontSize: 12.5, color: RED, lineHeight: 1.4, marginTop: 12 }}>{resvErr}</div>}
+
+                {kind === 'team_owner' ? (
+                  <>
+                    {/* Importe autoritativo del getter (refundable_total). La recompensa no vuelve; eso lo controla el backend. Mismo patrón visual que Rental. */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 2px 2px' }}>
+                      <span style={{ fontSize: 14, color: SUB }}>Crédito a devolver</span>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{fmt(Number(myResv.refundable_total) || 0)}</span>
+                    </div>
+                    <button onClick={() => doCancelTeam(false)} disabled={resvBusy} className="pressable" style={{ width: '100%', height: 50, borderRadius: 14, border: 'none', background: resvBusy ? '#E8E8EC' : RED, color: resvBusy ? '#9A9AA0' : '#fff', cursor: resvBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, marginTop: 16, outline: 'none' }}>{resvBusy ? 'Cancelando…' : 'Cancelar reserva del equipo'}</button>
+                  </>
+                ) : kind === 'paid_individual_guest' ? (
+                  myResv.my_canceled ? (
+                    <div style={{ fontSize: 13, color: SUB, marginTop: 14 }}>Tu plaza ya fue cancelada.</div>
+                  ) : (
+                    <button onClick={() => doCancelPlazas([user?.id].filter(Boolean))} disabled={resvBusy} className="pressable" style={{ width: '100%', height: 50, borderRadius: 14, border: 'none', background: resvBusy ? '#E8E8EC' : RED, color: resvBusy ? '#9A9AA0' : '#fff', cursor: resvBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, marginTop: 16, outline: 'none' }}>{resvBusy ? 'Cancelando…' : 'Cancelar mi inscripción'}</button>
+                  )
+                ) : (
+                  // payer: seleccionar plazas a cancelar (las activas)
+                  (() => {
+                    const plazas = Array.isArray(myResv.plazas) ? myResv.plazas : [];
+                    const active = plazas.filter(p => !p.canceled);
+                    const toggle = (uid) => setResvSel(s => s.includes(uid) ? s.filter(x => x !== uid) : [...s, uid]);
+                    return (
+                      <>
+                        <div style={{ fontSize: 13, color: SUB, margin: '10px 0 2px' }}>Selecciona las plazas a cancelar.</div>
+                        {plazas.map(p => p.canceled ? (
+                          // Histórico: plaza cancelada → nombre en gris + "Cancelado", no seleccionable (estilo Match).
+                          <div key={p.user_id} style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '12px 0', borderBottom: `1px solid ${HAIR}` }}>
+                            <span style={{ flex: 1, minWidth: 0, fontSize: 14.5, fontWeight: 600, color: SUB, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.full_name}{p.is_payer ? ' (Titular)' : ''}</span>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: RED }}>Cancelado</span>
+                          </div>
+                        ) : (
+                          <button key={p.user_id} onClick={() => toggle(p.user_id)} className="pressable" style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '12px 0', background: 'transparent', border: 'none', borderBottom: `1px solid ${HAIR}`, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', outline: 'none' }}>
+                            <span style={{ width: 22, height: 22, borderRadius: '50%', flexShrink: 0, border: `2px solid ${resvSel.includes(p.user_id) ? BLUE : '#C7C7CC'}`, background: resvSel.includes(p.user_id) ? BLUE : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{resvSel.includes(p.user_id) && <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 5l2.5 2.5L8 2.5" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>}</span>
+                            <span style={{ flex: 1, minWidth: 0, fontSize: 14.5, fontWeight: 600, color: p.is_payer ? BLUE : TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.full_name}{p.is_payer ? ' (Titular)' : ''}</span>
+                            <span style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>{soles(p.amount)}</span>
+                          </button>
+                        ))}
+                        {active.length === 0 ? (
+                          <div style={{ fontSize: 13, color: SUB, marginTop: 12 }}>No quedan plazas activas en esta reserva.</div>
+                        ) : (
+                          <button onClick={() => doCancelPlazas(resvSel)} disabled={resvBusy || resvSel.length === 0} className="pressable" style={{ width: '100%', height: 50, borderRadius: 14, border: 'none', background: (resvBusy || resvSel.length === 0) ? '#E8E8EC' : RED, color: (resvBusy || resvSel.length === 0) ? '#9A9AA0' : '#fff', cursor: (resvBusy || resvSel.length === 0) ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, marginTop: 14, outline: 'none' }}>{resvBusy ? 'Cancelando…' : `Cancelar ${resvSel.length || ''} plaza${resvSel.length === 1 ? '' : 's'}`.trim()}</button>
+                        )}
+                      </>
+                    );
+                  })()
+                )}
+              </>
+            )}
+          </div>
+          )}
+        </MorphSheet>
+        );
+      })()}
       {/* Selector de equipo para un slot VACÍO de la llave (host/AlGrass en in_progress). Excluye el equipo del
           otro lado del mismo partido. Guardar → set_championship_match_team → refresca la llave. */}
       <TeamPickerSheet

@@ -30,20 +30,23 @@ export function Avatar({ name, hue = 210, size = 44, avatarPath = null, avatarVe
   );
 }
 
-export function PlayerRow({ p, checked, onToggle, rostered = false }) {
+// `disabled` (opcional): fila no seleccionable (atenuada + check-box gris). onToggle SIEMPRE se dispara para que
+// el padre pueda mostrar el motivo (toast), mismo patrón que Match. `subtitle` (opcional) reemplaza el @code
+// (p.ej. "Ya inscrito"). Callers existentes (Match) no pasan estas props → comportamiento intacto.
+export function PlayerRow({ p, checked, onToggle, rostered = false, disabled = false, subtitle = null }) {
   return (
     <button
       onClick={onToggle}
-      style={{ width: '100%', textAlign: 'left', padding: '10px 16px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
+      style={{ width: '100%', textAlign: 'left', padding: '10px 16px', background: 'transparent', border: 'none', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.55 : 1, display: 'flex', alignItems: 'center', gap: 12, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
       <Avatar name={p.name} hue={p.hue} size={42} avatarPath={p.avatarPath ?? null} avatarVersion={p.avatarVersion ?? null} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 15, fontWeight: 600, color: TEXT, letterSpacing: -0.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
-        <div style={{ fontSize: 12, color: SUB, marginTop: 1 }}>{p.code}</div>
+        <div style={{ fontSize: 12, color: SUB, marginTop: 1 }}>{subtitle || p.code}</div>
       </div>
       <span style={{
         width: 24, height: 24, borderRadius: 7,
         border: `1.6px solid ${checked ? ORANGE : '#C7C7CC'}`,
-        background: checked ? ORANGE : (rostered ? '#E5E5EA' : '#fff'),
+        background: checked ? ORANGE : ((rostered || disabled) ? '#E5E5EA' : '#fff'),
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
         flexShrink: 0,
       }}>
