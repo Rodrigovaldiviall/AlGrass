@@ -94,10 +94,10 @@ export default function ChampionshipTeamCheckout() {
     orderRef.current = { key: null };
     stopConfirming();
     // MISMO patrón que la inscripción sin equipo (ChampionshipJoinCheckout.done): la confirmación se muestra
-    // SOBRE Profile y, al continuar, se señala (highlight) el campeonato. Llevamos el enlace de unión del equipo
-    // (join_token) para que el overlay de Profile lo comparta.
-    const joinToken = data?.join_token || null;
-    const link = joinToken ? `${window.location.origin}/championships/view/${championshipId}?jt=${joinToken}` : '';
+    // SOBRE Profile y, al continuar, se señala (highlight) el campeonato. El enlace del equipo es SOLO navegación
+    // (?team=<teamId>): NO lleva token ni credencial; unirse exige join_secret manual. La clave se comparte aparte.
+    const teamId = data?.team_id || null;
+    const link = teamId ? `${window.location.origin}/championships/view/${championshipId}?team=${teamId}` : `${window.location.origin}/championships/view/${championshipId}`;
     navigate('/profile', { replace: true, state: { champConfirm: 'team_created', championshipId, champShareLink: link, champTeamName: name.trim() } });
   };
 
@@ -129,8 +129,34 @@ export default function ChampionshipTeamCheckout() {
 
   const canSubmit = nameOk && secretOk && unitPrice > 0 && !confirming;
 
+  // Teclado móvil: con el teclado abierto el navegador panea el layout viewport (100dvh) y se ve el fondo azul de
+  // #root, moviendo toda la pantalla. Fijamos el alto de ESTA screen-shell al alto VISIBLE (visualViewport.height)
+  // SOLO mientras el teclado está abierto → no hace falta panear, el input queda alcanzable por el scroller interno
+  // (overflowY:auto, overscrollBehavior:none) y el fondo no se mueve. Sin teclado, se restaura (layout intacto).
+  const shellRef = useRef(null);
+  useEffect(() => {
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    if (!vv) return;
+    const prevBodyOv = document.body.style.overflow;
+    const apply = () => {
+      const shell = shellRef.current; if (!shell) return;
+      const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);   // alto aproximado del teclado
+      if (kb > 120) { shell.style.height = vv.height + 'px'; document.body.style.overflow = 'hidden'; }
+      else { shell.style.height = ''; document.body.style.overflow = prevBodyOv; }
+    };
+    apply();
+    vv.addEventListener('resize', apply);
+    vv.addEventListener('scroll', apply);
+    return () => {
+      vv.removeEventListener('resize', apply);
+      vv.removeEventListener('scroll', apply);
+      const shell = shellRef.current; if (shell) shell.style.height = '';
+      document.body.style.overflow = prevBodyOv;
+    };
+  }, []);
+
   return (
-    <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden', position: 'relative' }}>
+    <div ref={shellRef} className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden', position: 'relative' }}>
       <TopBar title="Crear equipo" onCancel={back} />
 
       <div className="no-sb" style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'none' }}>

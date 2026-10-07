@@ -26,7 +26,7 @@ import VenuePickerSheet from '../components/championship/VenuePickerSheet';
 import { effPhaseOf, rosterWindows } from '../utils/championshipRoster';
 import { PlayerModal } from './GameDetail';   // MISMO perfil público que el roster de Match (sin duplicar)
 import { validateCoverImage, uploadChampionshipCover, getChampionshipCoverUrl, deleteChampionshipCover } from '../utils/championshipCoverImage';
-import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, publishChampionshipRpc, updateChampionshipCover, joinChampionshipWithoutTeam, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, getChampionshipRegistrationState, getChampionshipCompetition, manageChampionshipPlayer, saveChampionshipMatchResult, setChampionshipMatchTeam, toggleChampionshipLive, setChampionshipChampion, getChampionshipOrder, cancelChampionshipContract, getChampionshipPaymentDetail, getChampionshipPublicPricing, joinChampionshipTeamWithToken, getChampionshipMyReservation, cancelChampionshipRegistrationPlaza, cancelChampionshipTeamRegistration } from '../services/championshipService';
+import { getChampionshipPublic, getChampionshipRegistrationKey, verifyChampionshipAccess, updateChampionshipPrivacy, publishChampionshipRpc, updateChampionshipCover, joinChampionshipWithoutTeam, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, getChampionshipRegistrationState, getChampionshipCompetition, manageChampionshipPlayer, saveChampionshipMatchResult, setChampionshipMatchTeam, toggleChampionshipLive, setChampionshipChampion, getChampionshipOrder, cancelChampionshipContract, getChampionshipPaymentDetail, getChampionshipPublicPricing, getChampionshipMyReservation, cancelChampionshipRegistrationPlaza, cancelChampionshipTeamRegistration } from '../services/championshipService';
 import TeamPickerSheet from '../components/championship/TeamPickerSheet';
 import { slotTeamConflicts } from '../utils/championshipFixture';
 
@@ -112,7 +112,7 @@ export default function ChampionshipView() {
   const { id: routeId } = useParams();
   // Deep-link a un EQUIPO: /championships/view/:id?team=<teamId>. Se reenvía a ChampionshipTeam en cuanto el
   // acceso está resuelto (tras el gate de clave si aplica). Reutiliza gate/acceso/auth de esta pantalla.
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const deepTeamId = searchParams.get('team');
   const deepFwdRef = useRef(false);
   const realId = routeId || null;              // /championships/view/:id → campeonato REAL (DB = fuente de verdad)
@@ -583,8 +583,11 @@ export default function ChampionshipView() {
         : 'No se pudo cancelar. Intenta de nuevo.');
       return;
     }
-    // Loading→success in-sheet: no cerramos; mostramos confirmación con el crédito devuelto (autoritativo del RPC).
-    setResvSel([]); setResvDone({ refunded: Number(data?.refunded_total) || 0 }); setResvView('done');
+    // Loading→success in-sheet. Refrescamos la autoridad YA (bajo el veil del success) y limpiamos myResv de forma
+    // optimista: evita que al pulsar "Entendido" reaparezca por un frame el estado viejo (botón/plazas stale). Si
+    // quedaran plazas, loadMyReservation repuebla el estado correcto mientras el success sigue cubriendo.
+    setResvSel([]); setMyResv(null); loadRegState(); refreshReal(); loadMyReservation();
+    setResvDone({ refunded: Number(data?.refunded_total) || 0 }); setResvView('done');
   }
   async function doCancelTeam(confirm) {
     if (resvBusy || !myResv?.team_id) return;
@@ -599,7 +602,10 @@ export default function ChampionshipView() {
         : 'No se pudo cancelar. Intenta de nuevo.');
       return;
     }
-    setResvTeamConfirm(false); setResvDone({ refunded: Number(data?.refunded) || 0 }); setResvView('done');
+    // Éxito: refrescar autoridad YA + limpiar myResv optimista (bajo el veil del success) → al cerrar, el equipo y
+    // "Gestionar mi reserva" ya no reaparecen por un frame. doCancelTeam cancela TODO el equipo → myResv = null.
+    setResvTeamConfirm(false); setMyResv(null); loadRegState(); refreshReal();
+    setResvDone({ refunded: Number(data?.refunded) || 0 }); setResvView('done');
   }
   // Botón "Gestionar mi reserva" (participante PAGADO) — se renderiza en TODOS los estados publicados
   // (open/closed/in_progress/completed); por eso vive en una constante usada en ambas ramas (Inscripciones y
@@ -946,10 +952,6 @@ export default function ChampionshipView() {
       champStatus: realRow.status, champLive: realRow.live_started_at ?? null, regSnapshot: regState,
       championshipOrigin: readBackOrigin() || 'championships', isPublic: isPublicChamp,
       openSecretJoin: searchParams.get('join') === 'secret',   // intención tras login → abre modal de clave 1 vez
-      // Link del owner (?jt=TOKEN): el equipo recibe el token para que "Unirme" use join_token (sin clave). NO
-      // auto-join al abrir; openTokenJoin solo lo activa la intención preservada tras login (?join=token).
-      joinToken: searchParams.get('jt') || null,
-      openTokenJoin: searchParams.get('join') === 'token',
     } });
   }, [deepTeamId, isRealMode, realRow, gateOpen]); // eslint-disable-line
 
@@ -1266,35 +1268,15 @@ export default function ChampionshipView() {
   function confirmChangeGo() {
     const c = confirmChange; setConfirmChange(null);
     if (!c) return;
-    if (c.kind === 'token') joinByToken(c.token, true);   // cambio A→B confirmado (deep-link)
-    else if (c.kind === 'joinpaid') navigate('/championships/join', { state: { championshipId: realId, championshipName: name, unitPrice: publicUnitPrice } });  // free_member → checkout individual (team→null al confirmar)
+    if (c.kind === 'joinpaid') navigate('/championships/join', { state: { championshipId: realId, championshipName: name, unitPrice: publicUnitPrice } });  // free_member → checkout individual (team→null al confirmar)
     else if (c.kind === 'createteampaid') navigate('/championships/team-checkout', { state: { championshipId: realId, championshipName: name, unitPrice: c.teamPrice } });  // free_member → checkout de equipo (su fila se mueve al nuevo team en confirm)
     else if (c.kind === 'team') joinTeamReal(c.teamId);
     else joinNoTeamReal();
   }
 
   // ── Deep-link de invitación por TOKEN de equipo (público pagado) ──
-  // Limpia ?jt= de la URL sin remontar (replace). El backend es la autoridad del join.
-  const clearJt = () => { const sp = new URLSearchParams(searchParams); sp.delete('jt'); setSearchParams(sp, { replace: true }); };
-  async function joinByToken(token, confirmChange) {
-    const { error } = await joinChampionshipTeamWithToken({ token, confirmChange });
-    if (error) {
-      const m = String(error.message || '');
-      if (/CONFIRM_TEAM_CHANGE_REQUIRED/.test(m)) { setConfirmChange({ kind: 'token', token }); return; }  // NO limpiar: espera decisión
-      clearJt();
-      if (/PAID_REGISTRATION_MUST_CANCEL_FIRST/.test(m)) flashToast('Primero debes cancelar tu inscripción actual.');
-      else if (/NOT_OPEN/.test(m)) flashToast('Las inscripciones están cerradas.');
-      else if (/INVALID_LINK/.test(m)) flashToast('El enlace de invitación no es válido.');
-      else flashToast('No se pudo unir al equipo. Intenta de nuevo.');
-      return;
-    }
-    clearJt();
-    flashToast('Te uniste al equipo');
-    loadRegState(); refreshReal();   // refresco autoritativo (participación + roster + fila real)
-  }
-  // NOTA: el link del owner (?team=&jt=TOKEN) YA NO auto-une al abrir. El reenvío por ?team= lleva al equipo con
-  // el token (joinToken/openTokenJoin); el join ocurre SOLO cuando el usuario pulsa "Unirme" en ChampionshipTeam
-  // (o, tras login, por la intención preservada ?join=token). Aquí no se hace nada con ?jt=.
+  // En Campeonatos el link es SOLO navegación: NO existe join por token (?jt=) ni auto-join al abrir. El link de
+  // equipo usa únicamente ?team=<teamId> (destino); unirse exige SIEMPRE join_secret manual en ChampionshipTeam.
   // REAL: unirse a un equipo EXISTENTE (registration_open/closed). Requiere no estar ya inscrito.
   // SET membership al equipo (insert o cambio directo). La confirmación de cambio se maneja en la UI antes.
   async function joinTeamReal(teamId) {
@@ -1382,9 +1364,9 @@ export default function ChampionshipView() {
     // round-trip de /auth para NO re-pedir la clave al volver autenticado (se promueve a grant de su uid).
     if (verifiedGrant && realId) { try { sessionStorage.setItem('champ_access_resume', realId); } catch {} }
     // Real: volver al MISMO campeonato tras login (conserva el grant de acceso local). Creación: vista sin id.
-    // Preservar el DESTINO COMPLETO (pathname + query): location.search lleva el ?jt= del link de equipo (y
-    // cualquier otro param). Sin esto, el token se perdía al pasar por /auth. La clave del privado NO viaja en
-    // la URL (se valida por modal → verifiedGrant/champ_access_resume), así que no se filtra aquí.
+    // Preservar el DESTINO COMPLETO (pathname + query): p.ej. ?team=<id> del link de equipo, para volver a la
+    // misma pantalla. La clave del privado NO viaja en la URL (se valida por modal → verifiedGrant/
+    // champ_access_resume), así que no se filtra aquí.
     const base = isRealMode ? ('/championships/view/' + realId) : '/championships/view';
     navigate('/auth', { state: { backPath: base + (location.search || '') } });
     return false;
@@ -1580,7 +1562,7 @@ export default function ChampionshipView() {
           <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>{isRealMode ? realHeaderTitle : isCreated && champ?.status === 'registration_open' ? 'Inscripciones abiertas' : isCreated && champ?.status === 'registration_closed' ? 'Calendario y resultados' : 'Ver mi campeonato'}</div>
           {/* Compartir — SOLO en campeonato REAL (todo actor, toda fase); comparte el enlace PÚBLICO. En "Crear/Ver
               mi campeonato" (demo/preview, sin campeonato real) NUNCA se muestra: no hay URL pública que compartir. */}
-          {isRealMode && (
+          {isRealMode && champ?.status !== 'pending_publish' && (
             <button className="pressable" onClick={shareChampionship} aria-label="Compartir" style={{ position: 'absolute', right: 0, width: 30, height: 26, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', WebkitTapHighlightColor: 'transparent' }}>
               {I.share('#fff')}
             </button>
@@ -2176,8 +2158,7 @@ export default function ChampionshipView() {
         {/* Confirmación REAL (Fase 10): cambiar de equipo o pasar a sin equipo estando ya inscrito. */}
         {confirmChange && (() => {
           const currentTeamName = myMembership?.team_id ? (regTeams.find(t => t.id === myMembership.team_id)?.name || 'tu equipo') : null;
-          const isToken = confirmChange.kind === 'token';
-          const isToTeam = confirmChange.kind === 'team' || isToken;
+          const isToTeam = confirmChange.kind === 'team';
           const isCreateTeam = confirmChange.kind === 'createteampaid';   // free_member → comprar equipo nuevo
           return (
             <div className="sheet-overlay" onClick={() => setConfirmChange(null)} style={{ position: 'fixed', inset: 0, zIndex: 250, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', background: 'rgba(0,0,0,0.35)', padding: '0 16px calc(24px + env(safe-area-inset-bottom))' }}>
@@ -2186,8 +2167,6 @@ export default function ChampionshipView() {
                 <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, marginTop: 8 }}>
                   {isCreateTeam
                     ? (currentTeamName ? `Ya perteneces a ${currentTeamName}. Si continúas, pasarás al nuevo equipo.` : 'Si continúas, crearás y pasarás a tu nuevo equipo.')
-                    : isToken
-                    ? (currentTeamName ? `Ya perteneces a ${currentTeamName}. ¿Quieres cambiarte a este equipo?` : '¿Quieres cambiarte a este equipo?')
                     : currentTeamName
                     ? (isToTeam ? `Ya estás inscrito en ${currentTeamName}. ¿Quieres cambiarte a ${confirmChange.teamName}?` : `Ya estás inscrito en ${currentTeamName}. Si continúas, dejarás el equipo y quedarás inscrito sin equipo.`)
                     : (isToTeam ? `¿Quieres unirte a ${confirmChange.teamName}?` : '¿Quieres continuar sin equipo?')}
@@ -2219,11 +2198,13 @@ export default function ChampionshipView() {
       {/* "Gestionar mi reserva" (owner) — patrón Match: menú → Ver detalles del pago / Cancelar reserva. */}
       {manageOpen && <OwnerManageSheet onClose={() => setManageOpen(false)} championshipId={realId} status={realRow?.status} onExtrasCanceled={refreshReal} onFullCanceled={(amount) => navigate('/profile', { replace: true, state: { champConfirm: 'canceled', champCanceledAmount: amount } })} />}
       {/* "Gestionar mi reserva" (PARTICIPANTE pagado): detalle de pago + cancelación. Patrón Match. */}
-      {resvOpen && myResv && (() => {
-        const kind = myResv.kind;
-        const canCancel = !!myResv.cancelable;
-        const rewardN = Number(myResv.reward_applied) || 0;
-        const creditN = Number(myResv.credit_applied) || 0;
+      {resvOpen && (myResv || resvDone) && (() => {
+        // Tras cancelar limpiamos myResv (oculta el estado viejo bajo el veil); el success se sostiene por resvDone,
+        // así que todas las lecturas de myResv aquí son null-safe (en 'done' no se usan kind/row/breakdown).
+        const kind = myResv?.kind;
+        const canCancel = !!myResv?.cancelable;
+        const rewardN = Number(myResv?.reward_applied) || 0;
+        const creditN = Number(myResv?.credit_applied) || 0;
         const fmt = soles;   // formateador de moneda del módulo (presentación)
         // Línea estilo Match (PaymentDetail.row): label y valor mismo tamaño/peso; accent=GREEN, bold=700.
         const row = (label, value, bold = false, accent = false) => (
@@ -2395,8 +2376,8 @@ export default function ChampionshipView() {
                             <span style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>{soles(p.amount)}</span>
                           </button>
                         ))}
-                        {/* Rewards usados: no vuelven (informativo). NO altera los importes por plaza ni el refund. */}
-                        {rwPayer > 0 && (
+                        {/* 2+ plazas: Rewards usados (informativo) bajo la selección. El caso de 1 plaza lo muestra en su rama. */}
+                        {rwPayer > 0 && active.length > 1 && (
                           <div style={{ padding: '10px 2px 2px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                               <span style={{ fontSize: 14, color: SUB }}>Recompensas usadas</span>
@@ -2408,8 +2389,24 @@ export default function ChampionshipView() {
                         {active.length === 0 ? (
                           <div style={{ fontSize: 13, color: SUB, marginTop: 12 }}>No quedan plazas activas en esta reserva.</div>
                         ) : active.length === 1 ? (
-                          // Única plaza activa (eres el único) → cancelación directa, sin selección.
-                          <button onClick={() => doCancelPlazas(active.map(p => p.user_id))} disabled={resvBusy} className="pressable" style={{ width: '100%', height: 50, borderRadius: 14, border: 'none', background: resvBusy ? '#E8E8EC' : RED, color: resvBusy ? '#9A9AA0' : '#fff', cursor: resvBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, marginTop: 14, outline: 'none' }}>{resvBusy ? 'Cancelando…' : 'Cancelar mi inscripción'}</button>
+                          // Única plaza activa (eres el único) → sin selección, pero MISMO detalle financiero: importe
+                          // a devolver (amount autoritativo del getter = unit_price − reward) + Rewards no reembolsables.
+                          <>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 2px 2px' }}>
+                              <span style={{ fontSize: 14, color: SUB }}>Crédito a devolver</span>
+                              <span style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{fmt(Number(active[0].amount) || 0)}</span>
+                            </div>
+                            {rwPayer > 0 && (
+                              <div style={{ padding: '2px 2px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <span style={{ fontSize: 14, color: SUB }}>Recompensas usadas</span>
+                                  <span style={{ fontSize: 14, fontWeight: 600, color: SUB, textDecoration: 'line-through' }}>{fmt(rwPayer)}</span>
+                                </div>
+                                <div style={{ fontSize: 11.5, color: SUB, lineHeight: 1.4, marginTop: 4 }}>Las recompensas no son reembolsables</div>
+                              </div>
+                            )}
+                            <button onClick={() => doCancelPlazas(active.map(p => p.user_id))} disabled={resvBusy} className="pressable" style={{ width: '100%', height: 50, borderRadius: 14, border: 'none', background: resvBusy ? '#E8E8EC' : RED, color: resvBusy ? '#9A9AA0' : '#fff', cursor: resvBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, marginTop: 16, outline: 'none' }}>{resvBusy ? 'Cancelando…' : 'Cancelar mi inscripción'}</button>
+                          </>
                         ) : (
                           <button onClick={() => doCancelPlazas(resvSel)} disabled={resvBusy || resvSel.length === 0} className="pressable" style={{ width: '100%', height: 50, borderRadius: 14, border: 'none', background: (resvBusy || resvSel.length === 0) ? '#E8E8EC' : RED, color: (resvBusy || resvSel.length === 0) ? '#9A9AA0' : '#fff', cursor: (resvBusy || resvSel.length === 0) ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, marginTop: 14, outline: 'none' }}>{resvBusy ? 'Cancelando…' : `Cancelar ${resvSel.length || ''} plaza${resvSel.length === 1 ? '' : 's'}`.trim()}</button>
                         )}

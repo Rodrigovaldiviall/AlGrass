@@ -4,7 +4,7 @@ import { BLUE, TEXT, SUB, ORANGE, RED } from '../constants';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';   // antena "En vivo" (mismo icono que Profile/Games)
 import TabBar from '../components/TabBar';
-import ChampConfirmOverlay from '../components/ChampConfirmOverlay';
+import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import { listPublicChampionships } from '../services/championshipService';
 import { getActiveCity, setActiveCity, fetchCities } from '../utils/profileData';
 import { useAuth } from '../context/AuthContext';
@@ -383,15 +383,18 @@ export default function Championships() {
 
       <TabBar />
 
-      {/* Confirmación de publicación SOBRE el listado. Detrás se ve la card recién publicada. */}
+      {/* Confirmación de publicación SOBRE el listado. Detrás se ve la card recién publicada. El enlace es SOLO
+          navegación (/championships/view/:id): NO contiene clave; la clave se comparte aparte. Copy/icono/toast
+          reutilizan la UX de ConfirmedOverlay. */}
       {publishedConfirm && (
-        <ChampConfirmOverlay
-          title="¡Campeonato publicado!"
+        <ConfirmedOverlay
+          title="Campeonato publicado"
           lines={[
             'Tu campeonato ya está publicado.',
             'Comparte la clave con tus jugadores para que puedan empezar a inscribirse.',
           ]}
-          onContinue={onPublishedContinue}
+          shareLink={`${window.location.origin}/championships/view/${publishedConfirm}`}
+          onOK={onPublishedContinue}
         />
       )}
     </div>

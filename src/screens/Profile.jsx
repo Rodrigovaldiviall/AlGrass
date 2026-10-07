@@ -3715,8 +3715,8 @@ export default function Profile() {
           campeonato). Usa ConfirmedOverlay para conservar el enlace de unión del equipo. */}
       {champConfirm === 'team_created' && (
         <ConfirmedOverlay
-          title="¡Equipo creado!"
-          lines={[champTeamName, 'Comparte el enlace para que tus jugadores se unan.'].filter(Boolean)}
+          title="Equipo creado"
+          lines={[champTeamName, 'Comparte la clave y el enlace con tus amigos para que se unan.'].filter(Boolean)}
           shareLink={champShareLink || undefined}
           onOK={() => { setChampConfirm(null); setHighlightedId(champJoinedId || null); }}
         />
