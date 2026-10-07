@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Supabase migration backups / sensitive data
+auth-data.sql
+public-data.sql
+storage-backup/
+supabase-diff.txt
