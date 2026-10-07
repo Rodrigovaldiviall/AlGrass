@@ -129,7 +129,8 @@ export default function ChampionshipJoinCheckout() {
   const championshipName = nav.championshipName || 'Campeonato';
   const unitPrice = Number(nav.unitPrice) || 0;
 
-  const back = () => navigate(championshipId ? `/championships/view/${championshipId}` : '/championships');
+  // cvReturn → ChampionshipView restaura el scroll guardado por persistCV (mismo patrón que ChampionshipTeam).
+  const back = () => navigate(championshipId ? `/championships/view/${championshipId}` : '/championships', championshipId ? { state: { cvReturn: true } } : undefined);
   useEffect(() => { if (!championshipId || !unitPrice) back(); }, []); // eslint-disable-line
 
   const [subView, setSubView] = useState('confirm');

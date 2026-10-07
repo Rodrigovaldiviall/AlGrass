@@ -87,6 +87,10 @@ export default function ChampionshipTeam() {
   const fromBracket = nav.fromBracket || null;
   const snapTeam = (regSnapshot?.teams || []).find(x => x.id === teamId) || null;
   const [rState, setRState] = useState(regSnapshot);
+  // Readiness autoritativa: con snapshot propio (navegación normal) se renderiza ya; al volver de /auth con intención
+  // de clave (openSecretJoin) el snapshot es el de anónimo → esperamos el loadRState fresco antes de pintar permisos
+  // (evita el flash de controles de owner incorrectos) y antes de abrir el modal de clave.
+  const [rReady, setRReady] = useState(() => !!regSnapshot && !nav.openSecretJoin);
   const [rEditing, setREditing] = useState(false);
   const [rEditSource, setREditSource] = useState(null);       // 'auto' (entrada a team vacío) | 'manual' (botón Editar)
   const autoEditDone = useRef(false);                          // el auto-open ocurre 1 vez por MOUNT (no tras Guardar)
@@ -128,17 +132,17 @@ export default function ChampionshipTeam() {
   // (que no traen openSecretJoin). La URL ?team=&join=secret la reemplazó el reenvío → no persiste en historial.
   useEffect(() => {
     if (secretAutoRef.current) return;
-    if (!realExisting || !isPublic || !nav.openSecretJoin || !user?.id) return;
+    if (!realExisting || !isPublic || !nav.openSecretJoin || !user?.id || !rReady) return;   // espera readiness autoritativa
     const mem = rState?.current_user_membership || null;
     if (mem && mem.team_id === teamId) return;   // ya está en este equipo → nada que abrir
     secretAutoRef.current = true;
     setKeyErr(''); setKeyConfirm(false); setKeySecret(''); setKeyOpen(true);
-  }, [realExisting, isPublic, user?.id, rState, teamId]); // eslint-disable-line
+  }, [realExisting, isPublic, user?.id, rState, teamId, rReady]); // eslint-disable-line
   async function keyJoin(confirm) {
     if (keyBusy) return; setKeyBusy(true); setKeyErr('');
     const { error } = await joinChampionshipTeamWithSecret({ teamId, secret: keySecret.trim(), confirmChange: confirm });
-    setKeyBusy(false);
     if (error) {
+      setKeyBusy(false);
       const m = String(error.message || '');
       if (/CONFIRM_TEAM_CHANGE_REQUIRED/.test(m)) { setKeyConfirm(true); return; }   // pedir confirmación, no limpiar
       setKeyConfirm(false);
@@ -150,8 +154,10 @@ export default function ChampionshipTeam() {
         : 'No se pudo unir. Intenta de nuevo.');
       return;
     }
-    setKeyOpen(false); setKeyConfirm(false); setKeySecret('');
-    loadRState();   // refresco autoritativo (sin update optimista)
+    // Éxito: el modal (keyBusy) sigue cubriendo mientras refrescamos la membresía autoritativa. Solo al tener el
+    // estado nuevo (ya soy miembro en el fondo) cerramos → nunca se ve el estado de no-miembro entre medias.
+    await loadRState();
+    setKeyOpen(false); setKeyConfirm(false); setKeySecret(''); setKeyBusy(false);
   }
   const [rAddSearching, setRAddSearching] = useState(false);
   const [rAddSel, setRAddSel] = useState([]);                    // multiselección: [{ id, name, code, ... }]
@@ -241,10 +247,11 @@ export default function ChampionshipTeam() {
   const [rMatches, setRMatches] = useState([]);   // matches de la competición (para conflictos de horario + updated_at)
   const showGoals = champStatus === 'in_progress' || champStatus === 'completed';
   function loadRState() {
-    if (!realExisting) return;
-    getChampionshipRegistrationState({ championshipId: champId }).then(({ data, error }) => {
-      if (error || !data) return;
+    if (!realExisting) return Promise.resolve();
+    return getChampionshipRegistrationState({ championshipId: champId }).then(({ data, error }) => {
+      if (error || !data) { setRReady(true); return; }
       setRState(data);
+      setRReady(true);   // estado autoritativo listo → se puede renderizar permisos/membership sin falsos
       const t = (data.teams || []).find(x => x.id === teamId);
       // Sincroniza nombre/diseño con el dato fresco SALVO que el usuario esté en edición manual o tenga
       // cambios locales pendientes (rDirty): así un snapshot viejo se corrige, sin pisar lo que se está editando.
@@ -437,6 +444,15 @@ export default function ChampionshipTeam() {
   const cancel = () => { setName(origName); setDesign(origDesign); setEditing(false); };
 
   // ── REAL: derivados + handlers de la pantalla de equipo materializado. ──
+  if (realExisting && !rReady) {
+    // Veil neutro mientras no hay estado autoritativo (p.ej. vuelta de /auth): no se renderiza NINGÚN control de
+    // owner/membership con datos incompletos. Al resolver loadRState → rReady=true → pantalla real + modal si aplica.
+    return (
+      <div className="screen-shell" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: SOFT }}>
+        <div style={{ width: 32, height: 32, borderRadius: '50%', border: '3px solid rgba(0,0,0,0.12)', borderTop: `3px solid ${BLUE}`, animation: 'spin 0.8s linear infinite' }} />
+      </div>
+    );
+  }
   if (realExisting) {
     const rt = (rState?.teams || []).find(x => x.id === teamId) || null;
     const roster = (rState?.players || []).filter(p => p.team_id === teamId);
@@ -814,7 +830,7 @@ export default function ChampionshipTeam() {
                   <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, marginTop: 8 }}>Ya perteneces a otro equipo. ¿Quieres cambiarte a {rt?.name || 'este equipo'}?</div>
                   {keyErr && <div style={{ fontSize: 12.5, color: DANGER, marginTop: 10 }}>{keyErr}</div>}
                   <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
-                    <button onClick={() => { setKeyConfirm(false); }} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: `1.5px solid ${HAIR}`, background: '#fff', color: TEXT, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, outline: 'none' }}>Cancelar</button>
+                    <button onClick={() => { setKeyOpen(false); setKeyConfirm(false); setKeySecret(''); setKeyErr(''); }} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: `1.5px solid ${HAIR}`, background: '#fff', color: TEXT, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, outline: 'none' }}>Cancelar</button>
                     <button onClick={() => keyJoin(true)} disabled={keyBusy} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: 'none', background: ORANGE, color: '#1B1B1F', cursor: keyBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, opacity: keyBusy ? 0.7 : 1, outline: 'none' }}>{keyBusy ? '…' : 'Cambiarme'}</button>
                   </div>
                 </>

@@ -1079,11 +1079,19 @@ export default function ChampionshipView() {
   // Volver desde ChampionshipTeam (cvReturn sin `from`) O desde /auth (authResuming) → restaura la posición
   // guardada por persistCV. En ambos casos `restore` trae scrollTop; sin caché de vuelta → 0 (navegación nueva).
   const scrollRef = useRef(null);
-  const isTeamReturn = cvReturn && !nav?.from; // regreso desde ChampionshipTeam (no es navegación principal)
+  const scrollRestoredRef = useRef(false);
+  const isTeamReturn = cvReturn && !nav?.from; // regreso desde ChampionshipTeam/checkouts (no es navegación principal)
+  // Restaurar el scroll SOLO cuando el contenido real ya está montado (no durante el loading): mientras carga, el
+  // scroller de contenido aún no existe y poner scrollTop no tendría altura → volvería al top. Se re-evalúa al
+  // resolver (champ/loading/pricing) y se aplica UNA vez (scrollRestoredRef). Navegación nueva → 0.
   useLayoutEffect(() => {
+    if (scrollRestoredRef.current) return;
     const el = scrollRef.current; if (!el) return;
+    const ready = isRealMode ? (!!champ && !realLoading && !pricingPending) : true;
+    if (!ready) return;
+    scrollRestoredRef.current = true;
     el.scrollTop = (isTeamReturn || authResuming) ? (restore?.scrollTop || 0) : 0;
-  }, []); // eslint-disable-line
+  }, [champ, realLoading, pricingPending]); // eslint-disable-line
 
   // Consumo ÚNICO del match reabierto: tras sembrarlo, se limpia del CV para que no se reabra en remounts
   // posteriores sin persistCV. persistCV lo volverá a guardar si el modal sigue abierto al navegar de nuevo.
@@ -1136,6 +1144,7 @@ export default function ChampionshipView() {
         // GRATIS → PAGADO permitido. free_member (pertenece a un equipo gratis) → confirmar el cambio antes del
         // checkout (reutiliza confirmChange; el confirm del pago mueve su fila al nuevo equipo). none → directo.
         if (part === 'free_member') { setConfirmChange({ kind: 'createteampaid', teamPrice }); return; }
+        persistCV();   // guardar scroll del campeonato → al cancelar/volver del checkout se restaura (cvReturn)
         navigate('/championships/team-checkout', { state: { championshipId: realId, championshipName: name, unitPrice: teamPrice } });
         return;
       }
@@ -1148,6 +1157,16 @@ export default function ChampionshipView() {
     if (!canCreateTeam) return;
     persistCV();
     navigate('/championships/team', { state: { teamMode: 'new', summary, organizeState, maxTeams, champTeams: isCreated, champId: isRealMode ? realId : undefined } });
+  }
+  // "Unirme sin equipo" PAGADO (público): abre el checkout individual. Reutilizable desde el botón y desde el
+  // resume de Auth (intención 'join_individual'). Asume sesión (el botón/resume ya resolvieron login). Guarda el
+  // scroll (persistCV) para volver al mismo punto si cancela el checkout.
+  function startPaidJoin() {
+    const part = myChampPart();
+    if (part === 'team_owner') { flashToast('No es posible realizar esta acción porque ya estás inscrito en este campeonato.'); return; }
+    if (part === 'free_member') { setConfirmChange({ kind: 'joinpaid' }); return; }
+    persistCV();
+    navigate('/championships/join', { state: { championshipId: realId, championshipName: name, unitPrice: publicUnitPrice } });
   }
   // REAL: inscribirse sin equipo → RPC (join_championship_without_team) → refetch del estado.
   // SET membership a "sin equipo" (insert o cambio desde un team → NULL). Confirmación en la UI antes.
@@ -1464,10 +1483,16 @@ export default function ChampionshipView() {
     let pending; try { pending = sessionStorage.getItem(AUTH_RESUME_KEY); } catch {}
     if (!pending) return;
     if (!user) { try { sessionStorage.removeItem(AUTH_RESUME_KEY); } catch {} return; }
+    // 'newTeam'/'join_individual' dependen del estado autoritativo (pricing + regState): si aún no está listo NO se
+    // consume la intención; el effect se re-ejecuta al resolver (deps) y entonces continúa la acción UNA sola vez.
+    const needsState = pending === 'newTeam' || pending === 'join_individual';
+    if (needsState && (pricingPending || !regState)) return;
     try { sessionStorage.removeItem(AUTH_RESUME_KEY); } catch {}
     if (pending === 'checkout') goToCheckout();
     else if (pending === 'contact') goToContact();
-  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
+    else if (pending === 'newTeam') goToNewTeam();               // continúa a Crear equipo (checkout de equipo si público pagado)
+    else if (pending === 'join_individual') startPaidJoin();     // continúa al checkout individual
+  }, [user, pricingPending, regState]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // REAL: mientras carga (o hidrata) mostramos loading; NUNCA caemos a demo ni a "Crear campeonato".
   // Si falla el fetch → error explícito, sin usar el CV como fallback (no mostrar otro campeonato).
@@ -1983,7 +2008,7 @@ export default function ChampionshipView() {
                             Inscrito sin equipo
                           </div>
                         );
-                        const joinPaid = () => { if (!user?.id) { navigate('/auth', { state: { backPath: '/championships/view/' + realId } }); return; } const part = myChampPart(); if (part === 'team_owner') { flashToast('No es posible realizar esta acción porque ya estás inscrito en este campeonato.'); return; } if (part === 'free_member') { setConfirmChange({ kind: 'joinpaid' }); return; } navigate('/championships/join', { state: { championshipId: realId, championshipName: name, unitPrice: publicUnitPrice } }); };
+                        const joinPaid = () => { if (!user?.id) { persistCV(); try { sessionStorage.setItem(AUTH_RESUME_KEY, 'join_individual'); } catch {} navigate('/auth', { state: { backPath: '/championships/view/' + realId } }); return; } startPaidJoin(); };
                         return (
                           <>
                             <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.5, marginBottom: 8 }}>Inscríbete individualmente, con o sin invitados.</div>
