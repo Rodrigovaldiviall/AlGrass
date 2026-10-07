@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { TEXT, SUB, HAIR, ORANGE } from '../constants';
+import { TEXT, SUB, HAIR, ORANGE, BLUE } from '../constants';
 import { CtaButton, TopBar } from '../components/checkout/CheckoutUI';
 import PaymentSheet from '../components/checkout/PaymentSheet';
 import Shield, { DesignSwatch } from '../components/championship/Shield';
@@ -38,7 +38,8 @@ export default function ChampionshipTeamCheckout() {
   const championshipName = nav.championshipName || 'Campeonato';
   const unitPrice = Number(nav.unitPrice) || 0;   // public_team_price (autoridad backend; aquí solo UI)
 
-  const back = () => navigate(championshipId ? `/championships/view/${championshipId}` : '/championships');
+  // cvReturn → ChampionshipView restaura el scroll guardado por persistCV (mismo patrón que ChampionshipTeam).
+  const back = () => navigate(championshipId ? `/championships/view/${championshipId}` : '/championships', championshipId ? { state: { cvReturn: true } } : undefined);
   useEffect(() => { if (!championshipId || !unitPrice) back(); }, []); // eslint-disable-line
 
   // ── Datos del equipo ──
@@ -68,7 +69,9 @@ export default function ChampionshipTeamCheckout() {
   const [payOpen, setPayOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [confirmSlow, setConfirmSlow] = useState(false);
-  const [err, setErr] = useState(null);
+  const [err, setErr] = useState(null);                 // error PRE-confirm (create) → inline (sin order/sin riesgo)
+  const [verifying, setVerifying] = useState(false);    // red/incierto tras confirm → reconciliar, NO fail ciego
+  const [terminal, setTerminal] = useState(false);      // confirm falló definitivo → order 'failed' → modal claro
   const orderRef = useRef({ key: null });
   const slowTimer = useRef(null);
 
@@ -82,23 +85,39 @@ export default function ChampionshipTeamCheckout() {
   });
 
   const finish = async () => {
-    // confirm → team_id + join_token (autoridad backend). Overlay de éxito con el link.
-    const { data, error } = await confirmChampionshipTeamRegistration({ championshipId, idempotencyKey: orderRef.current.key });
-    if (error) {
-      stopConfirming();
-      const m = error.message || '';
-      if (/AVAILABILITY_CHANGED|NOT_OPEN|ALREADY_ENROLLED|ORDER_EXPIRED|REWARD_/.test(m)) orderRef.current = { key: null };
-      setErr(regErrorMessage(m));
+    const key = orderRef.current.key;
+    if (!key) return;
+    // confirm_championship_team_registration es IDEMPOTENTE: si la order ya está 'confirmed' devuelve el equipo
+    // (already:true). Clasificamos el fallo por su NATURALEZA:
+    //   · error de RPC (res.error) = confirm EJECUTÓ y lanzó → rollback total → NADA materializó, order sigue 'pending'.
+    //   · excepción (red/timeout) = INCIERTO → no sabemos si confirmó → reconciliamos reintentando (idempotente).
+    let res;
+    try {
+      res = await confirmChampionshipTeamRegistration({ championshipId, idempotencyKey: key });
+    } catch {
+      // RED/INCIERTO: 1 reintento de reconciliación (idempotente). Si ya confirmó, lo devuelve; si sigue incierto,
+      // NO hacemos fail ciego (pudo haber confirmado) → "Estamos verificando tu pago" con reintento manual.
+      try { res = await confirmChampionshipTeamRegistration({ championshipId, idempotencyKey: key }); }
+      catch { stopConfirming(); setVerifying(true); return; }
+    }
+    const { data, error } = res;
+    if (!error) {
+      // Éxito (incluye already:true de la reconciliación). Confirmación SOBRE Profile + highlight; enlace solo-navegación.
+      orderRef.current = { key: null };
+      stopConfirming(); setVerifying(false);
+      const teamId = data?.team_id || null;
+      const link = teamId ? `${window.location.origin}/championships/view/${championshipId}?team=${teamId}` : `${window.location.origin}/championships/view/${championshipId}`;
+      navigate('/profile', { replace: true, state: { champConfirm: 'team_created', championshipId, champShareLink: link, champTeamName: name.trim() } });
       return;
     }
+    // ERROR DE RPC = confirm no materializó (rollback) → order 'pending'. La TERMINALIZAMOS con la MISMA key →
+    // fail_championship_team_registration la pasa a 'failed' → el trigger de núcleo restaura el crédito gastado en
+    // create. Solo tras quedar terminal liberamos la key (permite un nuevo intento SIN doble débito).
+    setVerifying(false);
+    await failChampionshipTeamRegistration({ championshipId, idempotencyKey: key, reason: 'confirm_failed' }).catch(() => {});
     orderRef.current = { key: null };
     stopConfirming();
-    // MISMO patrón que la inscripción sin equipo (ChampionshipJoinCheckout.done): la confirmación se muestra
-    // SOBRE Profile y, al continuar, se señala (highlight) el campeonato. El enlace del equipo es SOLO navegación
-    // (?team=<teamId>): NO lleva token ni credencial; unirse exige join_secret manual. La clave se comparte aparte.
-    const teamId = data?.team_id || null;
-    const link = teamId ? `${window.location.origin}/championships/view/${championshipId}?team=${teamId}` : `${window.location.origin}/championships/view/${championshipId}`;
-    navigate('/profile', { replace: true, state: { champConfirm: 'team_created', championshipId, champShareLink: link, champTeamName: name.trim() } });
+    setTerminal(true);
   };
 
   // Pasarela (external>0): crea order al pulsar Pagar.
@@ -271,6 +290,32 @@ export default function ChampionshipTeamCheckout() {
           </div>
           <div style={{ marginTop: 10, fontSize: 14, color: 'rgba(255,255,255,0.6)', textAlign: 'center' }}>
             {confirmSlow ? 'Estamos verificando el estado de tu pago.' : 'No cierres esta pantalla.'}
+          </div>
+        </div>
+      )}
+
+      {/* RED/INCIERTO tras confirm: NO afirmamos nada (pudo haber confirmado). Veil con reintento de reconciliación
+          (vuelve a llamar confirm, idempotente). No se resetea la key → no hay doble order. */}
+      {verifying && (
+        <div className="sheet-overlay" style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(10,10,15,0.88)', padding: '0 32px' }}>
+          <div style={{ width: 52, height: 52, borderRadius: '50%', border: '4px solid rgba(255,255,255,0.2)', borderTop: '4px solid #fff', animation: 'spin 0.9s linear infinite', marginBottom: 28 }} />
+          <div style={{ fontSize: 18, fontWeight: 700, color: '#fff', letterSpacing: -0.3, textAlign: 'center', lineHeight: 1.3 }}>Estamos verificando tu pago</div>
+          <div style={{ marginTop: 10, fontSize: 14, color: 'rgba(255,255,255,0.65)', textAlign: 'center', lineHeight: 1.4 }}>No cierres esta pantalla. Si no avanza, reintenta la verificación.</div>
+          <button onClick={() => { setVerifying(false); startConfirming(); finish(); }} className="pressable" style={{ marginTop: 24, height: 48, padding: '0 22px', borderRadius: 14, border: 'none', background: ORANGE, color: '#1B1B1F', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, cursor: 'pointer', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Reintentar verificación</button>
+        </div>
+      )}
+
+      {/* TERMINAL: confirm falló definitivo y la order quedó 'failed' (crédito restaurado por el trigger). Modal claro
+          en vez de checkout desnudo. "No se realizó ningún cobro" SOLO si fue 100% crédito (sin importe externo). */}
+      {terminal && (
+        <div className="sheet-overlay" style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.45)', padding: '0 24px' }}>
+          <div className="sheet-panel" style={{ width: '100%', maxWidth: 360, background: '#fff', borderRadius: 24, padding: '28px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', boxShadow: '0 12px 40px rgba(0,0,0,0.18)' }}>
+            <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#FDECEC', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="#E5484D" strokeWidth="2.4" strokeLinecap="round" /></svg>
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: TEXT, letterSpacing: -0.3 }}>No pudimos crear el equipo</div>
+            <div style={{ fontSize: 14.5, color: SUB, lineHeight: 1.5, marginTop: 10 }}>La operación no se completó.{noExternal ? ' No se realizó ningún cobro.' : ''}</div>
+            <button onClick={() => { setTerminal(false); back(); }} className="pressable" style={{ marginTop: 24, width: '100%', height: 50, borderRadius: 14, border: 'none', background: BLUE, color: '#fff', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, cursor: 'pointer', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>Entendido</button>
           </div>
         </div>
       )}

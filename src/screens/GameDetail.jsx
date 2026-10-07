@@ -2084,11 +2084,16 @@ export default function GameDetail() {
 
   // Solo para el aire inferior del scroll cuando el CTA "Únete" flota (prueba visual). Aproxima la
   // rama no-reservado del condicional de acciones; si difiere, solo afecta al padding, nunca a la lógica.
-  const joinCtaActive = !isHost && spotsVerified && waitlistReady && availabilityResolved && !isBooked && !infoMode && !isStarted;
+  // READINESS del CTA = incluye rosterReady. `isBooked` se deriva del ROSTER (deriveGameState(sbRoster)); si el gate
+  // no esperara al roster, al resolver spots/waitlist/availability ANTES que el roster, isBooked sería false → el CTA
+  // "Gestionar mi reserva" no aparecería (o lo haría tarde cuando el roster llega). Con rosterReady, el skeleton se
+  // mantiene hasta que isBooked es autoritativo. Cache-first: rosterReady arranca true si hubo _cachedRoster.
+  const ctaReady = spotsVerified && waitlistReady && availabilityResolved && rosterReady;
+  const joinCtaActive = !isHost && ctaReady && !isBooked && !infoMode && !isStarted;
   // Rama de carga (skeleton flotante inferior): mismo alto aproximado que 1 CTA.
-  const loadingCtaActive = !isHost && !(spotsVerified && waitlistReady && availabilityResolved);
+  const loadingCtaActive = !isHost && !ctaReady;
   // Rama reservado con "Gestionar mi reserva" flotante solo (1 CTA), sin Únete.
-  const manageCtaActive = !isHost && spotsVerified && waitlistReady && availabilityResolved && (isBooked || infoMode) && (isBooked || guestsInRoster.length > 0) && !isStarted;
+  const manageCtaActive = !isHost && ctaReady && (isBooked || infoMode) && (isBooked || guestsInRoster.length > 0) && !isStarted;
   // Waitlist dentro del stack no-reservado (encima de Únete) → tratar como 2 CTAs (algo más alto).
   const waitlistInStack = joinCtaActive && rosterReady && (isFull || inWaitlist);
 
@@ -2317,7 +2322,7 @@ export default function GameDetail() {
               </button>
             </div>
           )
-        ) : !(spotsVerified && waitlistReady && availabilityResolved) ? (
+        ) : !ctaReady ? (
           /* ── Carga: mismo skeleton (pulse) del badge de la lista, hasta que el estado
                de acciones sea DEFINITIVO. Flotante (prueba visual): sin holder blanco ni
                borderTop, absolute al fondo del contenedor relative, mismo sitio que el CTA →

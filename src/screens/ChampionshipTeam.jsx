@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, DANGER } from '../constants';
+import I from '../icons';   // mismo set de iconos que ChampionshipView (botón Compartir idéntico)
 import Shield, { DesignSwatch } from '../components/championship/Shield';
 import PlayerAvatar from '../components/championship/PlayerAvatar';
 import RosterAvatar from '../components/championship/RosterAvatar';
@@ -657,8 +658,8 @@ export default function ChampionshipTeam() {
             {/* Compartir el equipo (deep-link) — solo fuera de edición. PÚBLICO: solo el owner/creator lo ve
                 (y el enlace lleva el token). PRIVADO: visible como hasta ahora. */}
             {!rEditing && (isPublic ? amCreator : true) && (
-              <button onClick={shareTeam} aria-label="Compartir equipo" className="pressable" style={{ position: 'absolute', right: 0, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 3v13" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M8 7l4-4 4 4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M5 12v7a1 1 0 001 1h12a1 1 0 001-1v-7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              <button onClick={shareTeam} aria-label="Compartir equipo" className="pressable" style={{ position: 'absolute', right: 0, width: 30, height: 26, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', WebkitTapHighlightColor: 'transparent' }}>
+                {I.share('#fff')}
               </button>
             )}
             {rEditing && (
@@ -712,11 +713,16 @@ export default function ChampionshipTeam() {
             ) : (
               <div style={{ textAlign: 'center', marginBottom: 20 }}>
                 <div style={{ fontSize: 18, fontWeight: 800, color: TEXT, letterSpacing: -0.3 }}>{rt?.name || 'Equipo'}</div>
-                {isPublic && amCreator && teamSecret !== null && (
+                {isPublic && amCreator && (teamSecret !== null ? (
                   <div style={{ fontSize: 12.5, fontWeight: 600, color: SUB, marginTop: 6 }}>
                     {teamSecret ? <>Clave del equipo: <span style={{ color: TEXT, fontWeight: 800 }}>{teamSecret}</span></> : 'Sin clave · edítala en la portada'}
                   </div>
-                )}
+                ) : (
+                  // Skeleton de la MISMA línea mientras la clave carga (getChampionshipTeamSecret) → no hay salto de layout.
+                  <div aria-hidden="true" style={{ marginTop: 6, display: 'flex', justifyContent: 'center' }}>
+                    <div style={{ width: 170, height: 14, borderRadius: 6, background: '#E8E8EC', animation: 'pulse 1.4s ease-in-out infinite' }} />
+                  </div>
+                ))}
               </div>
             )}
 

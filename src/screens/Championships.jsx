@@ -1,11 +1,11 @@
 import { useRef, useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { BLUE, TEXT, SUB, ORANGE, RED } from '../constants';
+import { BLUE, TEXT, SUB, ORANGE, RED, GREEN } from '../constants';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faTowerBroadcast } from '@fortawesome/free-solid-svg-icons';   // antena "En vivo" (mismo icono que Profile/Games)
 import TabBar from '../components/TabBar';
 import ConfirmedOverlay from '../components/ConfirmedOverlay';
-import { listPublicChampionships } from '../services/championshipService';
+import { listPublicChampionships, listMyChampionships } from '../services/championshipService';
 import { getActiveCity, setActiveCity, fetchCities } from '../utils/profileData';
 import { useAuth } from '../context/AuthContext';
 import { formatDateLabel } from '../utils/format';
@@ -110,7 +110,11 @@ function ChampionshipCard({ c, onPress, highlighted = false, innerRef = null }) 
             ? <span style={{ fontWeight: 600, color: isPrivate ? SUB : BLUE }}>{isPrivate ? 'Privado' : 'Público'}</span>
             : <span style={{ color: '#9A9AA0' }}>Hace {c.daysAgo} {c.daysAgo === 1 ? 'día' : 'días'}</span>}
         </div>
-        <div style={{ marginTop: 6, fontSize: 12.5, color: SUB }}>{c.dateLabel} · {c.venueName}</div>
+        <div style={{ display: 'flex', alignItems: 'center', marginTop: 6 }}>
+          <div style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: SUB }}>{c.dateLabel} · {c.venueName}</div>
+          {/* Badge "Inscrito" (participación conocida) — debajo de Público/Privado, alineado a la derecha. */}
+          {c.enrolled && <span style={{ flexShrink: 0, marginLeft: 8, fontSize: 12.5, fontWeight: 700, color: GREEN, display: 'inline-flex', alignItems: 'center', gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: GREEN, display: 'inline-block' }} />Inscrito</span>}
+        </div>
       </div>
     </button>
   );
@@ -229,6 +233,19 @@ export default function Championships() {
   // Refetch cuando la ciudad del perfil se hidrata o cambia (null → "Arequipa" → "Lima").
   useEffect(() => { loadChampionships(); }, [userCity]); // eslint-disable-line
 
+  // Participación del usuario para el badge "Inscrito": UNA sola lectura agregada (list_my_championships ya expone
+  // is_participant por campeonato). NO es N+1 (no hay query por card); se intersecta por id con el listado público.
+  const [enrolledIds, setEnrolledIds] = useState(() => new Set());
+  useEffect(() => {
+    if (!user?.id) { setEnrolledIds(new Set()); return; }
+    let alive = true;
+    listMyChampionships().then(({ data }) => {
+      if (!alive || !Array.isArray(data)) return;
+      setEnrolledIds(new Set(data.filter(c => c.is_participant).map(c => c.id)));
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [user?.id]);
+
   // Card desde campos REALES. venue/formato/equipos se derivan de format_config (mismo mapeo que Profile;
   // venue_id sin FK → sin join). teamsLabel = rango/estimación contratada (no inscripciones reales, aún mock).
   const cards = (champs || []).map(row => {
@@ -267,11 +284,13 @@ export default function Championships() {
       coverImagePath: row.cover_image_path ?? null,   // foto de portada (solo pública); null = holder por color (fallback)
       dateLabel,
       venueName: sum.venueName || row.venue_name || '',
+      enrolled: enrolledIds.has(row.id),   // participación conocida (is_participant) → badge "Inscrito" + hint al abrir
     };
   });
 
-  // Abrir campeonato real → /championships/view/:id (UUID real). Sin cvReturn, sin reconstruir CV.
-  const openChampionship = (card) => navigate('/championships/view/' + card.id, { state: { championshipOrigin: 'championships' } });
+  // Abrir campeonato real → /championships/view/:id (UUID real). knownParticipation = hint de UI (no autoridad):
+  // si el listado ya sabe que participa, ChampionshipView reserva el espacio de "Gestionar mi reserva" con skeleton.
+  const openChampionship = (card) => navigate('/championships/view/' + card.id, { state: { championshipOrigin: 'championships', knownParticipation: !!card.enrolled } });
 
   // ── Confirmación post-publicación SOBRE el listado + highlight (patrón Profile/Games) ──
   // Estado TRANSITORIO por location.state (no se persiste en cv). Se consume y limpia → no reaparece.

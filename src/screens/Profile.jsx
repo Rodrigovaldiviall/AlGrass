@@ -2932,7 +2932,7 @@ export default function Profile() {
   // Fallback sin id (legacy/preview) → ruta sin id con el snapshot del CV.
   const openChampionship = (g) => {
     try { sessionStorage.setItem('pf_back', '1'); } catch {} // restore de scroll al volver (patrón App)
-    if (g?.id) navigate('/championships/view/' + g.id, { state: { statusHint: g.status, from: 'profile', championshipOrigin: 'profile' } });
+    if (g?.id) navigate('/championships/view/' + g.id, { state: { statusHint: g.status, from: 'profile', championshipOrigin: 'profile', knownParticipation: !!g.participant } });
     else navigate('/championships/view', { state: { summary: _champCv?.summary, organizeState: _champCv?.organizeState, cvReturn: false, from: 'profile' } });
   };
   const openChampRequest = () => navigate('/championships/contact', { state: { summary: champReqSnap?.originalSummary, organizeState: champReqSnap?.originalOrganizeState, championshipName: champReqSnap?.championshipName || champReq?.championship_name, existingRequest: true } });
@@ -2996,6 +2996,7 @@ export default function Profile() {
     }
     return {
       __champ: true, id: row.id, status: row.status, dateKey, time24, isHost,
+      participant: row.is_participant === true,   // hint de participación para ChampionshipView (skeleton del CTA)
       date: dateKey ? formatDateLabel(dateKey) : '', time, ampm,
       name: row.name || 'Campeonato', theme: row.cover_theme || '#E24A4A',
       venueName: sum.venueName || row.venue_name || null, teamsLabel, badgeLines, live,

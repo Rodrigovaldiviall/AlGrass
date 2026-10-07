@@ -156,10 +156,17 @@ export default function ChampionshipJoinCheckout() {
   const [usingReward, setUsingReward] = useState(false);
   // ── Crédito (wallet): auto-aplicado y NO removible, igual que Match. Backend = autoridad del monto. ──
   const [creditBalance, setCreditBalance] = useState(0);
+  // Resolución financiera (wallet + rewards): hasta tener ambos saldos, el total/credit/external no son definitivos.
+  // Confirmar debe estar DESHABILITADO mientras no estén resueltos (mismo principio que Match/ConfirmReservation,
+  // donde Confirmar se gatea con creditLoading). Un fallo de lectura deja financialReady=false → no se confirma con
+  // información financiera incompleta (reintento por remount/usuario).
+  const [rewardResolved, setRewardResolved] = useState(false);
+  const [creditResolved, setCreditResolved] = useState(false);
+  const financialReady = rewardResolved && creditResolved;
   useEffect(() => {
     let alive = true;
-    getRewardBalance().then(b => { if (alive) setRewardBalance(Math.max(0, Number(b) || 0)); }).catch(() => {});
-    getWalletBalance().then(b => { if (alive) setCreditBalance(Math.max(0, Number(b) || 0)); }).catch(() => {});
+    getRewardBalance().then(b => { if (alive) { setRewardBalance(Math.max(0, Number(b) || 0)); setRewardResolved(true); } }).catch(() => {});
+    getWalletBalance().then(b => { if (alive) { setCreditBalance(Math.max(0, Number(b) || 0)); setCreditResolved(true); } }).catch(() => {});
     return () => { alive = false; };
   }, [user?.id]);
 
@@ -362,8 +369,8 @@ export default function ChampionshipJoinCheckout() {
         </div>
 
         {err && <div style={{ fontSize: 12.5, color: '#C0392B', padding: '0 0 8px' }}>{err}</div>}
-        <CtaButton onPress={noExternal ? payWithCredit : () => setPayOpen(true)} disabled={total <= 0 || confirming}>
-          {confirming ? 'Procesando...' : 'Confirmar'}
+        <CtaButton onPress={noExternal ? payWithCredit : () => setPayOpen(true)} disabled={total <= 0 || confirming || !financialReady}>
+          {confirming ? 'Procesando...' : !financialReady ? 'Calculando…' : 'Confirmar'}
         </CtaButton>
       </div>
 

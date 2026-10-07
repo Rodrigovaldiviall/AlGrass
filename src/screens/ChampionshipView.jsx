@@ -197,6 +197,12 @@ export default function ChampionshipView() {
   const publicPaid = pricingResolved && !!publicPricing?.is_public && publicUnitPrice > 0;
   // Público de AlGrass (criterio estructural): NO tiene clave de acceso (ni para publicar ni para entrar).
   const isPublicChamp = isRealMode && pricingResolved && !!publicPricing?.is_public;
+  // "Público de cualquier forma" para decidir si CONSULTAR la reserva: is_public del backend es true SOLO con precio
+  // INDIVIDUAL (c.public_individual_price not null), así que un público de EQUIPO (solo public_team_price) tiene
+  // is_public=false y quedaba fuera → "Gestionar mi reserva" nunca cargaba para team_owner/miembro. Añadimos la rama
+  // team-public usando un campo REAL ya existente (public_team_price). El getter get_championship_my_reservation ya
+  // devuelve team_owner/payer/miembro; si no participa, devuelve null (sin CTA). No cambia isPublicChamp (clave/gate).
+  const isPublicAny = isRealMode && pricingResolved && (!!publicPricing?.is_public || (Number(publicPricing?.public_team_price) || 0) > 0);
 
   // Owner: cuando llega la clave real (RPC owner-only), hidrata clave/saved para mostrar/editar/publicar.
   useEffect(() => {
@@ -552,7 +558,7 @@ export default function ChampionshipView() {
   const [manageOpen, setManageOpen] = useState(false);   // hoja "Gestionar mi reserva" (menú → detalles/cancelar)
   // ── PARTICIPANTE PAGADO: "Gestionar mi reserva" (inscripción individual / equipo). Distinto del manage del
   //    ORGANIZADOR (contrato). Solo público + logueado + reserva PAGADA (free_member/free_individual → null). ──
-  const [myResv, setMyResv] = useState(null);
+  const [myResv, setMyResv] = useState(cachedReal?.myResv ?? null);   // cache-first: CTA "Gestionar mi reserva" sin flash al volver
   const [resvOpen, setResvOpen] = useState(false);
   const [resvView, setResvView] = useState('menu');      // 'menu' | 'detail' | 'cancel' (patrón Match: menú → acción)
   const [resvSel, setResvSel] = useState([]);            // user_ids seleccionados a cancelar (individual payer)
@@ -560,13 +566,25 @@ export default function ChampionshipView() {
   const [resvErr, setResvErr] = useState('');
   const [resvTeamConfirm, setResvTeamConfirm] = useState(false);   // confirmar cancelar equipo con miembros
   const [resvDone, setResvDone] = useState(null);                  // { refunded } tras cancelar → success in-sheet
+  // Regla del slot "Gestionar mi reserva": 3 estados por `myResvResolved`/`myResv` — UNKNOWN (!resolved)→skeleton;
+  // YES (resolved && myResv)→CTA real; NO (resolved && !myResv)→nada. El skeleton NO depende de hint/cache/badge: se
+  // muestra SIEMPRE mientras la autoridad (getChampionshipMyReservation) no resolvió, incluso con cachedReal.myResv
+  // (nunca se pinta una reserva stale como CTA real). myResvResolved arranca false en REAL → skeleton desde 1er frame.
+  // CACHE-FIRST (SWR): si una visita previa dejó myResv en cache (cachedReal.myResv), arrancamos "resuelto" para
+  // pintar el CTA real desde el PRIMER render; loadMyReservation revalida en silencio y corrige (o lo quita). Sin
+  // cache → arranca false (skeleton mientras resuelve). Nunca "no tengo reserva"→CTA tardío.
+  const [myResvResolved, setMyResvResolved] = useState(!isRealMode || !!cachedReal?.myResv);
   function loadMyReservation() {
-    if (!isRealMode || !realId || !user?.id || !isPublicChamp) { setMyResv(null); return; }
+    if (!isRealMode) { setMyResv(null); setMyResvResolved(true); return; }
+    // UNKNOWN mientras el pricing no resuelva: aún no sabemos si es público (con posible reserva) → NO declarar
+    // "resuelto" (mantener skeleton). El effect reintenta al resolver pricing (dep pricingResolved).
+    if (!pricingResolved) return;
+    if (!isPublicAny || !realId || !user?.id) { setMyResv(null); setMyResvResolved(true); return; }   // definitivo: sin reserva posible
     getChampionshipMyReservation({ championshipId: realId })
-      .then(({ data, error }) => { setMyResv((error || !data) ? null : data); })
-      .catch(() => setMyResv(null));
+      .then(({ data, error }) => { setMyResv((error || !data) ? null : data); setMyResvResolved(true); })
+      .catch(() => { setMyResvResolved(true); });   // error ≠ "sin reserva": NO pisa myResv (conserva cache/valor previo), permite reintento
   }
-  useEffect(() => { loadMyReservation(); }, [isRealMode, realId, user?.id, isPublicChamp, realRow?.status]); // eslint-disable-line
+  useEffect(() => { loadMyReservation(); }, [isRealMode, realId, user?.id, isPublicAny, pricingResolved, realRow?.status]); // eslint-disable-line
   function openResv() { setResvErr(''); setResvTeamConfirm(false); setResvSel([]); setResvDone(null); setResvView('menu'); setResvOpen(true); }
   // Cierre del success in-sheet (botón "Entendido"): NO navega (se queda en el campeonato, mismo scroll). Recién
   // aquí se refresca el estado autoritativo (myResv puede pasar a null, roster/fila real cambian).
@@ -614,7 +632,13 @@ export default function ChampionshipView() {
   // Botón FLOTANTE del participante pagado (mismo patrón que el CTA flotante de Games: wrapper absolute bottom con
   // pointerEvents:none + botón pointerEvents:auto, por encima del TabBar en flujo, respetando safe-area). Se oculta
   // si el viewer es el OWNER (ese usa su propio CTA de gestión). Se renderiza UNA vez en la capa flotante inferior.
-  const myResvBtn = (isRealMode && myResv && !showManageCTA) ? (
+  const myResvBtn = (isRealMode && !showManageCTA && !myResvResolved) ? (
+    // UNKNOWN: la autoridad aún no resolvió → SKELETON en el lugar exacto del CTA (prioridad sobre el valor de
+    // caché: nunca pintamos una reserva stale como botón real). Al resolver: YES → CTA real; NO → nada.
+    <div aria-hidden="true" style={{ position: 'absolute', left: 16, right: 16, bottom: tabBarVisible ? '12px' : 'calc(env(safe-area-inset-bottom) + 12px)', pointerEvents: 'none' }}>
+      <div style={{ width: '100%', height: 54, borderRadius: 18, background: '#E8E8EC', animation: 'pulse 1.4s ease-in-out infinite' }} />
+    </div>
+  ) : (isRealMode && myResv && !showManageCTA) ? (
     <div style={{ position: 'absolute', left: 16, right: 16, bottom: tabBarVisible ? '12px' : 'calc(env(safe-area-inset-bottom) + 12px)', pointerEvents: 'none' }}>
       <button onClick={openResv} className="pressable" style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 54, background: '#fff', color: TEXT, border: `1.5px solid ${HAIR}`, borderRadius: 18, boxShadow: '0 6px 18px rgba(0,0,0,0.10)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
         Gestionar mi reserva
@@ -1084,14 +1108,19 @@ export default function ChampionshipView() {
   // Restaurar el scroll SOLO cuando el contenido real ya está montado (no durante el loading): mientras carga, el
   // scroller de contenido aún no existe y poner scrollTop no tendría altura → volvería al top. Se re-evalúa al
   // resolver (champ/loading/pricing) y se aplica UNA vez (scrollRestoredRef). Navegación nueva → 0.
+  // READY = la VISTA REAL ya se renderiza (misma condición que la negación del early-return de carga, INCLUIDO el
+  // bypass cache-first de pricingPending). Antes exigía !pricingPending, pero con cache la vista real monta ANTES de
+  // resolver pricing → el scroll se aplicaba tarde y se veía el top. Al alinear READY con el render real, el
+  // useLayoutEffect (pre-paint) fija scrollTop en el PRIMER commit de la vista real (con altura ya disponible por la
+  // caché de regState/realRow) → sin flash del top. gateOpen en deps: si hay pantalla de clave, se difiere hasta entrar.
   useLayoutEffect(() => {
     if (scrollRestoredRef.current) return;
-    const el = scrollRef.current; if (!el) return;
-    const ready = isRealMode ? (!!champ && !realLoading && !pricingPending) : true;
+    const el = scrollRef.current; if (!el) return;   // durante loading/gate el scroller real no existe → se espera
+    const ready = !isRealMode || (!!champ && !realLoading && !realError && !awaitingKeyReval && !keyRevalidating && (!pricingPending || !!cachedReal));
     if (!ready) return;
     scrollRestoredRef.current = true;
     el.scrollTop = (isTeamReturn || authResuming) ? (restore?.scrollTop || 0) : 0;
-  }, [champ, realLoading, pricingPending]); // eslint-disable-line
+  }, [champ, realLoading, realError, awaitingKeyReval, keyRevalidating, pricingPending, gateOpen]); // eslint-disable-line
 
   // Consumo ÚNICO del match reabierto: tras sembrarlo, se limpia del CV para que no se reabra en remounts
   // posteriores sin persistCV. persistCV lo volverá a guardar si el modal sigue abierto al navegar de nuevo.
@@ -1114,7 +1143,7 @@ export default function ChampionshipView() {
       // accessOk = ¿el actor estaba AUTORIZADO al salir a Team? (owner/miembro/clave verificada/grant persistente).
       // Al volver (cvReturn) siembra verifiedGrant y evita re-gatear pese a cambios de membership. No persiste
       // acceso indebido: solo captura la autorización REAL vigente en ese instante.
-      writeCV({ ...cv, summary, organizeState, name, coverTheme, adminView, demo, resultsView, matchFilterId, matchDetailId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, championship: { ...(cv.championship || {}), realId, teams, realRow, regState, competition, accessOk: (amOwner || amHostAccess || amMember || verifiedGrant) } });
+      writeCV({ ...cv, summary, organizeState, name, coverTheme, adminView, demo, resultsView, matchFilterId, matchDetailId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, championship: { ...(cv.championship || {}), realId, teams, realRow, regState, competition, myResv, accessOk: (amOwner || amHostAccess || amMember || verifiedGrant) } });
       return;
     }
     writeCV({ summary, organizeState, name, coverTheme, accessCode, resultsPublic, demo, resultsView, matchFilterId, matchDetailId, joinedNoTeam, teams, scrollTop: scrollRef.current?.scrollTop ?? 0, contactRequest, championship: isCreated ? { ...champ, teams } : champ });
@@ -1515,7 +1544,10 @@ export default function ChampionshipView() {
         + '\n  hasUser=' + (!!user));
     }
   }
-  if (isRealMode && (realLoading || realError || !champ || awaitingKeyReval || keyRevalidating || pricingPending)) {
+  // CACHE-FIRST: con snapshot reciente de ESTE campeonato (vuelta de Team/checkout o resume de Auth) NO bloqueamos
+  // por pricingPending → la pantalla se pinta YA desde la caché (realRow/regState/competition/myResv) y el fetch
+  // revalida en segundo plano. Sin caché, bloqueamos con SKELETON estructural (no spinner) hasta tener lo esencial.
+  if (isRealMode && (realLoading || realError || !champ || awaitingKeyReval || keyRevalidating || (pricingPending && !cachedReal))) {
     return (
       <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: SOFT, overflow: 'hidden' }}>
         <div style={{ background: BLUE, paddingTop: 'calc(env(safe-area-inset-top) + 9px)', paddingBottom: 9, paddingLeft: 8, paddingRight: 12, flexShrink: 0 }}>
@@ -1526,16 +1558,33 @@ export default function ChampionshipView() {
             <div style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: 600, letterSpacing: -0.2 }}>Tu campeonato</div>
           </div>
         </div>
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, textAlign: 'center' }}>
-          {realError ? (
+        {realError ? (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, textAlign: 'center' }}>
             <div style={{ color: SUB, fontSize: 14, lineHeight: 1.5 }}>
               No pudimos cargar el campeonato.
               <div><button onClick={() => navigate('/championships')} className="pressable" style={{ marginTop: 14, height: 44, padding: '0 20px', borderRadius: 12, border: 'none', background: ORANGE, color: '#1B1B1F', fontFamily: 'inherit', fontWeight: 800, fontSize: 14, cursor: 'pointer' }}>Volver a campeonatos</button></div>
             </div>
-          ) : (
-            <span style={{ width: 26, height: 26, borderRadius: '50%', border: '3px solid #E4E4EA', borderTop: `3px solid ${BLUE}`, display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
-          )}
-        </div>
+          </div>
+        ) : (
+          // SKELETON estructural del campeonato (portada + título + 2 cards). El CTA "Gestionar mi reserva" se
+          // reserva ABAJO (slot flotante) y solo con hint de participación — ver bloque siguiente.
+          <div aria-hidden="true" style={{ flex: 1, overflow: 'hidden' }}>
+            <div style={{ height: 180, background: '#E8E8EC', animation: 'pulse 1.4s ease-in-out infinite' }} />
+            <div style={{ padding: 16 }}>
+              <div style={{ height: 22, width: '55%', borderRadius: 6, background: '#E8E8EC', marginBottom: 16, animation: 'pulse 1.4s ease-in-out infinite' }} />
+              <div style={{ height: 96, borderRadius: 16, background: '#EFEFF2', marginBottom: 12, animation: 'pulse 1.4s ease-in-out infinite' }} />
+              <div style={{ height: 96, borderRadius: 16, background: '#EFEFF2', animation: 'pulse 1.4s ease-in-out infinite' }} />
+            </div>
+          </div>
+        )}
+        {/* Slot inferior "Gestionar mi reserva": se reserva desde el PRIMER render mientras la autoridad (myResv) no
+            resuelva — SIN depender de hint/cache. Continúa con el skeleton de myResvBtn al montar la vista real,
+            hasta resolver → CTA real (YES) o desaparece (NO). */}
+        {!realError && !myResvResolved && !showManageCTA && (
+          <div aria-hidden="true" style={{ padding: '0 16px 12px', flexShrink: 0 }}>
+            <div style={{ width: '100%', height: 54, borderRadius: 18, background: '#E8E8EC', animation: 'pulse 1.4s ease-in-out infinite' }} />
+          </div>
+        )}
         <TabBar />
       </div>
     );
@@ -1996,6 +2045,16 @@ export default function ChampionshipView() {
                         → tocar de nuevo sale directo (sin confirmación). En un equipo → tocar pide confirmación
                         de cambio (requestNoTeam). Salir del equipo se hace desde la pantalla del equipo. */}
                     {(canCreate || inscriptionsDisabled || pvReal) && !hostBlocksSelf && (() => { const inList = !!myMembership && !myMembership.team_id; const joinDisabled = regBusy || (inscriptionsDisabled && !amOwner) || pvReal;
+                      // UNKNOWN: mientras el pricing/tipo (público/privado + individual/equipo) NO esté resuelto
+                      // (p.ej. cvReturn cache-first revalidando), isPublicChamp=false NO significa "privado/gratis" →
+                      // NO renderizar copy/CTA de ninguna modalidad. Skeleton estructural (mantiene el espacio) hasta
+                      // la autoridad (pricingResolved). Evita el flash "¿No tienes equipo?" → "Inscríbete · S/XX".
+                      if (pricingPending) return (
+                        <>
+                          <div aria-hidden="true" style={{ height: 15, width: '72%', borderRadius: 6, background: '#EFEFF2', marginBottom: 10, animation: 'pulse 1.4s ease-in-out infinite' }} />
+                          <div aria-hidden="true" style={{ width: '100%', height: 46, borderRadius: 14, background: '#E8E8EC', animation: 'pulse 1.4s ease-in-out infinite' }} />
+                        </>
+                      );
                       // PÚBLICO: "Unirme sin equipo" es inscripción individual PAGADA → checkout (no el toggle gratis).
                       // Público por EQUIPOS (sin precio individual) → NO hay inscripción individual: ni gratis ni de
                       // pago. Participar es creando/uniéndose a un equipo (por clave/token). Sin este corte, el toggle

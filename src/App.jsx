@@ -226,10 +226,16 @@ function IntroGate({ children }) {
         // Campeonatos (/championships/intro = experiencia que /empresas representa) con una señal
         // LOCAL (empresaFirstVisit) para el selector de ciudad, SIN tutorial de Partidos. Cualquier
         // otro origen mantiene el flujo normal a /games.
-        const toEmpresas = location.pathname === '/empresas';
+        const p = location.pathname;
+        const toEmpresas = p === '/empresas';
+        // El intro NO debe romper un deep-link: si la URL ya apunta a un destino real (campeonato/equipo/juego/
+        // etc., no la raíz ni el onboarding), NO navegamos → los children montan esa MISMA ruta, conservando
+        // route + query (?team=, cvReturn) + la intención pendiente (AUTH_RESUME_KEY). Solo onboarding→/games.
+        const isOnboardingRoot = p === '/' || p === '/welcome';
         setTimeout(() => {
           if (toEmpresas) navigate('/championships/intro', { state: { empresaFirstVisit: true }, replace: true });
-          else navigate('/games', { state: { showCitySheet: true } });
+          else if (isOnboardingRoot) navigate('/games', { state: { showCitySheet: true } });
+          // else: deep-link → se preserva tal cual (sin navegar)
         }, 0);
       }}
     />
