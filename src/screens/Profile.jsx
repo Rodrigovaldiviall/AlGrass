@@ -2313,6 +2313,9 @@ export default function Profile() {
   const [champConfirm, setChampConfirm] = useState(location.state?.champConfirm ?? null);
   const [champCanceledAmount] = useState(location.state?.champCanceledAmount ?? 0);
   const [champJoinedId] = useState(location.state?.championshipId ?? null);
+  // Equipo público confirmado: enlace de unión + nombre del equipo (transitorios, igual que champConfirm).
+  const [champShareLink] = useState(location.state?.champShareLink ?? '');
+  const [champTeamName] = useState(location.state?.champTeamName ?? '');
   useEffect(() => {
     const cc = location.state?.champConfirm;
     if (!cc) return;
@@ -3706,6 +3709,16 @@ export default function Profile() {
           title="¡Inscripción confirmada!"
           lines={['Ya estás inscrito. Encuéntralo en tus campeonatos.']}
           onContinue={() => { setChampConfirm(null); setHighlightedId(champJoinedId || null); }}
+        />
+      )}
+      {/* Equipo público confirmado — MISMO patrón que 'joined' (overlay SOBRE Profile → al continuar señala el
+          campeonato). Usa ConfirmedOverlay para conservar el enlace de unión del equipo. */}
+      {champConfirm === 'team_created' && (
+        <ConfirmedOverlay
+          title="¡Equipo creado!"
+          lines={[champTeamName, 'Comparte el enlace para que tus jugadores se unan.'].filter(Boolean)}
+          shareLink={champShareLink || undefined}
+          onOK={() => { setChampConfirm(null); setHighlightedId(champJoinedId || null); }}
         />
       )}
       {!confirmedGame && slotExpiry && (

@@ -96,6 +96,11 @@ export default function ChampionshipCheckout() {
   //  - Electrónico (tarjeta/Yape/pasarela): pago confirmado → 'pending_publish' (puede publicar).
   //  - Transferencia: voucher enviado → 'payment_validation' ("Validando pago"); AlGrass valida antes de publicar.
   const createChampionship = (status, champConfirm, extra = {}) => {
+    // Veil que cubre el checkout desde el ÉXITO hasta que el destino (/profile) monta. Sin esto, al cerrar la
+    // pasarela (setPayOpen(false)) el checkout queda visible durante la transición de ruta → flicker de ~1s.
+    // NO se vuelve a poner en false: la navegación desmonta este componente. Cubre todos los métodos (gateway,
+    // crédito 100%, transferencia) porque todos pasan por aquí.
+    setFinalizing(true);
     setPayOpen(false);
     const cv = readCV() || {};
     cv.championship = {
@@ -118,6 +123,7 @@ export default function ChampionshipCheckout() {
   const [razon, setRazon] = useState('');
   const [direccion, setDireccion] = useState('');
   const [payOpen, setPayOpen] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);   // veil de transición éxito→destino (evita flicker del checkout)
 
   // Ciudad (autoridad de config) + formato: derivados del flujo real (venue/grupo elegidos). El backend
   // igual re-deriva ciudad de los games; aquí city solo sirve para PINTAR el catálogo de extras.
@@ -579,6 +585,14 @@ export default function ChampionshipCheckout() {
             onAvailabilityChanged: availabilityChangedBack, // §9
           }}
         />
+      )}
+
+      {/* Veil de transición: cubre el checkout entre el éxito y el montaje del destino (/profile + confirmación). */}
+      {finalizing && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 400, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'rgba(10,10,15,0.88)', padding: '0 32px' }}>
+          <div style={{ width: 52, height: 52, borderRadius: '50%', border: '4px solid rgba(255,255,255,0.2)', borderTop: '4px solid #fff', animation: 'spin 0.9s linear infinite', marginBottom: 28 }} />
+          <div style={{ fontSize: 18, fontWeight: 700, color: '#fff', letterSpacing: -0.3, textAlign: 'center', lineHeight: 1.3 }}>Confirmando tu campeonato…</div>
+        </div>
       )}
     </div>
   );

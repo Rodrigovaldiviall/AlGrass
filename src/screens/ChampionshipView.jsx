@@ -946,6 +946,10 @@ export default function ChampionshipView() {
       champStatus: realRow.status, champLive: realRow.live_started_at ?? null, regSnapshot: regState,
       championshipOrigin: readBackOrigin() || 'championships', isPublic: isPublicChamp,
       openSecretJoin: searchParams.get('join') === 'secret',   // intención tras login → abre modal de clave 1 vez
+      // Link del owner (?jt=TOKEN): el equipo recibe el token para que "Unirme" use join_token (sin clave). NO
+      // auto-join al abrir; openTokenJoin solo lo activa la intención preservada tras login (?join=token).
+      joinToken: searchParams.get('jt') || null,
+      openTokenJoin: searchParams.get('join') === 'token',
     } });
   }, [deepTeamId, isRealMode, realRow, gateOpen]); // eslint-disable-line
 
@@ -1272,7 +1276,6 @@ export default function ChampionshipView() {
   // ── Deep-link de invitación por TOKEN de equipo (público pagado) ──
   // Limpia ?jt= de la URL sin remontar (replace). El backend es la autoridad del join.
   const clearJt = () => { const sp = new URLSearchParams(searchParams); sp.delete('jt'); setSearchParams(sp, { replace: true }); };
-  const jtDoneRef = useRef(false);
   async function joinByToken(token, confirmChange) {
     const { error } = await joinChampionshipTeamWithToken({ token, confirmChange });
     if (error) {
@@ -1289,15 +1292,9 @@ export default function ChampionshipView() {
     flashToast('Te uniste al equipo');
     loadRegState(); refreshReal();   // refresco autoritativo (participación + roster + fila real)
   }
-  // Al abrir /championships/view/:id?jt=TOKEN: si anon → /auth conservando la URL completa (vuelve y reintenta);
-  // si autenticado → join por token una sola vez por mount (jtDoneRef). 'already' = éxito idempotente (sin error).
-  useEffect(() => {
-    const token = searchParams.get('jt');
-    if (!token || !isRealMode || jtDoneRef.current) return;
-    if (!user) { persistCV(); navigate('/auth', { state: { backPath: location.pathname + location.search } }); return; }
-    jtDoneRef.current = true;
-    joinByToken(token, false);
-  }, [searchParams, isRealMode, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // NOTA: el link del owner (?team=&jt=TOKEN) YA NO auto-une al abrir. El reenvío por ?team= lleva al equipo con
+  // el token (joinToken/openTokenJoin); el join ocurre SOLO cuando el usuario pulsa "Unirme" en ChampionshipTeam
+  // (o, tras login, por la intención preservada ?join=token). Aquí no se hace nada con ?jt=.
   // REAL: unirse a un equipo EXISTENTE (registration_open/closed). Requiere no estar ya inscrito.
   // SET membership al equipo (insert o cambio directo). La confirmación de cambio se maneja en la UI antes.
   async function joinTeamReal(teamId) {
@@ -1371,7 +1368,10 @@ export default function ChampionshipView() {
 
   // Checkout habilitado solo con formato+cancha+horario resueltos y SIN personalización de cancha.
   // (El caso pendiente/personalizado tendrá "Contáctame para organizarlo", aún no construido.)
-  const checkoutReady = complies && !summary.courtCustom;
+  // Exige SELECCIÓN REAL de horario: complies (hay disponibilidad) no basta; sin selectedGameIds el checkout
+  // no puede cotizar (quote) ni mostrar Árbitro. Al quitarse la auto-preselección, complies puede ser true sin
+  // horario elegido → este gate evita un checkout sin precio/extras. NO reintroduce auto-selección.
+  const checkoutReady = complies && !summary.courtCustom && (summary.selectedGameIds?.length > 0);
   // Gate de auth SOLO en la acción final. Sin sesión: persistimos el estado (persistCV) + la intención,
   // y vamos al mismo /auth (patrón backPath) que el resto de acciones protegidas. Con sesión: intacto.
   function requireAuth(action) {
@@ -1382,7 +1382,11 @@ export default function ChampionshipView() {
     // round-trip de /auth para NO re-pedir la clave al volver autenticado (se promueve a grant de su uid).
     if (verifiedGrant && realId) { try { sessionStorage.setItem('champ_access_resume', realId); } catch {} }
     // Real: volver al MISMO campeonato tras login (conserva el grant de acceso local). Creación: vista sin id.
-    navigate('/auth', { state: { backPath: isRealMode ? ('/championships/view/' + realId) : '/championships/view' } });
+    // Preservar el DESTINO COMPLETO (pathname + query): location.search lleva el ?jt= del link de equipo (y
+    // cualquier otro param). Sin esto, el token se perdía al pasar por /auth. La clave del privado NO viaja en
+    // la URL (se valida por modal → verifiedGrant/champ_access_resume), así que no se filtra aquí.
+    const base = isRealMode ? ('/championships/view/' + realId) : '/championships/view';
+    navigate('/auth', { state: { backPath: base + (location.search || '') } });
     return false;
   }
   // Abre el detalle del VENUE reutilizando /venue (VenueDetail). La FOTO y el MAPA reales (cover/lat/lng) NO
@@ -1450,6 +1454,7 @@ export default function ChampionshipView() {
   }
   function goToCheckout() {
     if (!checkoutReady) return;
+    if (!(summary.selectedGameIds?.length > 0)) return;   // sin horario real → no navegar ni crear estado parcial
     if (!requireAuth('checkout')) return;
     persistCV();
     navigate('/championships/checkout', { state: { summary, organizeState, championshipName: name, coverTheme } });
@@ -2344,6 +2349,17 @@ export default function ChampionshipView() {
                       <span style={{ fontSize: 14, color: SUB }}>Crédito a devolver</span>
                       <span style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{fmt(Number(myResv.refundable_total) || 0)}</span>
                     </div>
+                    {/* Rewards usados en la compra del equipo: no vuelven (informativo). reward_applied del getter;
+                        NO altera refundable_total. */}
+                    {rewardN > 0 && (
+                      <div style={{ padding: '2px 2px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: 14, color: SUB }}>Recompensas usadas</span>
+                          <span style={{ fontSize: 14, fontWeight: 600, color: SUB, textDecoration: 'line-through' }}>{fmt(rewardN)}</span>
+                        </div>
+                        <div style={{ fontSize: 11.5, color: SUB, lineHeight: 1.4, marginTop: 4 }}>Las recompensas no son reembolsables</div>
+                      </div>
+                    )}
                     <button onClick={() => doCancelTeam(false)} disabled={resvBusy} className="pressable" style={{ width: '100%', height: 50, borderRadius: 14, border: 'none', background: resvBusy ? '#E8E8EC' : RED, color: resvBusy ? '#9A9AA0' : '#fff', cursor: resvBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, marginTop: 16, outline: 'none' }}>{resvBusy ? 'Cancelando…' : 'Cancelar reserva del equipo'}</button>
                   </>
                 ) : kind === 'paid_individual_guest' ? (
@@ -2358,10 +2374,15 @@ export default function ChampionshipView() {
                     const plazas = Array.isArray(myResv.plazas) ? myResv.plazas : [];
                     const active = plazas.filter(p => !p.canceled);
                     const toggle = (uid) => setResvSel(s => s.includes(uid) ? s.filter(x => x !== uid) : [...s, uid]);
+                    // Rewards usados por el payer (dato autoritativo): reward del getter o, con varias órdenes, la suma
+                    // de los reward_applied reales de cada order (NO se deriva por precio−refund).
+                    const rwPayer = rewardN > 0 ? rewardN : (Array.isArray(myResv.orders) ? myResv.orders.reduce((s, o) => s + (Number(o.reward_applied) || 0), 0) : 0);
                     return (
                       <>
-                        <div style={{ fontSize: 13, color: SUB, margin: '10px 0 2px' }}>Selecciona las plazas a cancelar.</div>
-                        {plazas.map(p => p.canceled ? (
+                        {/* Solo se pide seleccionar cuando hay ≥2 plazas activas. Con una sola (eres el único) se
+                            cancela directo sin selector. */}
+                        {active.length > 1 && <div style={{ fontSize: 13, color: SUB, margin: '10px 0 2px' }}>Selecciona las plazas a cancelar.</div>}
+                        {active.length > 1 && plazas.map(p => p.canceled ? (
                           // Histórico: plaza cancelada → nombre en gris + "Cancelado", no seleccionable (estilo Match).
                           <div key={p.user_id} style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', padding: '12px 0', borderBottom: `1px solid ${HAIR}` }}>
                             <span style={{ flex: 1, minWidth: 0, fontSize: 14.5, fontWeight: 600, color: SUB, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.full_name}{p.is_payer ? ' (Titular)' : ''}</span>
@@ -2374,8 +2395,21 @@ export default function ChampionshipView() {
                             <span style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>{soles(p.amount)}</span>
                           </button>
                         ))}
+                        {/* Rewards usados: no vuelven (informativo). NO altera los importes por plaza ni el refund. */}
+                        {rwPayer > 0 && (
+                          <div style={{ padding: '10px 2px 2px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: 14, color: SUB }}>Recompensas usadas</span>
+                              <span style={{ fontSize: 14, fontWeight: 600, color: SUB, textDecoration: 'line-through' }}>{fmt(rwPayer)}</span>
+                            </div>
+                            <div style={{ fontSize: 11.5, color: SUB, lineHeight: 1.4, marginTop: 4 }}>Las recompensas no son reembolsables</div>
+                          </div>
+                        )}
                         {active.length === 0 ? (
                           <div style={{ fontSize: 13, color: SUB, marginTop: 12 }}>No quedan plazas activas en esta reserva.</div>
+                        ) : active.length === 1 ? (
+                          // Única plaza activa (eres el único) → cancelación directa, sin selección.
+                          <button onClick={() => doCancelPlazas(active.map(p => p.user_id))} disabled={resvBusy} className="pressable" style={{ width: '100%', height: 50, borderRadius: 14, border: 'none', background: resvBusy ? '#E8E8EC' : RED, color: resvBusy ? '#9A9AA0' : '#fff', cursor: resvBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, marginTop: 14, outline: 'none' }}>{resvBusy ? 'Cancelando…' : 'Cancelar mi inscripción'}</button>
                         ) : (
                           <button onClick={() => doCancelPlazas(resvSel)} disabled={resvBusy || resvSel.length === 0} className="pressable" style={{ width: '100%', height: 50, borderRadius: 14, border: 'none', background: (resvBusy || resvSel.length === 0) ? '#E8E8EC' : RED, color: (resvBusy || resvSel.length === 0) ? '#9A9AA0' : '#fff', cursor: (resvBusy || resvSel.length === 0) ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, marginTop: 14, outline: 'none' }}>{resvBusy ? 'Cancelando…' : `Cancelar ${resvSel.length || ''} plaza${resvSel.length === 1 ? '' : 's'}`.trim()}</button>
                         )}

@@ -8,7 +8,7 @@ import RosterAvatar from '../components/championship/RosterAvatar';
 import { PlayerRow } from '../components/checkout/PlayerPickerUI';
 import { PlayerModal } from './GameDetail';   // MISMO perfil público que el roster de Inscripciones (sin duplicar)
 import { TEAM_DESIGNS, DEFAULT_DESIGN, teamDesign, sameDesign, withinTeamNameWordLimit, playerLabel, CURRENT_USER_NAME } from '../data/championshipTeamsMock';
-import { saveChampionshipTeam, getChampionshipRegistrationState, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, manageChampionshipPlayer, setChampionshipMatchTeam, getChampionshipCompetition, joinChampionshipTeamWithSecret, getChampionshipTeamShare, addChampionshipTeamMember, updateChampionshipTeamSecret, getChampionshipTeamSecret } from '../services/championshipService';
+import { saveChampionshipTeam, getChampionshipRegistrationState, joinChampionshipTeam, leaveChampionship, deleteChampionshipTeam, manageChampionshipPlayer, setChampionshipMatchTeam, getChampionshipCompetition, joinChampionshipTeamWithSecret, joinChampionshipTeamWithToken, getChampionshipTeamShare, addChampionshipTeamMember, updateChampionshipTeamSecret, getChampionshipTeamSecret } from '../services/championshipService';
 import { searchUsers } from '../services/reservationService';   // MISMA búsqueda pública (users_public) que invitaciones de Match
 import PlayerActionSheet from '../components/championship/PlayerActionSheet';
 import TeamPickerSheet from '../components/championship/TeamPickerSheet';
@@ -153,6 +153,45 @@ export default function ChampionshipTeam() {
     setKeyOpen(false); setKeyConfirm(false); setKeySecret('');
     loadRState();   // refresco autoritativo (sin update optimista)
   }
+  // ── Unirse por LINK del owner (join_token). Credencial distinta de join_secret: el token del link autoriza,
+  // NUNCA se pide clave. Llega por nav.joinToken (reenvío de ChampionshipView con ?jt=). Si el backend pide
+  // confirmar cambio A→B, se reutiliza el mismo modal (rConfirm) marcándolo con token. ──
+  const joinToken = nav.joinToken || null;
+  const tokenAutoRef = useRef(false);
+  async function rDoJoinByToken(confirmChange = false, tokenArg = null) {
+    const tk = tokenArg || joinToken;
+    if (!tk || rBusy) return;
+    setRBusy(true); setRErr('');
+    const { error } = await joinChampionshipTeamWithToken({ token: tk, confirmChange });
+    setRBusy(false);
+    if (error) {
+      const m = String(error.message || '');
+      if (/CONFIRM_TEAM_CHANGE_REQUIRED/.test(m)) {
+        const mem = rState?.current_user_membership || null;
+        const fromName = mem?.team_id ? ((rState?.teams || []).find(x => x.id === mem.team_id)?.name || 'tu equipo') : null;
+        setRConfirm({ fromName, token: tk });   // mismo modal de cambio, marcado por token
+        return;
+      }
+      setRErr(/INVALID_LINK/.test(m) ? 'El enlace de invitación no es válido.'
+        : /NOT_OPEN|REGISTRATION_CLOSED/.test(m) ? 'Las inscripciones no están disponibles.'
+        : /PAID_REGISTRATION_MUST_CANCEL_FIRST/.test(m) ? 'Primero debes cancelar tu inscripción actual.'
+        : 'No se pudo unir al equipo. Intenta de nuevo.');
+      loadRState();
+      return;
+    }
+    loadRState();
+  }
+  // Intención "unirse por link/token" tras login (nav.openTokenJoin): completa el join por token UNA vez al volver
+  // autenticado (tokenAutoRef). NO es auto-join por abrir el link: solo continúa el "Unirme" que el usuario ya
+  // pulsó antes de /auth. Si ya está en ESTE equipo, no hace nada.
+  useEffect(() => {
+    if (tokenAutoRef.current) return;
+    if (!realExisting || !nav.openTokenJoin || !joinToken || !user?.id) return;
+    const mem = rState?.current_user_membership || null;
+    if (mem && mem.team_id === teamId) return;
+    tokenAutoRef.current = true;
+    rDoJoinByToken(false);
+  }, [realExisting, user?.id, rState, teamId]); // eslint-disable-line
   const [rAddSearching, setRAddSearching] = useState(false);
   const [rAddSel, setRAddSel] = useState([]);                    // multiselección: [{ id, name, code, ... }]
   const [rAddBusy, setRAddBusy] = useState(false);
@@ -597,7 +636,9 @@ export default function ChampionshipTeam() {
       if (isPublic) {
         const { data, error } = await getChampionshipTeamShare({ teamId });
         if (error || !data?.join_token) { setRErr('No se pudo generar el enlace para compartir.'); return; }
-        url = `${window.location.origin}/championships/view/${champId}?jt=${data.join_token}`;
+        // ?team= → el link aterriza en la PANTALLA del equipo (reenvío existente); ?jt= autoriza el "Unirme" por
+        // token (sin clave). NO auto-join al abrir: el usuario pulsa "Unirme".
+        url = `${window.location.origin}/championships/view/${champId}?team=${teamId}&jt=${data.join_token}`;
       }
       if (navigator.share) { navigator.share({ title, text, url }).catch(() => {}); return; }
       if (navigator.clipboard) navigator.clipboard.writeText(url).then(() => { setRCopied(true); setTimeout(() => setRCopied(false), 1800); }).catch(() => {});
@@ -774,8 +815,18 @@ export default function ChampionshipTeam() {
               "Desuscribirme" ni "Capitán"). Su única salida es Gestionar mi reserva → Cancelar reserva. */}
           {canJoin && !(isPublic && amCreator && joinedHere) && (
             <div style={{ position: 'absolute', left: 16, right: 16, bottom: 'calc(env(safe-area-inset-bottom) + 12px)', pointerEvents: 'none' }}>
-              {isPublic && !joinedHere ? (
-                // PÚBLICO: unirse es por CLAVE/link (el "Únete" libre queda oculto). El cambio A→B lo confirma el modal.
+              {isPublic && !joinedHere && joinToken ? (
+                // LINK del owner (join_token): "Unirme" directo, SIN clave. No logueado → /auth preservando destino
+                // + token + intención (?team=&jt=&join=token); al volver, openTokenJoin completa el join por token.
+                <button onClick={() => {
+                  if (rBusy) return;
+                  if (!user) { navigate('/auth', { state: { backPath: `${teamReturnPath}&jt=${joinToken}&join=token` } }); return; }
+                  rDoJoinByToken(false);
+                }} disabled={rBusy} className="pressable" style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9, width: '100%', height: 54, borderRadius: 18, border: 'none', cursor: rBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 16, fontWeight: 800, letterSpacing: -0.2, outline: 'none', background: ORANGE, color: '#1B1B1F', opacity: rBusy ? 0.75 : 1, boxShadow: '0 6px 18px rgba(245,165,36,0.40)' }}>
+                  {rBusy ? '…' : 'Unirme'}
+                </button>
+              ) : isPublic && !joinedHere ? (
+                // PÚBLICO sin link: unirse es por CLAVE (el "Únete" libre queda oculto). El cambio A→B lo confirma el modal.
                 <button onClick={() => {
                   // No logueado → /auth conservando destino + intención (?team=&join=secret). NO llama RPC. Al
                   // volver autenticado, ChampionshipView reenvía a ESTE equipo con openSecretJoin → abre el modal.
@@ -803,7 +854,7 @@ export default function ChampionshipTeam() {
               <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, marginTop: 8 }}>{rConfirm.fromName ? `Ya estás inscrito en ${rConfirm.fromName}. Si continúas, pasarás a ${rt?.name || 'este equipo'}.` : `Estás inscrito sin equipo. Si continúas, pasarás a ${rt?.name || 'este equipo'}.`}</div>
               <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
                 <button onClick={() => setRConfirm(null)} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: `1.5px solid ${HAIR}`, background: '#fff', color: TEXT, cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, outline: 'none' }}>Cancelar</button>
-                <button onClick={() => { setRConfirm(null); rDoJoin(); }} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: 'none', background: ORANGE, color: '#1B1B1F', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, outline: 'none' }}>{rConfirm.fromName ? 'Cambiarme' : 'Unirme'}</button>
+                <button onClick={() => { const tk = rConfirm.token; setRConfirm(null); tk ? rDoJoinByToken(true, tk) : rDoJoin(); }} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: 'none', background: ORANGE, color: '#1B1B1F', cursor: 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, outline: 'none' }}>{rConfirm.fromName ? 'Cambiarme' : 'Unirme'}</button>
               </div>
             </div>
           </div>

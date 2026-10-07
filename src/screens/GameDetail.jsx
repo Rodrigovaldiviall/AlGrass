@@ -1175,6 +1175,17 @@ function CancelSheet({ gameId, breakdown, price, guestList, userName, isGuest, g
                 <span style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{fmt(totalRefund)}</span>
               </div>
             ))}
+            {/* Rewards usados por el TITULAR: no vuelven al usuario (informativo, no error). Dato autoritativo del
+                breakdown de la reserva (breakdown.rewardApplied); NO altera el refund ni restaura Rewards. */}
+            {!isGuest && (breakdown?.rewardApplied ?? 0) > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 14, color: SUB }}>Recompensas usadas</span>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: SUB, textDecoration: 'line-through' }}>{fmt(breakdown.rewardApplied)}</span>
+                </div>
+                <div style={{ fontSize: 11.5, color: SUB, lineHeight: 1.4, marginTop: 4 }}>Las recompensas no son reembolsables</div>
+              </div>
+            )}
             <button onClick={canConfirm ? confirm : undefined} style={{ width: '100%', height: 50, borderRadius: 14, background: canConfirm ? DANGER : '#E8E8EC', color: canConfirm ? '#fff' : '#9A9AA0', border: 'none', cursor: canConfirm ? 'pointer' : 'not-allowed', fontSize: 15, fontWeight: 700, fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
               {within24h ? 'Cancelar asistencia' : 'Confirmar cancelación'}
             </button>

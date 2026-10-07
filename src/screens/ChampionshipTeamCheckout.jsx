@@ -3,7 +3,6 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { TEXT, SUB, HAIR, ORANGE } from '../constants';
 import { CtaButton, TopBar } from '../components/checkout/CheckoutUI';
 import PaymentSheet from '../components/checkout/PaymentSheet';
-import ConfirmedOverlay from '../components/ConfirmedOverlay';
 import Shield, { DesignSwatch } from '../components/championship/Shield';
 import { TEAM_DESIGNS, DEFAULT_DESIGN, withinTeamNameWordLimit } from '../data/championshipTeamsMock';
 import { soles } from '../data/championshipCheckoutMock';
@@ -70,7 +69,6 @@ export default function ChampionshipTeamCheckout() {
   const [confirming, setConfirming] = useState(false);
   const [confirmSlow, setConfirmSlow] = useState(false);
   const [err, setErr] = useState(null);
-  const [done, setDone] = useState(null);   // { teamId, joinToken } → overlay de éxito
   const orderRef = useRef({ key: null });
   const slowTimer = useRef(null);
 
@@ -95,7 +93,12 @@ export default function ChampionshipTeamCheckout() {
     }
     orderRef.current = { key: null };
     stopConfirming();
-    setDone({ teamId: data?.team_id || null, joinToken: data?.join_token || null });
+    // MISMO patrón que la inscripción sin equipo (ChampionshipJoinCheckout.done): la confirmación se muestra
+    // SOBRE Profile y, al continuar, se señala (highlight) el campeonato. Llevamos el enlace de unión del equipo
+    // (join_token) para que el overlay de Profile lo comparta.
+    const joinToken = data?.join_token || null;
+    const link = joinToken ? `${window.location.origin}/championships/view/${championshipId}?jt=${joinToken}` : '';
+    navigate('/profile', { replace: true, state: { champConfirm: 'team_created', championshipId, champShareLink: link, champTeamName: name.trim() } });
   };
 
   // Pasarela (external>0): crea order al pulsar Pagar.
@@ -125,7 +128,6 @@ export default function ChampionshipTeamCheckout() {
   };
 
   const canSubmit = nameOk && secretOk && unitPrice > 0 && !confirming;
-  const shareLink = done?.joinToken ? `${window.location.origin}/championships/view/${championshipId}?jt=${done.joinToken}` : '';
 
   return (
     <div className="screen-shell" style={{ display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden', position: 'relative' }}>
@@ -247,14 +249,6 @@ export default function ChampionshipTeamCheckout() {
         </div>
       )}
 
-      {done && (
-        <ConfirmedOverlay
-          title="¡Equipo creado!"
-          lines={[name.trim(), 'Comparte el enlace para que tus jugadores se unan.']}
-          shareLink={shareLink}
-          onOK={() => navigate(`/championships/view/${championshipId}`, { replace: true })}
-        />
-      )}
     </div>
   );
 }

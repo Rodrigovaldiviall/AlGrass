@@ -202,7 +202,7 @@ function AlertHolder({ tone, title, secondary }) {
 }
 
 // ── Cancel sheet
-function CancelSheet({ userName, gameId, baseAmount = 0, onClose, onConfirm, onDone }) {
+function CancelSheet({ userName, gameId, baseAmount = 0, reward = 0, onClose, onConfirm, onDone }) {
   const [open, setOpen]               = useState(false);
   const [step, setStep]               = useState('select');
   const [pct, setPct]                 = useState(null);   // preview del servidor: 100 | 50 | 0 | null (cargando)
@@ -306,6 +306,17 @@ function CancelSheet({ userName, gameId, baseAmount = 0, onClose, onConfirm, onD
                   <span style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>{fmt(estRefund)}</span>
                 </div>
               </>
+            )}
+            {/* Rewards usados: no vuelven al usuario (informativo). Dato autoritativo de la reserva (reward_applied);
+                NO altera el refund ni el "Crédito a devolver". */}
+            {reward > 0 && (
+              <div style={{ padding: '4px 2px 2px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 14, color: SUB }}>Recompensas usadas</span>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: SUB, textDecoration: 'line-through' }}>{fmt(reward)}</span>
+                </div>
+                <div style={{ fontSize: 11.5, color: SUB, lineHeight: 1.4, marginTop: 4 }}>Las recompensas no son reembolsables</div>
+              </div>
             )}
           </div>
           <div style={{ padding: '12px 16px calc(12px + env(safe-area-inset-bottom))', borderTop: `1px solid ${HAIR}`, flexShrink: 0 }}>
@@ -472,7 +483,7 @@ export default function RentalDetail() {
     Promise.all([
       getGameById(id),
       user?.id
-        ? supabase.from('reservations').select('id, subtotal_amount, total_amount, reserved_at')
+        ? supabase.from('reservations').select('id, subtotal_amount, total_amount, reward_applied, reserved_at')
             .eq('game_id', id).eq('user_id', user.id).eq('status', 'spend')
             .order('reserved_at', { ascending: false }).limit(1)
         : null,
@@ -486,7 +497,7 @@ export default function RentalDetail() {
       // Keep most-recent spend for amount display in PaymentSheet/CancelSheet only.
       // Active booking state is determined by game.bookedByUserId, not by spend/refund history.
       if (spends?.length) {
-        setMyRes({ amount: spends[0].subtotal_amount ?? spends[0].total_amount ?? 0, reservedAt: spends[0].reserved_at ?? null });
+        setMyRes({ amount: spends[0].subtotal_amount ?? spends[0].total_amount ?? 0, reward: Number(spends[0].reward_applied) || 0, reservedAt: spends[0].reserved_at ?? null });
       } else {
         setMyRes(null);
       }
@@ -496,7 +507,7 @@ export default function RentalDetail() {
         sessionStorage.setItem(`rd_status_${id}`, JSON.stringify({
           bookedByUserId: freshGame?.bookedByUserId ?? null,
           myReservation:  spends?.length
-            ? { amount: spends[0].subtotal_amount ?? spends[0].total_amount ?? 0, reservedAt: spends[0].reserved_at ?? null }
+            ? { amount: spends[0].subtotal_amount ?? spends[0].total_amount ?? 0, reward: Number(spends[0].reward_applied) || 0, reservedAt: spends[0].reserved_at ?? null }
             : null,
           ts: Date.now(),
         }));
@@ -844,6 +855,7 @@ export default function RentalDetail() {
           userName={userName}
           gameId={game.id}
           baseAmount={myReservation?.amount ?? 0}
+          reward={myReservation?.reward ?? 0}
           onClose={() => setCancelOpen(false)}
           onConfirm={handleCancel}
           onDone={goBack}

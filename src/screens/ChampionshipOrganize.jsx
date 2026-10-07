@@ -204,6 +204,11 @@ export default function ChampionshipOrganize() {
   const [inv, setInv] = useState(null);
   const invLoading = inv == null;
   useEffect(() => {
+    // CIUDAD EFECTIVA EN HIDRATACIÓN: hay sesión (user?.id) pero getActiveCity() aún devolvió null (localStorage
+    // sin ciudad hasta que AuthContext resuelve users.city). NO consultar inventario con ciudad null/stale (daría
+    // [] → falso "No hay disponibilidad"): dejamos inv=null → se mantiene "Cargando disponibilidad…". El resync de
+    // abajo adopta user.city y este effect re-corre por [userCity]. Deslogueado (sin user) → fetch normal.
+    if (!userCity && user?.id) { setInv(null); return; }   // eslint-disable-line react-hooks/set-state-in-effect
     let alive = true;
     // Inventario SOLO de la ciudad del perfil (users.city). Sin ciudad → vacío (el service lo acota en la fuente).
     fetchChampionshipInventory(userCity).then(({ games: gs, error }) => {
@@ -212,7 +217,14 @@ export default function ChampionshipOrganize() {
       setInv(gs || []);
     });
     return () => { alive = false; };
-  }, [userCity]);
+  }, [userCity, user?.id]);
+  // RESYNC de ciudad: si AuthContext resuelve la ciudad DESPUÉS del montaje y userCity sigue vacío (getActiveCity
+  // devolvió null en frío), adoptarla → dispara el refetch del inventario por [userCity]. Solo rellena cuando está
+  // vacía (NO pisa una ciudad elegida en el selector); guard !userCity evita loops.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!userCity && user?.city) setUserCity(user.city);
+  }, [user?.city, userCity]);
   const gamesAll = inv || [];
 
   // Config de Championship por CIUDAD del inventario (asunción operativa: un inventario ≈ una ciudad).
