@@ -484,6 +484,8 @@ export default function ConfirmReservation() {
     && _teamSizeInit > 0;
   const [reservedSlots, setReservedSlots] = useState(_armaSeedInit?.on ? _armaSeedInit.n : (_capActivationInit ? _teamSizeInit : 0));
   const [armaLista, setArmaLista] = useState(!!_armaSeedInit?.on || _capActivationInit); // "Arma la lista" ON/OFF (reservedSlots = N total)
+  const [armaClosedMsg, setArmaClosedMsg] = useState(''); // aviso "plazo cerrado" (mismo toast que dupMsg)
+  const armaClosedTimerRef = useRef(null);
   const [lastN, setLastN] = useState(0);             // N recordado al apagar el toggle (misma sesión)
 
   const [confirmedPlayerIds, setConfirmedPlayerIds] = useState(new Set());
@@ -683,6 +685,12 @@ export default function ConfirmReservation() {
   const captainColor = isCaptainGold ? '#F5B301' : '#E5383B';
   // Arma la lista: ON pone N = max(piso, último N); OFF apaga la reserva (reservedSlots=0) y recuerda N.
   function toggleArmaLista() {
+    if (slotReservationClosed) {
+      setArmaClosedMsg('Ya no puedes armar una lista para este partido porque se ha cerrado el plazo permitido.');
+      clearTimeout(armaClosedTimerRef.current);
+      armaClosedTimerRef.current = setTimeout(() => setArmaClosedMsg(''), 5000);
+      return;
+    }
     if (armaLista) { setLastN(reservedSlots); setReservedSlots(0); setArmaLista(false); }
     else { setReservedSlots(Math.max(listFloorMin, lastN)); setArmaLista(true); }
   }
@@ -1365,7 +1373,7 @@ export default function ConfirmReservation() {
               <div style={{ fontSize: 16, fontWeight: 800, color: slotReservationClosed ? '#9A9AA0' : TEXT, letterSpacing: -0.2 }}>Arma la lista</div>
               <div style={{ fontSize: 12.5, color: slotReservationClosed ? '#C7C7CC' : SUB, marginTop: 1 }}>Hasta {releaseHours}h antes del partido</div>
             </div>
-            <button onClick={toggleArmaLista} role="switch" aria-checked={armaLista} disabled={armaListToggleDisabled}
+            <button onClick={toggleArmaLista} role="switch" aria-checked={armaLista} aria-disabled={armaListToggleDisabled} disabled={armaListToggleDisabled && !slotReservationClosed}
               style={{ width: 44, height: 26, borderRadius: 999, border: 'none', background: armaLista ? BLUE : '#E5E5EA', cursor: armaListToggleDisabled ? 'default' : 'pointer', padding: 0, position: 'relative', transition: 'background .2s ease', WebkitTapHighlightColor: 'transparent', outline: 'none', flexShrink: 0, opacity: armaListToggleDisabled ? 0.5 : 1 }}>
               <div style={{ position: 'absolute', top: 2, left: armaLista ? 20 : 2, width: 22, height: 22, borderRadius: '50%', background: '#fff', transition: 'left .2s ease', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
             </button>
@@ -1912,6 +1920,11 @@ export default function ConfirmReservation() {
           releaseHours={releaseHours}
           onOK={() => { setShowConfirmed(false); navigate(-1); }}
         />
+      )}
+      {armaClosedMsg && (
+        <div style={{ position: 'fixed', bottom: 140, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.75)', color: '#fff', padding: '8px 18px', borderRadius: 20, fontSize: 14, fontWeight: 500, zIndex: 9999, pointerEvents: 'none', width: 'max-content', maxWidth: 'calc(100vw - 32px)', textAlign: 'center' }}>
+          {armaClosedMsg}
+        </div>
       )}
     </div>
   );
