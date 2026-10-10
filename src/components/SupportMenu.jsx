@@ -1,6 +1,8 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faWhatsapp } from '@fortawesome/free-brands-svg-icons';
-import { TEXT, SUB, HAIR, WHATSAPP_NUMBER, WHATSAPP_DISPLAY, SUPPORT_EMAIL } from '../constants';
+import { useState, useEffect } from 'react';
+import { TEXT, SUB, HAIR, SUPPORT_EMAIL } from '../constants';
+import { fetchSupportPhone } from '../services/organizerContact';
 
 const EmailIcon = () => (
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
@@ -10,6 +12,14 @@ const EmailIcon = () => (
 );
 
 export function SupportMenu({ onClose }) {
+  // Teléfono de soporte = app_settings.algrass_operational_phone (null mientras carga / si no se puede leer).
+  const [phone, setPhone] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    fetchSupportPhone().then(p => { if (alive) setPhone(p); });
+    return () => { alive = false; };
+  }, []);
+  const display = phone ? `+${phone.slice(0, 2)} ${phone.slice(2, 5)} ${phone.slice(5, 8)} ${phone.slice(8)}`.trim() : '';
   return (
     <>
       <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
@@ -19,12 +29,12 @@ export function SupportMenu({ onClose }) {
         boxShadow: '0 8px 32px rgba(0,0,0,0.16)', border: `1px solid ${HAIR}`,
         minWidth: 252, padding: '6px 0', overflow: 'hidden',
       }}>
-        <a href={`https://wa.me/${WHATSAPP_NUMBER}`} target="_blank" rel="noreferrer" onClick={onClose}
-          style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', textDecoration: 'none' }}>
+        <a href={phone ? `https://wa.me/${phone}` : undefined} target="_blank" rel="noreferrer" onClick={phone ? onClose : undefined}
+          style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', textDecoration: 'none', opacity: phone ? 1 : 0.5 }}>
           <FontAwesomeIcon icon={faWhatsapp} style={{ fontSize: 24, color: '#25D366', flexShrink: 0 }} />
           <div>
             <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, lineHeight: 1.2 }}>WhatsApp</div>
-            <div style={{ fontSize: 12.5, color: SUB, marginTop: 2 }}>{WHATSAPP_DISPLAY}</div>
+            <div style={{ fontSize: 12.5, color: SUB, marginTop: 2 }}>{display || '\u00A0'}</div>
           </div>
         </a>
         <div style={{ height: 1, background: HAIR, margin: '0 16px' }} />

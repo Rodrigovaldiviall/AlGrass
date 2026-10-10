@@ -5,7 +5,7 @@ import { faCommentSms } from '@fortawesome/free-solid-svg-icons';
 import { TEXT, SUB, HAIR, BLUE } from '../constants';
 
 // ── "Comunícate con el organizador" — pieza ÚNICA reutilizable ────────────────
-// CTA de contacto (WhatsApp + SMS) del ORGANIZADOR de un game (GameDetail/RentalDetail).
+// CTA de contacto (WhatsApp + SMS) del ORGANIZADOR de un game (GameDetail/RentalDetail/FieldDetail).
 //
 // Recibe un teléfono YA RESUELTO vía `phone` (dígitos, con código de país); NO sabe
 // cómo se obtuvo (host vs algrass) — la resolución vive en
@@ -14,7 +14,7 @@ import { TEXT, SUB, HAIR, BLUE } from '../constants';
 // SIN placeholder: si `phone` es null/'' o inválido, el CTA queda DESHABILITADO
 // (atenuado, no abre el menú). Ya NO usa WHATSAPP_NUMBER como fallback.
 //
-// NO la usan FieldDetail (nivel venue) ni SupportMenu (Soporte AlGrass).
+// También la usa FieldDetail. NO la usa SupportMenu (Soporte AlGrass).
 
 function formatPhone(d) {
   return d.length >= 11

@@ -18,7 +18,5 @@ export function gameUnavailableCopy(isRental = false) {
     : { title: 'Partido no disponible', message: 'Durante el proceso, este partido dejó de estar disponible para reservar. Vuelve a partidos para seguir explorando.', cta: 'Volver a partidos', path: '/games' };
 }
 
-// Organizer / support contact — replace with values from admin config when available
-export const WHATSAPP_NUMBER  = '51999999999';
-export const WHATSAPP_DISPLAY = '+51 999 999 999';
+// Support email (los teléfonos de soporte/organizador viven en app_settings)
 export const SUPPORT_EMAIL    = 'soporte@algrass.com';

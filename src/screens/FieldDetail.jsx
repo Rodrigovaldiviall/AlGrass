@@ -1,9 +1,8 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
-import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, DANGER, WHATSAPP_NUMBER } from '../constants';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faWhatsapp } from '@fortawesome/free-brands-svg-icons';
-import { faCommentSms } from '@fortawesome/free-solid-svg-icons';
+import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, DANGER } from '../constants';
+import OrganizerContactButton from '../components/OrganizerContactButton';
+import { useOrganizerPhone } from '../hooks/useOrganizerPhone';
 import I from '../icons';
 import { FIELDS } from '../data/fields';
 import { GAME_DEFAULTS } from '../data/games';
@@ -136,46 +135,7 @@ function InfoRow({ icon, primary, secondary, action }) {
   );
 }
 
-function WAChatButton() {
-  const [open, setOpen] = useState(false);
-  const ph = WHATSAPP_NUMBER;
-  const displayPhone = `+${ph.slice(0, 2)} ${ph.slice(2, 5)} ${ph.slice(5, 8)} ${ph.slice(8)}`;
-  return (
-    <div style={{ position: 'relative', flexShrink: 0 }}>
-      <button
-        className="pressable"
-        onClick={() => setOpen(v => !v)}
-        style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none', padding: '2px 0' }}>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ color: SUB }}>
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-        <span style={{ fontSize: 11, color: SUB, fontWeight: 700, textAlign: 'center', lineHeight: 1.25 }}>
-          Comunícate con<br />el organizador
-        </span>
-      </button>
-      {open && (
-        <>
-          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
-          <div style={{ position: 'absolute', right: 0, bottom: 'calc(100% + 8px)', zIndex: 100, background: '#fff', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.15)', border: `1px solid ${HAIR}`, overflow: 'hidden', minWidth: 252 }}>
-            <a className="pressable" href={`https://wa.me/${ph}`} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}
-              style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', textDecoration: 'none', borderBottom: `1px solid ${HAIR}` }}>
-              <FontAwesomeIcon icon={faWhatsapp} style={{ fontSize: 22, color: '#25D366', flexShrink: 0 }} />
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: TEXT, lineHeight: 1.2 }}>WhatsApp</div>
-                <div style={{ fontSize: 12.5, color: SUB, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{displayPhone}</div>
-              </div>
-            </a>
-            <a className="pressable" href={`sms:+${ph}`} onClick={() => setOpen(false)}
-              style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '13px 16px', textDecoration: 'none' }}>
-              <FontAwesomeIcon icon={faCommentSms} style={{ fontSize: 22, color: BLUE, flexShrink: 0 }} />
-              <span style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>SMS</span>
-            </a>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
+// WAChatButton reemplazado por OrganizerContactButton (teléfono configurado en app_settings).
 
 // ── Avatar
 function Avatar({ name, size = 36 }) {
@@ -386,6 +346,7 @@ export default function FieldDetail() {
   const backPath   = location.state?.backPath  ?? '/fields';
 
   const sel = location.state?.field ?? FIELDS.find(f => f.id === id) ?? null;
+  const organizerPhone = useOrganizerPhone(sel);   // host / AlGrass según app_settings, o null → CTA off
   const g   = useMemo(() => buildField(sel), [sel]);
 
   const isBooked = useMemo(() => {
@@ -433,7 +394,7 @@ export default function FieldDetail() {
             icon={I.cal()}
             primary={g.date}
             secondary={`${g.time} · ${g.duration}`}
-            action={<WAChatButton />}
+            action={<OrganizerContactButton phone={organizerPhone} />}
           />
           <Pressable
             onPress={() => navigate('/venue', { state: { venue: { venueName: g.venueName, name: g.field, address: g.address, district: g.venueDistrict, lat: g.venueLat, lng: g.venueLng, chips: g.chips } } })}

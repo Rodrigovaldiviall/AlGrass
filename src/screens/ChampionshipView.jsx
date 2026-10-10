@@ -1086,13 +1086,6 @@ export default function ChampionshipView() {
     principal: { userId: champ?.createdByUserId ?? CURRENT_USER_ID, name: CURRENT_USER_NAME },
     algrass: null, // futuro Admin: { userId, name }; mientras null → solo se muestra el principal
   };
-  // "Comunícate con el organizador": respeta el MISMO setting global de Partidos ("Contacto dentro del
-  // partido": Host / AlGrass). Mock del setting + teléfonos (futuro: app_settings + perfil del organizador).
-  const CONTACT_MODE = 'host';                        // mock del setting global (Host | AlGrass)
-  const ALGRASS_OPERATIONAL_PHONE = '51987654321';   // mock de app_settings.algrass_operational_phone
-  const principalPhone = '51987000111';              // mock del teléfono del organizador principal
-  // Modo Host → organizador PRINCIPAL del campeonato (no el host de una cancha). Modo AlGrass → nº operacional.
-  const organizerContactPhone = CONTACT_MODE === 'algrass' ? ALGRASS_OPERATIONAL_PHONE : principalPhone;
 
   // Fecha concreta de cierre — SOLO campeonato real ya publicado; usa el dato ya calculado (no recalcula).
   // Aviso anterior de "Cierre de inscripciones" eliminado: lo sustituye la franja amarilla informativa bajo la

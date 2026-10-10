@@ -38,6 +38,13 @@ async function fetchConfig() {
   return { mode: data.organizer_contact_mode, algrassPhone: data.algrass_operational_phone ?? null };
 }
 
+// Soporte AlGrass (SupportMenu de Perfil/Configuración): algrass_operational_phone en dígitos, o null.
+export async function fetchSupportPhone() {
+  const cfg = await fetchConfig();
+  const d = digits(cfg?.algrassPhone);
+  return d.length >= 8 ? d : null;
+}
+
 // Leads de tiempo configurables (MISMA fila app_settings id=1). Devuelve números o null.
 // null = no se pudo leer → la acción dependiente queda CERRADA (sin default 60/15 en la App:
 // los valores viven SOLO en Supabase, no como segunda fuente de verdad aquí).
