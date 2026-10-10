@@ -1,10 +1,12 @@
-import { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { haptic } from '../utils/haptic';
 import { useNavigate } from 'react-router-dom';
 import {
   BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, DANGER,
 } from '../constants';
 import { useAuth } from '../context/AuthContext';
+import { EditProfileModal } from './Profile';
+import { saveProfileEdit } from '../services/profileEdit';
 import { supabase } from '../lib/supabase';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faHeadset } from '@fortawesome/free-solid-svg-icons';
@@ -27,8 +29,6 @@ async function fetchAvailableCities() {
 
 const TERMS_TEXT = TERMS_SUMMARY;
 const PRIVACY_TEXT = PRIVACY_SUMMARY;
-
-const SETTINGS_RETURN_KEY = 'settings_return_ui';
 
 const FAQ_GROUPS = [
   {
@@ -591,7 +591,7 @@ function SecuritySheet({ onClose, onDeleteRequest }) {
 
 export default function Settings() {
   const navigate = useNavigate();
-  const { logout, user } = useAuth();
+  const { logout, user, login } = useAuth();
 
   // Mientras Settings está montado, la franja inferior (body) iguala el fondo real de esta pantalla
   // (SOFT #F2F2F4, el background de .screen-shell) — solo iPhone PWA; ver index.css. El scrim
@@ -620,20 +620,9 @@ export default function Settings() {
   const [availableCities, setAvailableCities] = useState([]);
   useEffect(() => { fetchAvailableCities().then(setAvailableCities); }, []);
 
-  // Estado de UI guardado al ir a "Editar perfil" (Perfil vuelve aquí con navigate(-1)); se restaura una vez.
-  const [returnUi] = useState(() => {
-    try { const v = JSON.parse(sessionStorage.getItem(SETTINGS_RETURN_KEY)); sessionStorage.removeItem(SETTINGS_RETURN_KEY); return v; } catch { return null; }
-  });
-  const [groupOpen, setGroupOpen] = useState(returnUi?.groupOpen ?? { jugador: false, organizador: false });
-  const [openQuestion, setOpenQuestion] = useState(returnUi?.openQuestion ?? null);
-  const listScrollRef = useRef(null);
-  useLayoutEffect(() => {
-    if (returnUi?.scroll && listScrollRef.current) listScrollRef.current.scrollTop = returnUi.scroll;
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  function openEditProfile() {
-    try { sessionStorage.setItem(SETTINGS_RETURN_KEY, JSON.stringify({ groupOpen, openQuestion, scroll: listScrollRef.current?.scrollTop ?? 0 })); } catch { /* sin storage: vuelve sin restaurar */ }
-    navigate('/profile', { state: { openEdit: true, returnTo: '/settings' } });
-  }
+  const [groupOpen, setGroupOpen] = useState({ jugador: false, organizador: false });
+  const [openQuestion, setOpenQuestion] = useState(null);
+  const [editOpen, setEditOpen] = useState(false);   // "Editar perfil" montado aquí (misma pantalla que Perfil)
   const [legalModal, setLegalModal] = useState(null);
   const [showSecurity, setShowSecurity] = useState(false);
   const [showVenueLead, setShowVenueLead] = useState(false);
@@ -775,7 +764,7 @@ export default function Settings() {
       </div>
 
       {/* Scrollable list */}
-      <div ref={listScrollRef} className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '20px 16px calc(32px + env(safe-area-inset-bottom))' }}>
+      <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '20px 16px calc(32px + env(safe-area-inset-bottom))' }}>
 
         {/* 1. Ciudad */}
         <Section title="Ciudad">
@@ -831,7 +820,7 @@ export default function Settings() {
         <Section title="Cuenta">
           <Row
             label="Editar perfil"
-            onPress={openEditProfile}
+            onPress={() => setEditOpen(true)}
             right={<ChevRight />}
           />
           <Sep />
@@ -996,6 +985,24 @@ export default function Settings() {
             </div>
           </div>
         </div>
+      )}
+      {editOpen && (
+        <EditProfileModal
+          profileData={profileData}
+          userName={user?.name || ''}
+          userEmail={user?.email || ''}
+          userProvider={user?.provider || 'email'}
+          userId={user?.id ?? null}
+          onSave={async (updated) => {
+            // Misma persistencia que Perfil (caché local + public.users); se queda en Configuración.
+            const stamped = user?.id ? { ...updated, userId: user.id } : updated;
+            setProfileData(stamped);
+            try { localStorage.setItem(PROFILE_KEY, JSON.stringify(stamped)); } catch { /* sin storage */ }
+            const patch = await saveProfileEdit(updated);
+            if (patch?.full_name && user) login({ ...user, name: patch.full_name });
+          }}
+          onClose={() => setEditOpen(false)}
+        />
       )}
     </div>
   );

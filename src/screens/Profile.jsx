@@ -16,6 +16,7 @@ import { useAuth } from '../context/AuthContext';
 import { useStaff } from '../context/StaffContext';
 import { activateIosScrim, deactivateIosScrim } from '../lib/iosScrim';
 import { supabase } from '../lib/supabase';
+import { saveProfileEdit } from '../services/profileEdit';
 import { peruTodayParts } from '../lib/peruTime';
 import { abbreviateName, ensureUserCode, formatDateLabel } from '../utils/format';
 import { GAMES } from '../data/games';
@@ -1191,7 +1192,7 @@ function translateAuthError(msg) {
 
 // ── EditProfileModal ───────────────────────────────────────────────────────
 
-function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, userProvider = 'email', userId = null, startEmailUnlocked = false }) {
+export function EditProfileModal({ profileData, onSave, onClose, userName, userEmail, userProvider = 'email', userId = null, startEmailUnlocked = false }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { const t = setTimeout(() => setOpen(true), 20); return () => clearTimeout(t); }, []);
 
@@ -2259,7 +2260,6 @@ export default function Profile() {
     return () => window.removeEventListener('notif-badge', onBadge);
   }, []);
   const [editOpen,       setEditOpen]       = useState(() => state?.openEdit === true);
-  const editReturnToRef = useRef(state?.openEdit === true ? (state?.returnTo ?? null) : null); // p.ej. '/settings': al cerrar/guardar vuelve allí
   const [editEmailUnlock, setEditEmailUnlock] = useState(false); // abrir Editar Perfil con el campo correo ya desbloqueado (desde "Modificar")
   useEffect(() => {
     if (state?.openEdit === true) {
@@ -3119,31 +3119,11 @@ export default function Profile() {
     const stamped = user?.id ? { ...updated, userId: user.id } : updated;
     setProfileData(stamped);
     try { localStorage.setItem(PROFILE_KEY, JSON.stringify(stamped)); } catch {}
-    if (!supabase) return;
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.user?.id) return;
-      const patch = {
-        full_name:          updated.fullName          || null,
-        sex:                updated.gender            || null,
-        preferred_position: updated.positions?.length ? updated.positions : null,
-        phone:              updated.phone             || null,
-        nationality:        updated.nationality       || null,
-        occupation:         updated.occupation        || null,
-        ...(updated.avatarPath    != null ? { avatar_path: updated.avatarPath } : {}),
-        ...(updated.avatarVersion != null ? { avatar_updated_at: new Date(updated.avatarVersion).toISOString() } : {}),
-      };
-      if (updated.birthYear && updated.birthMonth && updated.birthDay) {
-        patch.birth_date = `${updated.birthYear}-${String(updated.birthMonth).padStart(2, '0')}-${String(updated.birthDay).padStart(2, '0')}`;
-      }
-      const { error } = await supabase.from('users').update(patch).eq('id', session.user.id);
-      if (error) console.warn('[Profile] update users:', error.message);
-      else {
-        setSbProfile(prev => ({ ...prev, full_name: patch.full_name, ...(patch.avatar_path != null ? { avatar_path: patch.avatar_path, avatar_updated_at: patch.avatar_updated_at ?? prev.avatar_updated_at } : {}) }));
-        if (patch.full_name && user) login({ ...user, name: patch.full_name });
-      }
-
-    } catch (e) { console.warn('[Profile] handleSave:', e); }
+    const patch = await saveProfileEdit(updated);
+    if (patch) {
+      setSbProfile(prev => ({ ...prev, full_name: patch.full_name, ...(patch.avatar_path != null ? { avatar_path: patch.avatar_path, avatar_updated_at: patch.avatar_updated_at ?? prev.avatar_updated_at } : {}) }));
+      if (patch.full_name && user) login({ ...user, name: patch.full_name });
+    }
   }
 
   function handleOK() {
@@ -3769,10 +3749,7 @@ export default function Profile() {
           userId={user?.id ?? null}
           onSave={handleSave}
           startEmailUnlocked={editEmailUnlock}
-          onClose={() => {
-            setEditOpen(false); setEditEmailUnlock(false);
-            if (editReturnToRef.current) { editReturnToRef.current = null; navigate(-1); }
-          }}
+          onClose={() => { setEditOpen(false); setEditEmailUnlock(false); }}
         />
       )}
     </div>
