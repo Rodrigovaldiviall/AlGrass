@@ -1999,7 +1999,7 @@ export default function ChampionshipView() {
                       {myMembership
                         ? (canJoinTeam ? 'Estás inscrito. Puedes cambiar de equipo o salir mientras las inscripciones sigan abiertas.'
                                        : 'Estás inscrito.')
-                        : canJoinTeam ? (regTeams.length ? 'Toca un equipo para unirte.' : 'Aún no hay equipos.') + (canCreate ? ' También puedes crear el tuyo o unirte sin equipo.' : '')
+                        : canJoinTeam ? (regTeams.length ? 'Toca un equipo e ingresa la clave para unirte.' : 'Aún no hay equipos.') + (canCreate ? ' También puedes crear el tuyo o unirte sin equipo.' : '')
                         : champ?.status === 'registration_closed' ? 'Inscríbete a un equipo.'
                         : 'Selecciona un cupo para sumarte o crea tu propio equipo.'}
                     </div>
