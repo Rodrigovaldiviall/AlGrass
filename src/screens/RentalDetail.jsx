@@ -727,13 +727,13 @@ export default function RentalDetail() {
 
         <Section title="Descripción">
           <p style={{ margin: '0 0 8px', fontSize: 14, lineHeight: 1.5, color: TEXT }}>
-            {game.description || 'Alquiler exclusivo de la cancha para tu partido privado. Disfruta del espacio completo con tu grupo.'}
+            {game.description || 'Alquiler exclusivo de la cancha para tu partido privado. Disfruta del espacio completo con tu grupo. Un encargado de AlGrass te esperará en la cancha para entregarte el balón, los chalecos y asistirte en lo que necesites.'}
           </p>
         </Section>
 
         <Section title="Recomendaciones">
           <p style={{ margin: '0 0 6px', fontSize: 14, lineHeight: 1.5, color: TEXT }}>
-            {game.recommendations || 'Llega 10 minutos antes del horario reservado. Un encargado de AlGrass te esperará en la cancha para entregarte el balón, los chalecos y asistirte en lo que necesites.'}
+            {game.recommendations || 'Llega 10 minutos antes del horario reservado.'}
           </p>
         </Section>
 
