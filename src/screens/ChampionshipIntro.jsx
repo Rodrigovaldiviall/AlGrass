@@ -13,6 +13,7 @@ import cimg01 from '../assets/championship-intro/01-app.webp';
 import cimg02 from '../assets/championship-intro/02-arbitro.webp';
 import cimg03 from '../assets/championship-intro/03-organizador.webp';
 import cimg04 from '../assets/championship-intro/04-celebracion.webp';
+import NoTranslate from '../components/NoTranslate';
 
 // Selector de ciudad MÍNIMO y LOCAL a la intro de Campeonatos (landing /empresas, primera entrada). NO extrae ni
 // toca el CitySheet de Partidos. Reutiliza fetchCities/setActiveCity (misma persistencia que Partidos). No dismissible.
@@ -111,7 +112,7 @@ export default function ChampionshipIntro() {
             <section className="intro">
               <div className="intro__texto">
                 <p className="antetitulo">Campeonatos de fútbol</p>
-                <h1>Arma tu campeonato y vive la competencia con AlGrass. <span>Despreocúpate y juega.</span></h1>
+                <h1>Arma tu campeonato y vive la competencia con <NoTranslate text="AlGrass" />. <span>Despreocúpate y juega.</span></h1>
               </div>
               <p className="bajada">
                 <strong>Todo en un solo lugar.</strong> Olvídate de cotizar canchas, conseguir árbitros y buscar quién se haga cargo. Nosotros nos encargamos de todo.

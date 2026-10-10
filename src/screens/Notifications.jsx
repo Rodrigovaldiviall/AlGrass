@@ -13,6 +13,7 @@ import { renderNotification } from '../data/notificationTemplates';
 import { setNotifBadge, getNotifCount } from '../utils/notifBadge';
 import { isGamePast } from '../utils/deriveGameState';
 import { getVisibleBottom } from '../utils/layout';
+import NoTranslate from '../components/NoTranslate';
 
 const LONG_MSG  = 100;
 const PAGE_SIZE = 20;
@@ -168,7 +169,7 @@ function NotificationRow({ n, expanded, onPress, highlighted = false }) {
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, marginBottom: 2 }}>
           <span style={{ flex: 1, fontSize: 13, fontWeight: n.read ? 500 : 700, color: titleColor, lineHeight: 1.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {n.title}
+            <NoTranslate text={n.title} />
           </span>
           <span style={{ fontSize: 11, color: n.read ? '#C4C4CC' : SUB, flexShrink: 0 }}>{n.time}</span>
         </div>
@@ -180,7 +181,7 @@ function NotificationRow({ n, expanded, onPress, highlighted = false }) {
           WebkitBoxOrient: 'vertical',
           overflow: isExpanded ? 'visible' : 'hidden',
         }}>
-          {n.message}
+          <NoTranslate text={n.message} />
         </div>
 
         {overflowing && (

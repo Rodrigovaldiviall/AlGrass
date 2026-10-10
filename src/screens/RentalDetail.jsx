@@ -5,6 +5,7 @@ import { useOrganizerPhone } from '../hooks/useOrganizerPhone';
 import { useAppTimings } from '../hooks/useAppTimings';
 import MapsLinkButton from '../components/MapsLinkButton';
 import OrganizerContactButton from '../components/OrganizerContactButton';
+import SkeletonPill from '../components/SkeletonPill';
 import AttendanceBadge from '../components/AttendanceBadge';
 import Pressable from '../components/Pressable';
 import { BLUE, TEXT, SUB, HAIR, ORANGE, SOFT, GREEN, RED, gameUnavailableCopy } from '../constants';
@@ -23,6 +24,7 @@ import { useGlobalRoles } from '../hooks/useGlobalRoles';
 import { cancelRental, getRentalCancellationWindow } from '../services/reservationService';
 import { shareOrCopy } from '../utils/share';
 import { useAuth } from '../context/AuthContext';
+import NoTranslate from '../components/NoTranslate';
 
 const DANGER = '#FF3B30';
 
@@ -727,7 +729,7 @@ export default function RentalDetail() {
 
         <Section title="Descripción">
           <p style={{ margin: '0 0 8px', fontSize: 14, lineHeight: 1.5, color: TEXT }}>
-            {game.description || 'Alquiler exclusivo de la cancha para tu partido privado. Disfruta del espacio completo con tu grupo. Un encargado de AlGrass te esperará en la cancha para entregarte el balón, los chalecos y asistirte en lo que necesites.'}
+            {game.description ? <NoTranslate text={game.description} /> : <NoTranslate text={'Alquiler exclusivo de la cancha para tu partido privado. Disfruta del espacio completo con tu grupo. Un encargado de AlGrass te esperará en la cancha para entregarte el balón, los chalecos y asistirte en lo que necesites.'} />}
           </p>
         </Section>
 
@@ -748,7 +750,7 @@ export default function RentalDetail() {
             />
             <div style={{ fontSize: 14, color: TEXT, lineHeight: 1.4 }}>
               Esta cancha está organizada por{' '}
-              <span style={{ fontWeight: 700 }}>{hostProfile?.full_name || (game.hostUserId ? game.field : 'AlGrass') || '…'}</span>
+              <span style={{ fontWeight: 700 }}><NoTranslate text={hostProfile?.full_name || (game.hostUserId ? game.field : 'AlGrass') || '…'} /></span>
             </div>
           </div>
         </Section>
@@ -810,6 +812,11 @@ export default function RentalDetail() {
           price={priceDisplay}
           onPress={handleReservePress}
         />
+      ) : !statusVerified && !isHost ? (
+        // Estado aún sin verificar: skeleton con el MISMO hueco que el CTA (nunca vacío ni salto).
+        <div style={{ padding: '12px 16px 12px', background: '#fff', borderTop: `1px solid ${HAIR}` }}>
+          <SkeletonPill className="" style={{ width: '100%', height: 54, borderRadius: 18, minWidth: 0 }} />
+        </div>
       ) : null}
 
       {reserveBlock && (() => {

@@ -34,6 +34,7 @@ import { slotTeamConflicts } from '../utils/championshipFixture';
 // claramente distinto al azul de marca (#3F5FE0) para que portada y header no se confundan.
 import { COVER_THEMES, coverColor, randomCoverTheme } from '../data/championshipCover';
 import { getVenueById } from '../services/venueService';
+import NoTranslate from '../components/NoTranslate';
 
 // Mismo mapa de etiquetas de amenities que ChampionshipOrganize (para chips { kind, label } en /venue).
 const AMENITY_LABEL = { parking: 'Estacionamiento', showers: 'Duchas', covered: 'Techado' };
@@ -2260,7 +2261,7 @@ export default function ChampionshipView() {
 
         {/* Toast breve — copiar clave / compartir fallback / avisos de inscripción única */}
         {toast && (
-          <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.75)', color: '#fff', padding: '10px 18px', borderRadius: 16, fontSize: 14, fontWeight: 500, zIndex: 9999, pointerEvents: 'none', whiteSpace: 'normal', maxWidth: '84%', width: 'max-content', lineHeight: 1.35, textAlign: 'center' }}>{toast}</div>
+          <div style={{ position: 'fixed', bottom: 90, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.75)', color: '#fff', padding: '10px 18px', borderRadius: 16, fontSize: 14, fontWeight: 500, zIndex: 9999, pointerEvents: 'none', whiteSpace: 'normal', maxWidth: '84%', width: 'max-content', lineHeight: 1.35, textAlign: 'center' }}><NoTranslate text={toast} /></div>
         )}
       </div>
 
@@ -2599,7 +2600,7 @@ function OrganizerRow({ person, role, first, onSelect }) {
     >
       <RosterAvatar path={person.avatar_path} hue={person.avatar_hue} name={name} />
       <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
-      <span style={{ fontSize: 12, color: SUB, flexShrink: 0 }}>{role}</span>
+      <span style={{ fontSize: 12, color: SUB, flexShrink: 0 }}><NoTranslate text={role} /></span>
     </button>
   );
 }
@@ -2615,7 +2616,7 @@ function OrganizerRow({ person, role, first, onSelect }) {
 function PayRow({ label, value, valueColor, last = false }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, padding: '10px 2px', borderBottom: last ? 'none' : `1px solid ${HAIR}` }}>
-      <span style={{ fontSize: 13.5, color: SUB }}>{label}</span>
+      <span style={{ fontSize: 13.5, color: SUB }}><NoTranslate text={label} /></span>
       <span style={{ fontSize: 14, fontWeight: 700, color: valueColor || TEXT, whiteSpace: 'nowrap' }}>{value}</span>
     </div>
   );
@@ -2823,7 +2824,7 @@ function OwnerManageSheet({ onClose, championshipId, status, onExtrasCanceled, o
                     </span>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ display: 'block', fontSize: 15, fontWeight: 800, color: TEXT }}>Campeonato completo</span>
-                      <span style={{ display: 'block', fontSize: 12.5, color: SUB, marginTop: 1 }}>Cancela canchas, Organización AlGrass y todos los extras. Devolución del 100% en crédito.</span>
+                      <span style={{ display: 'block', fontSize: 12.5, color: SUB, marginTop: 1 }}>Cancela canchas, Organización <NoTranslate text="AlGrass" /> y todos los extras. Devolución del 100% en crédito.</span>
                     </span>
                   </button>
 
@@ -2849,7 +2850,7 @@ function OwnerManageSheet({ onClose, championshipId, status, onExtrasCanceled, o
                     <>
                       <div style={{ fontSize: 11.5, fontWeight: 700, color: SUB, letterSpacing: 0.3, textTransform: 'uppercase', margin: '16px 2px 6px' }}>Organización</div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, padding: '8px 2px' }}>
-                        <span style={{ fontSize: 13.5, color: fullSel ? TEXT : SUB }}>Organización AlGrass</span>
+                        <span style={{ fontSize: 13.5, color: fullSel ? TEXT : SUB }}><NoTranslate text="Organización AlGrass" /></span>
                         <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8, whiteSpace: 'nowrap' }}>
                           {fullSel && <span style={{ fontSize: 11, fontWeight: 700, color: RED }}>Se cancela</span>}
                           <span style={{ fontSize: 13.5, fontWeight: 700, color: TEXT }}>{soles(Number(feeItem?.amount ?? fs.algrass_fee_amount ?? 0))}</span>
@@ -2981,7 +2982,7 @@ function OrganizersBlock({ organizers, divider = true }) {
       <div style={H}>{organizers.algrass ? 'Organizadores' : 'Organizador'}</div>
       <div style={row}><PlayerAvatar name={organizers.principal.name} size={40} /><div style={nm}>{organizers.principal.name}</div></div>
       {organizers.algrass && (
-        <div style={row}><PlayerAvatar name={organizers.algrass.name} size={40} /><div style={nm}>{organizers.algrass.name} <span style={{ fontWeight: 600, color: SUB }}>(AlGrass)</span></div></div>
+        <div style={row}><PlayerAvatar name={organizers.algrass.name} size={40} /><div style={nm}>{organizers.algrass.name} <span style={{ fontWeight: 600, color: SUB }}>(<NoTranslate text="AlGrass" />)</span></div></div>
       )}
       {divider && <div style={{ height: 1, background: HAIR, margin: '14px 0' }} />}
     </>

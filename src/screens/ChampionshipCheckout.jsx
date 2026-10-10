@@ -11,6 +11,7 @@ import { formatDateLabel } from '../utils/format';
 import { supabase } from '../lib/supabase';
 import { createTransferHold, confirmTransfer as confirmTransferRpc, releaseTransferHold, quoteChampionship, getChampionshipConfig, createGatewayOrder, confirmGatewayPayment, failGateway } from '../services/championshipService';
 import { getWalletBalance } from '../services/reservationService';
+import NoTranslate from '../components/NoTranslate';
 
 // Emoji del círculo por code de extra (la config no envía emoji). Fallback genérico.
 const EXTRA_EMOJI = { trophy: '🏆', medals: '🥇', photography: '📷', filming: '🎥' };
@@ -518,7 +519,7 @@ export default function ChampionshipCheckout() {
                 <span>Alquiler Canchas</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(quote.court_amount)}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>
-                <span>Organización AlGrass</span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(quote.algrass_fee_amount)}</span>
+                <span><NoTranslate text="Organización AlGrass" /></span><span style={{ color: TEXT, fontWeight: 600, whiteSpace: 'nowrap' }}>{soles(quote.algrass_fee_amount)}</span>
               </div>
               {Number(quote.referee_amount) > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13.5, color: SUB }}>

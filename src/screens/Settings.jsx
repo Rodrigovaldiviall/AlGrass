@@ -16,6 +16,7 @@ import { validateDeleteAccount, executeDeleteAccount } from '../services/deleteA
 import pkg from '../../package.json';
 import { TERMS_SUMMARY, PRIVACY_SUMMARY } from '../data/legalSummaries';
 import { activateIosScrim, deactivateIosScrim } from '../lib/iosScrim';
+import NoTranslate from '../components/NoTranslate';
 
 const PROFILE_KEY = 'pichanga_profile';
 const PRIVACY_KEY = 'pichanga_privacy';
@@ -235,7 +236,7 @@ function Row({ label, sublabel, value, onPress, right, disabled, danger, accent,
       }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: bold ? 14.5 : 13.5, color: labelColor, fontWeight: bold ? 700 : ((danger || accent) ? 600 : 400), lineHeight: 1.3 }}>{label}</div>
-        {sublabel && <div style={{ fontSize: 11, color: SUB, marginTop: 2, lineHeight: 1.35 }}>{sublabel}</div>}
+        {sublabel && <div style={{ fontSize: 11, color: SUB, marginTop: 2, lineHeight: 1.35 }}><NoTranslate text={sublabel} /></div>}
       </div>
       {value != null && <span style={{ fontSize: 13.5, color: SUB, flexShrink: 0 }}>{value}</span>}
       {right && <div style={{ flexShrink: 0 }}>{right}</div>}
@@ -288,7 +289,7 @@ function LegalModal({ type, onClose }) {
           </button>
         </div>
         <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '16px 20px 28px' }}>
-          <p style={{ fontSize: 14.5, color: TEXT, lineHeight: 1.65, margin: 0, whiteSpace: 'pre-line' }}>{body}</p>
+          <p style={{ fontSize: 14.5, color: TEXT, lineHeight: 1.65, margin: 0, whiteSpace: 'pre-line' }}><NoTranslate text={body} /></p>
           <button
             onClick={() => { onClose(); navigate(isTerms ? '/terms' : '/privacy', { state: { internal: true } }); }}
             style={{ display: 'block', marginTop: 20, padding: 0, background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
@@ -868,7 +869,7 @@ export default function Settings() {
                   </button>
                   {openQuestion === item.key && (
                     <div style={{ paddingBottom: 14, paddingRight: 16, fontSize: 13.5, color: SUB, lineHeight: 1.6 }}>
-                      {item.a}
+                      <NoTranslate text={item.a} />
                     </div>
                   )}
                 </div>

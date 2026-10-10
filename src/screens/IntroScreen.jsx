@@ -26,7 +26,7 @@ const BULLETS = [
 const INTRO_TITLE    = (
   <>
     <span style={{ display: 'block', fontSize: '0.62em', fontWeight: 700, letterSpacing: '-0.01em', opacity: 0.92, lineHeight: 1.15 }}>Bienvenido a</span>
-    <span style={{ display: 'block', fontSize: '1.53em', lineHeight: 1.05 }}>AlGrass</span>
+    <span translate="no" className="notranslate" style={{ display: 'block', fontSize: '1.53em', lineHeight: 1.05 }}>AlGrass</span>
   </>
 );
 const INTRO_SUBTITLE = 'Despreocúpate y juega.';
@@ -132,7 +132,7 @@ function DesktopLanding({ onStart }) {
       <div style={{ position: 'relative', display: 'inline-block', maxWidth: '106vw', maxHeight: '100vh' }}>
         <img
           src={desktopHero}
-          alt="AlGrass"
+          alt="AlGrass" translate="no"
           style={{ display: 'block', maxWidth: '106vw', maxHeight: '100vh', width: 'auto', height: 'auto', objectFit: 'contain' }}
         />
 
@@ -177,7 +177,7 @@ function DesktopLanding({ onStart }) {
             Escanea este código QR para disfrutar de una mejor experiencia.
           </p>
         </div>
-        <img src={logo} alt="AlGrass" style={{ width: 140, height: 140, objectFit: 'contain' }} />
+        <img src={logo} alt="AlGrass" translate="no" style={{ width: 140, height: 140, objectFit: 'contain' }} />
         <img src={qrImg} alt="Código QR AlGrass" style={{ width: 180, height: 180, objectFit: 'contain', display: 'block' }} />
       </div>
     </div>

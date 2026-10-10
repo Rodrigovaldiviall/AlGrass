@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BLUE, TEXT, SUB, GREEN, DANGER } from '../constants';
+import NoTranslate from '../components/NoTranslate';
 
 // ── Pantalla de RESULTADO del cambio de correo ───────────────────────────────
 // SOLO UI. No confirma el cambio, no llama a Auth ni escribe en public.users:
@@ -80,7 +81,7 @@ export default function EmailChanged() {
             <button
               onClick={onErrorExit}
               style={{ marginTop: 28, width: '100%', padding: '14px 16px', fontSize: 16, fontWeight: 700, fontFamily: 'inherit', color: '#fff', background: BLUE, border: 'none', borderRadius: 14, cursor: 'pointer', WebkitTapHighlightColor: 'transparent', outline: 'none' }}>
-              Ir a AlGrass
+              <NoTranslate text="Ir a AlGrass" />
             </button>
           </>
         )}

@@ -27,6 +27,7 @@ import { useGlobalRoles } from '../hooks/useGlobalRoles';
 import CaptainSlotsBadge from '../components/CaptainSlotsBadge';
 import SkeletonPill from '../components/SkeletonPill';
 import { buildCaptainSlotsMap } from '../utils/captainSlots';
+import NoTranslate from '../components/NoTranslate';
 
 // Mapa lazy: vive en su propio chunk; solo se descarga al pulsar "Mapa".
 const MapView = lazy(() => import('./MapView'));
@@ -568,7 +569,7 @@ function StatusPill({ openSpots, booked, inWaitlist, guestInfo, canceledCount, a
         <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap', minWidth: PILL_MIN, textAlign: 'center' }}>
           {guestInfo.activeGuestCount > 0
             ? `${guestInfo.activeGuestCount} ${guestInfo.activeGuestCount === 1 ? 'invitado' : 'invitados'}`
-            : guestInfo.invited ? 'por AlGrass'
+            : guestInfo.invited ? <NoTranslate text="por AlGrass" />
             : guestInfo.paidBy ? `por ${abbreviateName(guestInfo.paidBy)}` : null}
         </div>
       </div>

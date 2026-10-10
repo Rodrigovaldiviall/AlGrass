@@ -37,6 +37,7 @@ import { useGlobalRoles } from '../hooks/useGlobalRoles';
 import { useAppTimings } from '../hooks/useAppTimings';
 import CaptainSlotsBadge from '../components/CaptainSlotsBadge';
 import { buildCaptainSlotsMap } from '../utils/captainSlots';
+import NoTranslate from '../components/NoTranslate';
 
 const USER = {
   name: 'Rodrigo',
@@ -645,7 +646,7 @@ function StatItem({ value, label }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
       <div style={{ fontSize: 20, fontWeight: 800, color: empty ? '#C7C7CC' : TEXT, letterSpacing: -0.3, lineHeight: 1 }}>
-        {empty ? '—' : String(value)}
+        {empty ? '—' : <NoTranslate text={String(value)} />}
       </div>
       <div style={{ fontSize: 11, color: SUB, marginTop: 2, letterSpacing: -0.1 }}>{label}</div>
     </div>
@@ -1623,7 +1624,7 @@ export function EditProfileModal({ profileData, onSave, onClose, userName, userE
             {POSITIONS.map(pos => {
               const sel = positions.includes(pos);
               return (
-                <button key={pos} onClick={() => togglePosition(pos)} style={{
+                <button key={pos} translate="no" className="notranslate" onClick={() => togglePosition(pos)} style={{
                   height: 32, padding: '0 8px', borderRadius: 999,
                   border: `1.5px solid ${sel ? BLUE : HAIR}`,
                   background: sel ? `${BLUE}18` : '#fff',
@@ -1965,7 +1966,7 @@ function GameRow({ game, onPress, muted = false, userId = null, highlighted = fa
             <div style={{ fontSize: 10.5, color: SUB, whiteSpace: 'nowrap', minWidth: PM, textAlign: 'center' }}>
               {game.activeGuestCount > 0
                 ? `${game.activeGuestCount} ${game.activeGuestCount === 1 ? 'invitado' : 'invitados'}`
-                : game.invited ? 'por AlGrass'
+                : game.invited ? <NoTranslate text="por AlGrass" />
                 : `por ${abbreviateName(game.paidBy)}`}
             </div>
           </div>
@@ -2141,9 +2142,9 @@ function RatingModal({ game, onRate, onSkip, rewardInfo = null }) {
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <FontAwesomeIcon icon={faStar} style={{ fontSize: 16, color: '#6D5AE6' }} />
-              <span style={{ fontSize: 16, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>{m.title}</span>
+              <span style={{ fontSize: 16, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}><NoTranslate text={m.title} /></span>
             </div>
-            <div style={{ fontSize: 13, color: TEXT, lineHeight: 1.4 }}>{m.main}</div>
+            <div style={{ fontSize: 13, color: TEXT, lineHeight: 1.4 }}><NoTranslate text={m.main} /></div>
             {m.tail && <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.4 }}>{m.tail}</div>}
           </div>
         ); })()}
@@ -3486,7 +3487,7 @@ export default function Profile() {
                 <FontAwesomeIcon icon={faStar} style={{ fontSize: 16, color: '#6D5AE6' }} />
                 <span style={{ fontSize: 16, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>{rewardMessageLines(rewardBanner).title}</span>
               </div>
-              <div style={{ fontSize: 13, color: TEXT, lineHeight: 1.4 }}>{rewardMessageLines(rewardBanner).main}</div>
+              <div style={{ fontSize: 13, color: TEXT, lineHeight: 1.4 }}><NoTranslate text={rewardMessageLines(rewardBanner).main} /></div>
               {rewardMessageLines(rewardBanner).tail && <div style={{ fontSize: 12.5, color: SUB, lineHeight: 1.4 }}>{rewardMessageLines(rewardBanner).tail}</div>}
             </div>
           )}

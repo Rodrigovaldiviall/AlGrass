@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { BLUE, TEXT, SUB, HAIR, SOFT, GREEN, DANGER } from '../constants';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import NoTranslate from './NoTranslate';
 
 const REASONS = [
   { title: 'Más reservas',          body: 'Conecta tu cancha con jugadores que buscan dónde jugar todos los días.' },
@@ -189,7 +190,7 @@ export default function VenueLeadScreen({ onClose, defaultCity = '' }) {
             {/* Bloque B — ¿Por qué AlGrass? */}
             <div className="venue-lead-block" style={{ background: '#fff', borderRadius: 18, padding: '18px 16px' }}>
               <div style={{ fontSize: 17, fontWeight: 700, color: TEXT, letterSpacing: -0.3, marginBottom: 14 }}>
-                ¿Por qué AlGrass?
+                <NoTranslate text="¿Por qué AlGrass?" />
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {REASONS.map((r, i) => (

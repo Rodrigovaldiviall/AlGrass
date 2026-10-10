@@ -471,8 +471,32 @@ function SkeletonFieldRows() {
 }
 
 // ── Field row
+// Imagen + precio = una sola unidad: los assets de la miniatura se precargan una vez (compartido por
+// todas las filas); hasta que estén listos (y el estado del badge), se muestra UN único skeleton.
+let _thumbAssetsReady = false;
+let _thumbAssetsPromise = null;
+function loadThumbAssets() {
+  if (!_thumbAssetsPromise) {
+    _thumbAssetsPromise = Promise.all([fieldPriceBg, fieldNoAvailable].map(src => new Promise(res => {
+      const img = new Image(); img.onload = img.onerror = res; img.src = src;   // error → no bloquear
+    }))).then(() => { _thumbAssetsReady = true; });
+  }
+  return _thumbAssetsPromise;
+}
+
 function FieldThumbnail({ price, reserved, userBooked, isHost, live = false, badgeReady = true }) {
   const unavailable = reserved && !userBooked && !isHost;
+  const [assetsReady, setAssetsReady] = useState(_thumbAssetsReady);
+  useEffect(() => {
+    if (assetsReady) return;
+    let alive = true;
+    loadThumbAssets().then(() => { if (alive) setAssetsReady(true); });
+    return () => { alive = false; };
+  }, [assetsReady]);
+  // EN VIVO no usa la imagen; Organiza no depende del estado del badge.
+  if (!live && (!assetsReady || (!isHost && !badgeReady))) {
+    return <div style={{ width: 88, height: 56, borderRadius: 10, flexShrink: 0, background: '#E8E8EC', animation: 'pulse 1.4s ease-in-out infinite' }} />;
+  }
   const bgStyle     = (asset) => ({ position: 'absolute', inset: 0, backgroundImage: `url(${asset})`, backgroundSize: '120%', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', display: 'flex', alignItems: 'center', justifyContent: 'center' });
   return (
     // Fondo SIEMPRE el asset local fieldPriceBg (nunca cover remoto de field/venue): todos los
@@ -495,10 +519,6 @@ function FieldThumbnail({ price, reserved, userBooked, isHost, live = false, bad
             <span style={{ fontSize: 11, fontWeight: 700, lineHeight: 1.2 }}>Organiza</span>
             <span style={{ fontSize: 10, fontWeight: 600, lineHeight: 1.2, opacity: 0.75 }}>Cancha</span>
           </div>
-        </div>
-      ) : !badgeReady ? (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ width: 64, height: 22, borderRadius: 999, background: 'rgba(232,232,236,0.9)', animation: 'pulse 1.4s ease-in-out infinite' }} />
         </div>
       ) : userBooked ? (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

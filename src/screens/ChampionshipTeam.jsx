@@ -15,6 +15,7 @@ import PlayerActionSheet from '../components/championship/PlayerActionSheet';
 import TeamPickerSheet from '../components/championship/TeamPickerSheet';
 import { slotTeamConflicts } from '../utils/championshipFixture';
 import { effPhaseOf, rosterWindows } from '../utils/championshipRoster';
+import NoTranslate from '../components/NoTranslate';
 
 const designById = (id) => TEAM_DESIGNS.find(d => d.id === id) || DEFAULT_DESIGN;
 
@@ -726,7 +727,7 @@ export default function ChampionshipTeam() {
               </div>
             )}
 
-            {rErr && <div style={{ fontSize: 12.5, color: DANGER, lineHeight: 1.4, marginBottom: 10, textAlign: 'center' }}>{rErr}</div>}
+            {rErr && <div style={{ fontSize: 12.5, color: DANGER, lineHeight: 1.4, marginBottom: 10, textAlign: 'center' }}><NoTranslate text={rErr} /></div>}
 
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
               <div style={{ fontSize: 15, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>Jugadores</div>
@@ -865,7 +866,7 @@ export default function ChampionshipTeam() {
             <div className="sheet-panel" onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 420, background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 -8px 32px rgba(0,0,0,0.12)' }}>
               <div style={{ fontSize: 17, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>¿Estás seguro de que quieres eliminar este equipo?</div>
               <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, marginTop: 8 }}>Esta acción no se puede deshacer.</div>
-              {rErr && <div style={{ fontSize: 12.5, color: DANGER, lineHeight: 1.4, marginTop: 10 }}>{rErr}</div>}
+              {rErr && <div style={{ fontSize: 12.5, color: DANGER, lineHeight: 1.4, marginTop: 10 }}><NoTranslate text={rErr} /></div>}
               <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
                 <button onClick={() => !rBusy && setRDelConfirm(false)} disabled={rBusy} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: `1.5px solid ${HAIR}`, background: '#fff', color: TEXT, cursor: rBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 700, outline: 'none' }}>Cancelar</button>
                 <button onClick={rBusy ? undefined : rDelete} disabled={rBusy} className="pressable" style={{ flex: 1, height: 48, borderRadius: 14, border: '1px solid #F3C0C0', background: '#fff', color: DANGER, cursor: rBusy ? 'default' : 'pointer', fontFamily: 'inherit', fontSize: 15, fontWeight: 800, opacity: rBusy ? 0.7 : 1, outline: 'none' }}>{rBusy ? 'Eliminando…' : 'Eliminar equipo'}</button>

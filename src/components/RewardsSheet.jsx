@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faXmark } from '@fortawesome/free-solid-svg-icons';
 import { TEXT, SUB, HAIR, RED } from '../constants';
 import { supabase } from '../lib/supabase';
+import NoTranslate from './NoTranslate';
 
 const EASE = 'transform .28s cubic-bezier(0.32,0.72,0,1)';
 
@@ -141,7 +142,7 @@ export default function RewardsSheet({ balance = 0, onClose }) {
               borderBottom: `1px solid ${HAIR}`,
             }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14.5, fontWeight: 600, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tx._d.title}</div>
+                <div style={{ fontSize: 14.5, fontWeight: 600, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><NoTranslate text={tx._d.title} /></div>
                 <div style={{ fontSize: 12, color: SUB, marginTop: 1 }}>{tx._d.subtitle}</div>
               </div>
               <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: -0.3, flexShrink: 0, color: tx._d.negative ? RED : TEXT }}>

@@ -30,6 +30,7 @@ import AttendanceBadge from '../components/AttendanceBadge';
 import SkeletonPill from '../components/SkeletonPill';
 import { useGlobalRoles } from '../hooks/useGlobalRoles';
 import CaptainSlotsBadge from '../components/CaptainSlotsBadge';
+import NoTranslate from '../components/NoTranslate';
 const ROSTER_KEY_GD = 'pichanga_game_rosters';
 
 
@@ -577,7 +578,7 @@ export function PlayerModal({ player, onClose, isHost = false }) {
   const stat = (v, l) => (
     <div>
       <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: -0.3, lineHeight: 1, color: v != null ? TEXT : '#C7C7CC' }}>
-        {v != null ? String(v) : '—'}
+        {v != null ? <NoTranslate text={String(v)} /> : '—'}
       </div>
       <div style={{ fontSize: 11, color: SUB, marginTop: 2 }}>{l}</div>
     </div>
@@ -2162,7 +2163,7 @@ export default function GameDetail() {
                   return (
                     <span style={box}>
                       <span style={{ fontSize: 12, fontWeight: 600, color: GREEN }}>Invitado por</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: BLUE }}>AlGrass</span>
+                      <span translate="no" className="notranslate" style={{ fontSize: 12, fontWeight: 700, color: BLUE }}>AlGrass</span>
                       {guestSuffix}
                     </span>
                   );
@@ -2288,7 +2289,7 @@ export default function GameDetail() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3, fontSize: 11.5, color: SUB }}>
                           {p.age != null && <span>{p.age} años</span>}
                           {p.age != null && p.position && <span style={{ color: '#D1D1D6' }}>|</span>}
-                          {p.position && <span style={{ fontWeight: 600 }}>{p.position}</span>}
+                          {p.position && <span translate="no" className="notranslate" style={{ fontWeight: 600 }}>{p.position}</span>}
                         </div>
                       )}
                     </div>

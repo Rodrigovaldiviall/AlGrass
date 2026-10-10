@@ -1,6 +1,7 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { BLUE, TEXT, SUB } from '../constants';
 import I from '../icons';
+import NoTranslate from '../components/NoTranslate';
 
 // Contenido de la Política de Privacidad (fuente: Politica_de_Privacidad_AlGrass.txt).
 // Estructura del documento preservada: fecha, secciones 1–22, subsecciones, párrafos y
@@ -395,12 +396,12 @@ export default function LegalPage({ type }) {
         <p style={{ fontSize: 13, color: SUB, margin: '0 0 18px' }}>{isTerms ? TERMS_UPDATED : PRIVACY_UPDATED}</p>
         {(isTerms ? TERMS_BLOCKS : PRIVACY_BLOCKS).map((b, i) => (
           b.h
-            ? <h2 key={i} style={{ fontSize: 16.5, fontWeight: 700, color: TEXT, letterSpacing: -0.2, margin: '22px 0 8px' }}>{b.h}</h2>
+            ? <h2 key={i} style={{ fontSize: 16.5, fontWeight: 700, color: TEXT, letterSpacing: -0.2, margin: '22px 0 8px' }}><NoTranslate text={b.h} /></h2>
             : b.sh
-              ? <h3 key={i} style={{ fontSize: 15, fontWeight: 700, color: TEXT, margin: '14px 0 6px' }}>{b.sh}</h3>
+              ? <h3 key={i} style={{ fontSize: 15, fontWeight: 700, color: TEXT, margin: '14px 0 6px' }}><NoTranslate text={b.sh} /></h3>
               : b.ul
-                ? <ul key={i} style={{ margin: '0 0 10px', paddingLeft: 20 }}>{b.ul.map((it, j) => <li key={j} style={{ fontSize: 14.5, color: SUB, lineHeight: 1.6, marginBottom: 4 }}>{it}</li>)}</ul>
-                : <p key={i} style={{ fontSize: 14.5, color: SUB, lineHeight: 1.65, margin: '0 0 10px' }}>{b.p}</p>
+                ? <ul key={i} style={{ margin: '0 0 10px', paddingLeft: 20 }}>{b.ul.map((it, j) => <li key={j} style={{ fontSize: 14.5, color: SUB, lineHeight: 1.6, marginBottom: 4 }}><NoTranslate text={it} /></li>)}</ul>
+                : <p key={i} style={{ fontSize: 14.5, color: SUB, lineHeight: 1.65, margin: '0 0 10px' }}><NoTranslate text={b.p} /></p>
         ))}
       </div>
     </div>

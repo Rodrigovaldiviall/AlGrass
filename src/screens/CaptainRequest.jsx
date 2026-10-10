@@ -355,7 +355,7 @@ export default function CaptainRequest() {
               {POSITIONS.map(pos => {
                 const sel = positions.includes(pos);
                 return (
-                  <button key={pos} onClick={() => togglePosition(pos)} style={{
+                  <button key={pos} translate="no" className="notranslate" onClick={() => togglePosition(pos)} style={{
                     height: 32, padding: '0 8px', borderRadius: 999,
                     border: `1.5px solid ${sel ? BLUE : HAIR}`, background: sel ? `${BLUE}18` : '#fff',
                     color: sel ? BLUE : TEXT, fontSize: 12, fontWeight: 600, cursor: 'pointer',
