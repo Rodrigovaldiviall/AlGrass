@@ -214,7 +214,7 @@ export default function ChampionshipTeamCheckout() {
           <div style={{ fontSize: 12.5, fontWeight: 700, color: SUB, marginBottom: 6 }}>Clave del equipo</div>
           <input value={secret} onChange={e => setSecret(e.target.value)} placeholder="Mínimo 4 caracteres" maxLength={40}
             style={{ width: '100%', height: 44, borderRadius: 10, border: `1px solid ${HAIR}`, padding: '0 12px', fontSize: 15, color: TEXT, fontFamily: 'inherit', background: '#fff', outline: 'none', boxSizing: 'border-box' }} />
-          <div style={{ marginTop: 6, fontSize: 12, color: SUB }}>Los jugadores la necesitarán para unirse (o usa el link que podrás compartir después).</div>
+          <div style={{ marginTop: 6, fontSize: 12, color: SUB }}>Los jugadores la necesitarán para unirse.</div>
         </div>
         <div style={{ height: 8 }} />
       </div>
