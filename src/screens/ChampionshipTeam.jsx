@@ -843,7 +843,7 @@ export default function ChampionshipTeam() {
               ) : (
                 <>
                   <div style={{ fontSize: 17, fontWeight: 800, color: TEXT, letterSpacing: -0.2 }}>Unirme con clave</div>
-                  <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, marginTop: 8 }}>Ingresa la clave del equipo {rt?.name ? `"${rt.name}"` : ''} para unirte.</div>
+                  <div style={{ fontSize: 14, color: SUB, lineHeight: 1.5, marginTop: 8 }}>Este equipo es privado. Ingresa su clave para unirte o solicítasela al capitán del equipo.</div>
                   <input value={keySecret} onChange={e => { setKeySecret(e.target.value); setKeyErr(''); }} placeholder="Clave del equipo" maxLength={40}
                     style={{ width: '100%', height: 44, borderRadius: 10, border: `1px solid ${keyErr ? DANGER : HAIR}`, padding: '0 12px', fontSize: 15, color: TEXT, fontFamily: 'inherit', background: '#fff', outline: 'none', boxSizing: 'border-box', marginTop: 14 }} />
                   {keyErr && <div style={{ fontSize: 12.5, color: DANGER, marginTop: 8 }}>{keyErr}</div>}
