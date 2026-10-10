@@ -1101,6 +1101,8 @@ export default function PickupGames() {
   const [flt, setFlt]               = useState(() => {
     try { return { ...EMPTY_FLT, ...(JSON.parse(sessionStorage.getItem('pg'))?.flt ?? {}) }; } catch { return EMPTY_FLT; }
   });
+  // Filtros activos = cualquier valor distinto de EMPTY_FLT (solo afecta el texto del día "Hoy" vacío).
+  const hasActiveFlt = Object.keys(EMPTY_FLT).some(k => JSON.stringify(flt[k]) !== JSON.stringify(EMPTY_FLT[k]));
   const [panelOpen, setPanelOpen]   = useState(false);
   const [userCity, setUserCity] = useState(() => {
     try { return JSON.parse(localStorage.getItem('pichanga_profile'))?.city || ''; } catch { return ''; }
@@ -1579,7 +1581,7 @@ export default function PickupGames() {
               <DateHeader dateKey={dateKey} refEl={(el) => { headerRefs.current[dateKey] = el; }} />
               {dateKey === TODAY_KEY && games.length === 0 ? (
                 <div style={{ padding: '12px 20px', color: SUB, fontSize: 14 }}>
-                  No hay más partidos disponibles para hoy.
+                  {hasActiveFlt ? 'No hay partidos con estos filtros para hoy.' : 'No hay más partidos disponibles para hoy.'}
                 </div>
               ) : games.map((g, i) => renderGameRow(g, i === games.length - 1 && isLast))}
               {isLast && dateKey === maxEventKey && games.length > 0 && (

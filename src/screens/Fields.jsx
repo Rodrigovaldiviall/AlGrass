@@ -598,6 +598,8 @@ export default function Fields() {
   const [flt, setFlt]               = useState(() => {
     try { return { ...EMPTY_FLT, ...(JSON.parse(sessionStorage.getItem('fl'))?.flt ?? {}) }; } catch { return EMPTY_FLT; }
   });
+  // Filtros activos = cualquier valor distinto de EMPTY_FLT (solo afecta el texto del día "Hoy" vacío).
+  const hasActiveFlt = Object.keys(EMPTY_FLT).some(k => JSON.stringify(flt[k]) !== JSON.stringify(EMPTY_FLT[k]));
   const [panelOpen, setPanelOpen]   = useState(false);
   const [userCity, setUserCity] = useState(() => {
     try { return JSON.parse(localStorage.getItem('pichanga_profile'))?.city || ''; } catch { return ''; }
@@ -1036,7 +1038,7 @@ export default function Fields() {
                 <DateHeader dateKey={dateKey} refEl={(el) => { headerRefs.current[dateKey] = el; }} />
                 {dateKey === TODAY_KEY && fields.length === 0 ? (
                   <div style={{ padding: '12px 20px', color: SUB, fontSize: 14 }}>
-                    No hay más canchas disponibles para hoy.
+                    {hasActiveFlt ? 'No hay canchas con estos filtros para hoy.' : 'No hay más canchas disponibles para hoy.'}
                   </div>
                 ) : fields.map((f, i) => renderFieldRow(f, i === fields.length - 1 && isLast))}
                 {isLast && dateKey === maxEventKey && fields.length > 0 && (
