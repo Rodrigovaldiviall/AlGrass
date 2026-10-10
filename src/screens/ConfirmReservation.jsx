@@ -676,6 +676,13 @@ export default function ConfirmReservation() {
   // cupos. El backend (reserve_slots) sigue siendo la verdad.
   const _slotGameStart = gameStartDate(game?.dateKey, game?.time24);
   const slotReservationClosed = releaseHours == null || (!!_slotGameStart && Date.now() >= _slotGameStart.getTime() - releaseHours * 3600_000);
+  // Activación captain-only fuera de plazo: "Arma la lista" no arranca ON (queda bloqueado como en el
+  // flujo normal). Solo con releaseHours YA cargado (null = cargando) para no apagarlo antes de tiempo.
+  const _slotClosedByTime = releaseHours != null && !!_slotGameStart && Date.now() >= _slotGameStart.getTime() - releaseHours * 3600_000;
+  const [capClosedApplied, setCapClosedApplied] = useState(false);
+  if (_capActivationInit && _slotClosedByTime && !capClosedApplied) {
+    setCapClosedApplied(true); setArmaLista(false); setReservedSlots(0);
+  }
   // Toggle "Arma la lista": armar la lista (titular + invitados YA existentes) no
   // consume cupos nuevos, así que se permite encender el switch aunque no queden
   // cupos, siempre que ya haya lista (listFloor>1 = titular + al menos 1 invitado).
