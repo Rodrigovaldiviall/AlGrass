@@ -51,13 +51,49 @@ const FAQ_GROUPS = [
     ],
   },
   {
-    key: 'organizador',
-    label: 'Organizador',
+    key: 'capitan',
+    label: 'Capitán',
     items: [
       {
-        key: 'o1',
-        q: '¿Quieres organizar partidos y/o alquilar campos de fútbol?',
-        a: 'Contacta a nuestro equipo de soporte para registrarte como organizador. Podrás crear partidos, gestionar reservas y administrar tus campos desde la plataforma.',
+        key: 'c1',
+        q: '¿Qué significa ser capitán?',
+        a: 'Eres quien arma las pichangas y reúne a sus amigos para jugar. En AlGrass reconocemos tu liderazgo y te ayudamos con toda la organización para que tú solo te preocupes por disfrutar del partido.',
+      },
+      {
+        key: 'c2',
+        q: '¿Qué beneficios tengo por ser capitán?',
+        a: 'Podrás reservar cupos sin adelantar dinero, ganar créditos por traer nuevos jugadores y acceder a beneficios exclusivos. Además, tendrás acceso anticipado a más canchas y horarios, con partidos que podrás activar y publicar para que otros jugadores se inscriban.',
+      },
+      {
+        key: 'c3',
+        q: '¿Cómo puedo armar mi lista?',
+        a: 'Entra a un partido y, al confirmar tu reserva o desde "Agregar jugadores" si ya estás inscrito, activa "Arma la lista". Selecciona cuántos cupos quieres reservar y comparte el enlace con tus amigos para que se inscriban y paguen directamente.',
+      },
+      {
+        key: 'c4',
+        q: '¿Qué pasa si mis amigos no ocupan todos los cupos?',
+        a: 'Puedes modificar o liberar tus cupos reservados cuando quieras. Los cupos que no se utilicen se liberarán automáticamente al cumplirse el plazo indicado en tu reserva.',
+      },
+    ],
+  },
+  {
+    key: 'campeonatos',
+    label: 'Campeonatos',
+    items: [
+      {
+        key: 'k1',
+        q: '¿Cómo funciona un campeonato privado?',
+        a: 'Tú reúnes y confirmas a los equipos participantes, y AlGrass se encarga del resto: canchas, árbitros, fixture, horarios y organización del torneo. ¡Tú solo preocúpate por convocar y disfrutar del campeonato!',
+      },
+      {
+        key: 'k2',
+        q: '¿Cómo funciona un campeonato público?',
+        a: 'Son campeonatos organizados por AlGrass en los que puedes inscribirte sin equipo y nosotros te asignaremos uno, o crear tu propio equipo y compartir la clave con tus amigos para competir contra otros equipos.',
+      },
+      {
+        key: 'k3',
+        q: '¿Puedo participar en un campeonato sin tener equipo?',
+        a: '¡Claro! Inscríbete individualmente en un campeonato público y AlGrass te asignará un equipo para que puedas participar.',
       },
     ],
   },
