@@ -2259,6 +2259,7 @@ export default function Profile() {
     return () => window.removeEventListener('notif-badge', onBadge);
   }, []);
   const [editOpen,       setEditOpen]       = useState(() => state?.openEdit === true);
+  const editReturnToRef = useRef(state?.openEdit === true ? (state?.returnTo ?? null) : null); // p.ej. '/settings': al cerrar/guardar vuelve allí
   const [editEmailUnlock, setEditEmailUnlock] = useState(false); // abrir Editar Perfil con el campo correo ya desbloqueado (desde "Modificar")
   useEffect(() => {
     if (state?.openEdit === true) {
@@ -3768,7 +3769,10 @@ export default function Profile() {
           userId={user?.id ?? null}
           onSave={handleSave}
           startEmailUnlocked={editEmailUnlock}
-          onClose={() => { setEditOpen(false); setEditEmailUnlock(false); }}
+          onClose={() => {
+            setEditOpen(false); setEditEmailUnlock(false);
+            if (editReturnToRef.current) { editReturnToRef.current = null; navigate(-1); }
+          }}
         />
       )}
     </div>

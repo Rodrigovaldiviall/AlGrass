@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { haptic } from '../utils/haptic';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -27,6 +27,8 @@ async function fetchAvailableCities() {
 
 const TERMS_TEXT = TERMS_SUMMARY;
 const PRIVACY_TEXT = PRIVACY_SUMMARY;
+
+const SETTINGS_RETURN_KEY = 'settings_return_ui';
 
 const FAQ_GROUPS = [
   {
@@ -618,8 +620,20 @@ export default function Settings() {
   const [availableCities, setAvailableCities] = useState([]);
   useEffect(() => { fetchAvailableCities().then(setAvailableCities); }, []);
 
-  const [groupOpen, setGroupOpen] = useState({ jugador: false, organizador: false });
-  const [openQuestion, setOpenQuestion] = useState(null);
+  // Estado de UI guardado al ir a "Editar perfil" (Perfil vuelve aquí con navigate(-1)); se restaura una vez.
+  const [returnUi] = useState(() => {
+    try { const v = JSON.parse(sessionStorage.getItem(SETTINGS_RETURN_KEY)); sessionStorage.removeItem(SETTINGS_RETURN_KEY); return v; } catch { return null; }
+  });
+  const [groupOpen, setGroupOpen] = useState(returnUi?.groupOpen ?? { jugador: false, organizador: false });
+  const [openQuestion, setOpenQuestion] = useState(returnUi?.openQuestion ?? null);
+  const listScrollRef = useRef(null);
+  useLayoutEffect(() => {
+    if (returnUi?.scroll && listScrollRef.current) listScrollRef.current.scrollTop = returnUi.scroll;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  function openEditProfile() {
+    try { sessionStorage.setItem(SETTINGS_RETURN_KEY, JSON.stringify({ groupOpen, openQuestion, scroll: listScrollRef.current?.scrollTop ?? 0 })); } catch { /* sin storage: vuelve sin restaurar */ }
+    navigate('/profile', { state: { openEdit: true, returnTo: '/settings' } });
+  }
   const [legalModal, setLegalModal] = useState(null);
   const [showSecurity, setShowSecurity] = useState(false);
   const [showVenueLead, setShowVenueLead] = useState(false);
@@ -761,7 +775,7 @@ export default function Settings() {
       </div>
 
       {/* Scrollable list */}
-      <div className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '20px 16px calc(32px + env(safe-area-inset-bottom))' }}>
+      <div ref={listScrollRef} className="no-sb" style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: '20px 16px calc(32px + env(safe-area-inset-bottom))' }}>
 
         {/* 1. Ciudad */}
         <Section title="Ciudad">
@@ -817,7 +831,7 @@ export default function Settings() {
         <Section title="Cuenta">
           <Row
             label="Editar perfil"
-            onPress={() => navigate('/profile', { state: { openEdit: true } })}
+            onPress={openEditProfile}
             right={<ChevRight />}
           />
           <Sep />
