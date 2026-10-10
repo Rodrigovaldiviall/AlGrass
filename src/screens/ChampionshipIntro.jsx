@@ -111,7 +111,7 @@ export default function ChampionshipIntro() {
             <section className="intro">
               <div className="intro__texto">
                 <p className="antetitulo">Campeonatos de fútbol</p>
-                <h1>Organiza tu campeonato con AlGrass. <span>Despreocúpate y juega.</span></h1>
+                <h1>Arma tu campeonato y vive la competencia con AlGrass. <span>Despreocúpate y juega.</span></h1>
               </div>
               <p className="bajada">
                 <strong>Todo en un solo lugar.</strong> Olvídate de cotizar canchas, conseguir árbitros y buscar quién se haga cargo. Nosotros nos encargamos de todo.
