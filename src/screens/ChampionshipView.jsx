@@ -653,7 +653,8 @@ export default function ChampionshipView() {
     </button>
   );
 
-  const flashToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 1800); };
+  // ms opcional (avisos de "ya inscrito": 5 s). Solo borra si sigue visible ESTE mensaje (no corta uno posterior).
+  const flashToast = (msg, ms = 1800) => { setToast(msg); setTimeout(() => setToast(t => (t === msg ? '' : t)), ms); };
   const flashCopied = () => flashToast('Copiado');
 
   // Regla mock: un jugador (user_id 'you') solo puede tener UNA inscripción — en un equipo O sin equipo.
@@ -1157,11 +1158,11 @@ export default function ChampionshipView() {
         // Gating según participación conocida (el backend bloquea igual; aquí evitamos abrir el checkout en vano).
         const part = myChampPart();
         // Bloqueo SOLO por producto PAGADO incompatible (A/C): paid_individual con plaza propia / team_owner pagado.
-        if (part === 'paid_individual' || part === 'team_owner') { flashToast('No es posible realizar esta acción porque ya estás inscrito en este campeonato.'); return; }
+        if (part === 'paid_individual' || part === 'team_owner') { flashToast('No es posible realizar esta acción porque ya estás inscrito en este campeonato.', 5000); return; }
         // Caso B (payer que canceló su plaza pero conserva invitados activos pagados por él): myChampPart() lo
         // ve como 'none', pero sigue siendo payer de una inscripción individual viva (ACTIVE_INDIVIDUAL_RESERVATION).
         if (myResv?.kind === 'paid_individual_payer' && Array.isArray(myResv.plazas) && myResv.plazas.some(p => !p.canceled)) {
-          flashToast('Ya tienes una reserva individual activa en este campeonato.'); return;
+          flashToast('Ya tienes una reserva individual activa en este campeonato.', 5000); return;
         }
         // GRATIS → PAGADO permitido. free_member (pertenece a un equipo gratis) → confirmar el cambio antes del
         // checkout (reutiliza confirmChange; el confirm del pago mueve su fila al nuevo equipo). none → directo.
@@ -1185,7 +1186,7 @@ export default function ChampionshipView() {
   // scroll (persistCV) para volver al mismo punto si cancela el checkout.
   function startPaidJoin() {
     const part = myChampPart();
-    if (part === 'team_owner') { flashToast('No es posible realizar esta acción porque ya estás inscrito en este campeonato.'); return; }
+    if (part === 'team_owner') { flashToast('No es posible realizar esta acción porque ya estás inscrito en este campeonato.', 5000); return; }
     if (part === 'free_member') { setConfirmChange({ kind: 'joinpaid' }); return; }
     persistCV();
     navigate('/championships/join', { state: { championshipId: realId, championshipName: name, unitPrice: publicUnitPrice } });
@@ -1301,7 +1302,7 @@ export default function ChampionshipView() {
   }
   function requestNoTeam() {
     if (regBusy) return;
-    if (myMembership && !myMembership.team_id) { flashToast('Ya estás inscrito sin equipo.'); return; } // no-op
+    if (myMembership && !myMembership.team_id) { flashToast('Ya estás inscrito sin equipo.', 5000); return; } // no-op
     if (myMembership) { setConfirmChange({ kind: 'noteam' }); return; }  // desde un team → confirmar
     if (!requireAuth('join')) return;
     joinNoTeamReal();                                                    // no inscrito → directo
