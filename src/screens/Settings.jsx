@@ -41,7 +41,7 @@ const FAQ_GROUPS = [
       {
         key: 'j2',
         q: '¿Quién organiza el partido?',
-        a: 'Los partidos son organizados por usuarios registrados como organizadores en Algrass. Ellos definen el campo, horario, formato y precio.',
+        a: 'Los partidos son organizados por AlGrass. Un encargado de nuestro equipo te recibirá y se ocupará de toda la logística: balón, chalecos, organizar a los equipos y rotación de arqueros, para que tú solo te preocupes por jugar.',
       },
       {
         key: 'j3',
