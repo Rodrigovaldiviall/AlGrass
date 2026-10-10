@@ -46,7 +46,7 @@ const FAQ_GROUPS = [
       {
         key: 'j3',
         q: '¿Cómo contactar al organizador?',
-        a: 'En la pantalla de detalle del partido encontrarás el botón de contacto con el organizador vía WhatsApp.',
+        a: 'Una vez inscrito, en la pantalla de detalle del partido encontrarás el botón de contacto con el organizador vía WhatsApp.',
       },
     ],
   },
