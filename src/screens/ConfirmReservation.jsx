@@ -675,7 +675,8 @@ export default function ConfirmReservation() {
   // Misma regla temporal que GameDetail: dentro de esa ventana no se crea/modifica reserva de
   // cupos. El backend (reserve_slots) sigue siendo la verdad.
   const _slotGameStart = gameStartDate(game?.dateKey, game?.time24);
-  const slotReservationClosed = releaseHours == null || (!!_slotGameStart && Date.now() >= _slotGameStart.getTime() - releaseHours * 3600_000);
+  // Activación captain-only: "Arma la lista" siempre activo (arranca ON con medio equipo), sin plazo.
+  const slotReservationClosed = !_capActivationInit && (releaseHours == null || (!!_slotGameStart && Date.now() >= _slotGameStart.getTime() - releaseHours * 3600_000));
   // Toggle "Arma la lista": armar la lista (titular + invitados YA existentes) no
   // consume cupos nuevos, así que se permite encender el switch aunque no queden
   // cupos, siempre que ya haya lista (listFloor>1 = titular + al menos 1 invitado).
